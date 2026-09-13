@@ -2,7 +2,8 @@
 
 import os
 from pathlib import Path
-from urllib.parse import unquote, urlsplit
+from urllib.parse import urlsplit
+from urllib.request import url2pathname
 
 from .core import InvalidRecord, _digest, _time
 
@@ -16,7 +17,7 @@ def document_path(source_key):
     uri = urlsplit(source_key[len(PREFIX):])
     if uri.scheme != 'file' or uri.netloc or uri.query or uri.fragment:
         return None
-    path = Path(unquote(uri.path))
+    path = Path(url2pathname(uri.path))
     return path if path.is_absolute() else None
 
 

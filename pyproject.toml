@@ -28,5 +28,5 @@ project-memory-mcp = "memory_module.cli:main"
 packages = ["memory_module"]
 
 [tool.hatch.build.targets.sdist]
-only-include = ["memory_module", "tests", "examples", "scripts", "docs", "README.md", "LICENSE", "SECURITY.md", "CONTRIBUTING.md", "CHANGELOG.md", "server.json", "pyproject.toml"]
+only-include = ["memory_module", "tests", "examples", "scripts", "docs", "bundle", "README.md", "LICENSE", "SECURITY.md", "CONTRIBUTING.md", "CHANGELOG.md", "server.json", "pyproject.toml"]
 exclude = ["**/__pycache__", "**/*.pyc", "**/*.sqlite", "**/*.jsonl", "**/results", "**/.codex", "**/.memory"]
