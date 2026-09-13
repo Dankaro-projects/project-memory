@@ -95,6 +95,9 @@ def setup(project, *, client='mcp', database=None, requirements=None, documents=
             if owned:remove_hooks(hooks,owned)
     block='';command=''
     if client=='codex':
+        legacy=parsed.get('mcp_servers',{}).get('memory',{})
+        if 'memory_module.mcp' in legacy.get('args',[]):
+            raise Conflict('This project still uses the legacy memory-module adapter. Disable its MCP server and hooks before connecting Project Memory; its database can be reused.')
         if 'hooks' in parsed:raise Conflict('Inline Codex hooks take precedence. Move them to hooks.json before installing project hooks.')
         if 'project_memory' in parsed.get('mcp_servers',{}):raise Conflict('An unmanaged project_memory MCP server already exists.')
         launch=_launcher or launcher()

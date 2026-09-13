@@ -9,7 +9,7 @@ from memory_module import Memory
 
 
 def call_failed(item):
-    if item.get('error') or (item.get('result') or {}).get('isError'):
+    if item.get('status')=='failed' or item.get('error') or (item.get('result') or {}).get('isError'):
         return True
     # The app-server may omit isError while retaining the adapter's JSON error.
     for content in (item.get('result') or {}).get('content', []):

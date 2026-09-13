@@ -23,6 +23,7 @@ def database(args):
 def doctor(path):
     with Memory(path) as memory:
         integrity=memory.db.execute('PRAGMA integrity_check').fetchone()[0]
+        if integrity!='ok':raise RuntimeError('SQLite integrity check failed: '+integrity)
         installed=codex_host.exists(memory)
         counts={r[0]:r[1] for r in memory.db.execute('SELECT event_name,count(*) FROM host_receipts GROUP BY event_name')} if installed else {}
         pending=codex_host.status(memory)['unconfirmed_total'] if installed else None

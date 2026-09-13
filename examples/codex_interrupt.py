@@ -5,6 +5,7 @@ from pathlib import Path
 import queue
 import time
 from examples.codex_app_client import CodexClient
+from examples.codex_documents import call_failed
 from memory_module import Memory
 from memory_module.codex_host import status
 
@@ -45,7 +46,7 @@ def run(project,output):
             m.export_html(output/'viewer.html')
         calls=[e['params']['item'] for e in client.events if e.get('method')=='item/completed' and e['params']['item'].get('type')=='mcpToolCall']
         result={'thread_id':thread,'interrupt_turn':turn,'resume_turn':turn2,'marker_lines':marker.read_text().splitlines(),
-            'resume_adapter_calls':len(calls),'resume_adapter_errors':sum(c.get('status')=='failed' or bool(c.get('result',{}).get('isError')) for c in calls),
+            'resume_adapter_calls':len(calls),'resume_adapter_errors':sum(call_failed(c) for c in calls),
             'not_repeated':marker.read_text()=='once\n','hook_counts':hooks,'unconfirmed_after_interrupt':before['unconfirmed_total'],
             'unconfirmed_after_resume':after['unconfirmed_total'],'resume_status':finished['status'],
             'limits':'The marker confirms the side effect. Interruption is not proof of rollback or of process completion. Unknown execution remains visible.'}

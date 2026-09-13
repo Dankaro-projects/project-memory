@@ -8,7 +8,7 @@ Run the commands in the README in a fresh checkout. Each example output director
 
 | Check | Observed locally on 13 September 2026 | Meaning |
 |---|---|---|
-| Python regression and lifecycle suite | 100 tests passed | Covers immutable history, boundaries, retries, stale evidence, revision approval, interrupted setup recovery and preservation of existing settings. |
+| Python regression and lifecycle suite | 101 tests passed | Covers immutable history, boundaries, retries, stale evidence, revision approval, interrupted setup recovery and preservation of existing settings. |
 | Fresh wheel installation outside the checkout | Passed | CLI, repeated capture, a separate MCP process, packaged viewer, backup and removal operate without the source directory. |
 | Scripted document/retrieval case | 7/7 checks passed | An oversized lesson remains discoverable, exceptions survive expansion, changed files flag decisions, unchanged captures reuse a version and original text is reconstructed. |
 | Complete source expansion at a 2,500-character reply limit | 2 calls; 4,338 returned characters in this run | Path length affects envelope size. These are reply characters, not model tokens. |
@@ -18,6 +18,12 @@ Run the commands in the README in a fresh checkout. Each example output director
 `tests/test_product.py` injects a write interruption before and after the hook configuration write, retries setup and checks for duplicate hooks and lost unrelated settings. It also aborts approval inside a transaction and verifies that neither the revision nor its table creation leaks through a partial commit.
 
 The wheel has zero declared runtime dependencies. Build tools, the optional Playwright browser check and live Codex verification are development dependencies. Package sizes and hashes are emitted by `scripts/check_artifacts.py`; release assets provide the exact published bytes.
+
+## Installed Codex beta boundary
+
+The installed wheel ran in a separate virtual environment and project directory. The setup command obtained nine exact hashes from the actual Codex host. An interruption case wrote one marker, interrupted the tool, then resumed the same task through a new host process. The marker remained exactly once; an unconfirmed execution receipt and unknown process completion remained visible. Seven recovery MCP calls completed without a reported error.
+
+A separate document task passed all twelve quality and integration checks. It used five MCP calls, including one rejected relative document path followed by a successful absolute-path retry. Aggregate provider input was 116,481 tokens; this is not a saving against a matched control. The tool schema now states the absolute-path requirement explicitly. Raw model outputs and host transcripts remain local.
 
 ## Prior prototype measurements
 
