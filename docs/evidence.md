@@ -21,9 +21,32 @@ The wheel has zero declared runtime dependencies. Build tools, the optional Play
 
 ## Installed Codex beta boundary
 
-The installed wheel ran in a separate virtual environment and project directory. The setup command obtained nine exact hashes from the actual Codex host. An interruption case wrote one marker, interrupted the tool, then resumed the same task through a new host process. The marker remained exactly once; an unconfirmed execution receipt and unknown process completion remained visible. Seven recovery MCP calls completed without a reported error.
+The installed wheel ran in a separate virtual environment and project directory with Codex 0.153.4 on macOS. The setup command persisted project trust and obtained nine exact hashes from the actual host. Fresh sessions observed all nine lifecycle events, including `SessionEnd` on ordinary CLI shutdown. The verification client no longer supplies temporary project trust. App-server unsubscribe does not itself emit `SessionEnd` on this host.
 
-A separate document task passed all twelve quality and integration checks. It used five MCP calls, including one rejected relative document path followed by a successful absolute-path retry. Aggregate provider input was 116,481 tokens; this is not a saving against a matched control. The tool schema now states the absolute-path requirement explicitly. Raw model outputs and host transcripts remain local.
+An interruption case wrote one marker, interrupted the tool, then resumed the same task through a new host process. The marker remained exactly once; an unconfirmed execution receipt and unknown process completion remained visible. Seven recovery MCP calls completed without a reported error. Compaction preserved all four checked facts, including the legacy exception and unmeasured production outcome. No adapter calls were recursively captured as external work.
+
+A separate document task passed all twelve quality and integration checks. It used five MCP calls, including one rejected relative document path followed by a successful absolute-path retry. Stating the absolute-path requirement in the tool schema did not eliminate this model correction. Raw model outputs and host transcripts remain local; the reviewed [aggregate report](verification-0.5.0b1.json) contains counts and provider usage.
+
+| Comparable synthetic case | Before fixes | After fixes | Quality |
+|---|---:|---:|---|
+| Document task: aggregate provider input | 116,481 | 114,403 | 12/12 checks in both; one path correction in each. |
+| Interruption and recovery: aggregate provider input | 259,684 | 289,216 | The side effect occurs once and unknown execution remains visible in both. |
+
+These are single runs of the same harness and model, not a controlled productivity study. Path lengths and model choices vary. The integration fixes improve capture correctness; the recovery rerun uses more tokens. Neither result establishes a general saving. Human corrections and maintenance minutes were not measured.
+
+To reproduce the live boundary after installing the release, create an empty test directory, set `TEST_PROJECT` to its absolute path, and run these commands from the checkout. Each output directory must be new. The harness uses the signed-in Codex account and consumes model usage.
+
+```sh
+project-memory setup --project "$TEST_PROJECT" --db "$TEST_PROJECT/memory.sqlite" --client codex --trust
+python -m examples.codex_interrupt --project "$TEST_PROJECT" --output results/live-interruption
+python -m examples.codex_documents --project "$TEST_PROJECT" --output results/live-documents
+python -m examples.codex_lifecycle --project "$TEST_PROJECT" --output results/live-lifecycle
+codex exec -C "$TEST_PROJECT" --skip-git-repo-check 'Reply only: The session can close.'
+project-memory doctor --project "$TEST_PROJECT"
+python -m examples.context_audit results/live-interruption
+```
+
+The context audit exits with status 1 when the target is not met. That failure is evidence, not a reason to remove conditions or skip difficult tasks.
 
 ## Prior prototype measurements
 
@@ -40,6 +63,8 @@ The earlier host verification observed all nine Codex lifecycle events, a real i
 The initial Windows run exposed a real freshness defect: a captured `file:///D:/...` URI was not converted back to a Windows path, so changed or unreadable documents appeared current. The implementation now uses the standard library's platform-aware URL-to-path conversion. The same existing cases are rerun on Windows rather than skipped.
 
 The first bundle manifest used an unsupported platform key. The official MCPB validator rejected it; the manifest now uses the documented `platform_overrides` field and passes validation.
+
+Fresh host execution exposed two further defects. Setup had trusted hook hashes while leaving project trust effective only within its temporary host process. Setup now writes persistent trust before obtaining the hashes and verifies the saved setting. The renamed adapter also recorded its own MCP calls; capture now excludes both the legacy and public adapter namespaces. Comparable cases were rerun after both fixes. The browser report now lists optional project-view checks only when their fixture actually ran.
 
 ## What remains unmeasured
 
