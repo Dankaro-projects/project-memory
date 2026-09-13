@@ -1,0 +1,8 @@
+{
+  "project": "Local test project",
+  "requirements": [
+    "Use professional plain English.",
+    "Keep the agreed objective and success criteria unchanged.",
+    "Verify an action's result before claiming it succeeded."
+  ]
+}

@@ -1,0 +1,7 @@
+{
+  "title": "Test the memory module",
+  "objective": "Check whether the module records and retrieves useful evidence",
+  "task_type": "local validation",
+  "criterion": "The selected behavioural tests pass and results can be reopened",
+  "subject": "code"
+}

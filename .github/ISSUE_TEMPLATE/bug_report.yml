@@ -1,0 +1,22 @@
+name: Report a defect
+description: Describe a reproducible problem using synthetic data.
+body:
+  - type: input
+    id: version
+    attributes:
+      label: Package, Python and client versions
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps and expected behaviour
+      description: Include a small synthetic reproduction. Do not upload your project database or host transcript.
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual result
+    validations:
+      required: true

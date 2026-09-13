@@ -1,0 +1,19 @@
+{
+  "name": "project-memory",
+  "version": "0.5.0-beta.1",
+  "description": "Local project decisions, evidence and outcomes with bounded MCP retrieval.",
+  "author": {
+    "name": "Dankaro"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Project Memory",
+    "shortDescription": "Reuse project evidence and inspect decision history.",
+    "longDescription": "Keep decisions, evidence, outcomes and reviewed lessons in local SQLite. Retrieve bounded context and inspect an offline HTML viewer.",
+    "developerName": "Dankaro",
+    "category": "Productivity",
+    "capabilities": [],
+    "defaultPrompt": "Use Project Memory for this project. Retrieve relevant evidence, preserve conditions and record decisions and outcomes explicitly."
+  },
+  "mcpServers": "./.mcp.json"
+}
