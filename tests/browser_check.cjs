@@ -69,6 +69,7 @@ with Memory.create(root/'memory.sqlite','Browser fixture',['Plain English.']) as
   await page.locator('#order').selectOption('title');
   await page.locator('#page-size').selectOption('10');assert.equal(await page.locator('#rows tr').count(),10);
   const demo=process.env.MEMORY_VIEWER||path.join(root,'results/host-example/memory-viewer.html');
+  const optionalChecks=[];
   fs.mkdirSync(browserOutput,{recursive:true});
   if(fs.existsSync(demo)){
    await page.goto(pathToFileURL(demo).href);await page.screenshot({path:path.join(browserOutput,'viewer-desktop.png'),fullPage:true});
@@ -78,6 +79,7 @@ with Memory.create(root/'memory.sqlite','Browser fixture',['Plain English.']) as
    await page.setViewportSize({width:390,height:844});
    await page.screenshot({path:path.join(browserOutput,'viewer-mobile.png'),fullPage:true});
    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth),true);
+   optionalChecks.push('unresolved action display','mobile width');
   }
   const projectViewer=path.join(root,'memory-viewer.html');
   if(fs.existsSync(projectViewer)){
@@ -92,9 +94,10 @@ with Memory.create(root/'memory.sqlite','Browser fixture',['Plain English.']) as
    await page.screenshot({path:path.join(browserOutput,'project-desktop.png'),fullPage:true});
    await page.setViewportSize({width:390,height:844});await page.screenshot({path:path.join(browserOutput,'project-mobile.png'),fullPage:true});
    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth),true);
+   optionalChecks.push('project decision, research, writing, pattern, drift and capture views','decision lineage navigation','project mobile width');
   }
   assert.deepEqual(errors,[]);assert.deepEqual(requests,[]);
-  const report={passed:true,browser:await browser.version(),checks:['local file opening','pagination','search','subject and date filters','detail panel','source text','document change status','reverse evidence navigation','episode navigation','sort and page size','escaped script input','unresolved action display','original-before-corrected wording','complete correction scope','project decision, research, writing, pattern, drift and capture views','decision lineage navigation','mobile width','no network requests','no JavaScript errors'],network_requests:requests.length,javascript_errors:errors};
+  const report={passed:true,browser:await browser.version(),checks:['local file opening','pagination','search','subject and date filters','detail panel','source text','document change status','reverse evidence navigation','episode navigation','sort and page size','escaped script input','original-before-corrected wording','complete correction scope',...optionalChecks,'no network requests','no JavaScript errors'],network_requests:requests.length,javascript_errors:errors};
   fs.writeFileSync(path.join(browserOutput,'browser-validation.json'),JSON.stringify(report,null,2)+'\n');
   console.log(JSON.stringify(report));
  }finally{if(browser)await browser.close();fs.rmSync(temp,{recursive:true,force:true});}

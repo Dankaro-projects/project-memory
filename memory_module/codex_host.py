@@ -92,7 +92,7 @@ def capture(memory, event):
     if name in {'PreToolUse', 'PostToolUse'}:
         _text(tool_id, 'tool_use_id', 200); _text(tool, 'tool_name', 200)
         # Memory calls are already persisted by the adapter. Avoid recursive noise.
-        if tool.startswith('mcp__memory__'): return {}
+        if tool.startswith(('mcp__memory__','mcp__project_memory__')): return {}
     action_version = None
     with memory._write():
         binding = active_binding(memory,session)
