@@ -30,6 +30,8 @@ For another local MCP client, run `project-memory setup --client mcp`, then conf
 
 The same versioned wheel is available from [GitHub Releases](https://github.com/Dankaro-projects/project-memory/releases). The MCPB asset supports directory selection in compatible desktop clients.
 
+![The HTML viewer shows synthetic decisions, evidence, corrections and review status.](https://raw.githubusercontent.com/Dankaro-projects/project-memory/main/docs/images/viewer.png)
+
 ## Use it in ordinary work
 
 Ask your assistant:

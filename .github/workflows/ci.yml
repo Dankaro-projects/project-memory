@@ -22,7 +22,8 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
       - uses: astral-sh/setup-uv@v6
-      - run: python -m unittest discover -s tests -q
+      - run: python -u -m unittest discover -s tests -v
+        timeout-minutes: 5
       - run: python -m examples.document_case --output results/documents
       - run: python -m examples.host_example --output results/host-example
       - run: node tests/viewer_logic.cjs
