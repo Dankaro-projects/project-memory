@@ -1,0 +1,45 @@
+name: Verify
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python: ['3.11', '3.14']
+    runs-on: ${{ matrix.os }}
+    env:
+      PYTHONUTF8: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - uses: astral-sh/setup-uv@v6
+      - run: python -m unittest discover -s tests -q
+      - run: python -m examples.document_case --output results/documents
+      - run: python -m examples.host_example --output results/host-example
+      - run: node tests/viewer_logic.cjs
+      - run: uv build
+      - run: python scripts/check_artifacts.py dist
+      - run: python scripts/installed_smoke.py dist
+  browser:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm install --no-save playwright@1.55.1
+      - run: npx playwright install --with-deps chromium
+      - run: python -m examples.host_example --output results/host-example
+      - run: node tests/browser_check.cjs

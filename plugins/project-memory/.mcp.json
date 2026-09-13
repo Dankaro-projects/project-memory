@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "project_memory": {
+      "command": "uvx",
+      "args": [
+        "--from",
+        "https://github.com/Dankaro-projects/project-memory/releases/download/v0.5.0b1/project_memory_mcp-0.5.0b1-py3-none-any.whl",
+        "project-memory",
+        "serve"
+      ]
+    }
+  }
+}
