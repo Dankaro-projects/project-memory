@@ -58,7 +58,7 @@ Uninstall removes only its project connection and exact hook commands. It preser
 
 ## Existing memory-module databases
 
-Back up the database first. Use `project-memory setup --db /absolute/path/to/existing.sqlite --client codex --trust` to explicitly connect it. Core history remains in SQLite schema 2; optional host and project-revision tables are additive. Original immutable requirements remain revision zero. Older versions do not understand revised requirements: after the first approved revision, use this version or newer; restore the pre-upgrade backup for a deliberate rollback.
+Back up the database first. If the old project already has the legacy `memory` MCP adapter and its command hooks, disable that connection before adding the public adapter so both versions do not capture the same work. The installer detects the legacy MCP entry and refuses to create a duplicate. Use `project-memory setup --db /absolute/path/to/existing.sqlite --client codex --trust` to explicitly connect it. Core history remains in SQLite schema 2; optional host and project-revision tables are additive. Original immutable requirements remain revision zero. Older versions do not understand revised requirements: after the first approved revision, use this version or newer; restore the pre-upgrade backup for a deliberate rollback.
 
 Do not copy an old private evidence ZIP into the public repository. `.memory` is private operational data, including generated HTML and backups.
 

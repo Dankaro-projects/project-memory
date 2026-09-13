@@ -57,6 +57,13 @@ class ProductTests(unittest.TestCase):
         (local/'config.toml').write_text('[mcp_servers.project_memory]\ncommand="other"\n')
         with self.assertRaises(Conflict):self.setup(client='codex')
         self.assertIn('other',(local/'config.toml').read_text())
+    def test_legacy_adapter_does_not_receive_a_duplicate_installation(self):
+        local=self.project/'.codex';local.mkdir()
+        config='[mcp_servers.memory]\ncommand="python"\nargs=["-m","memory_module.mcp","--db","old.sqlite"]\n'
+        (local/'config.toml').write_text(config)
+        with self.assertRaises(Conflict):self.setup(client='codex')
+        self.assertEqual((local/'config.toml').read_text(),config)
+        self.assertFalse((self.project/'.memory/project.sqlite').exists())
     def test_direction_preserves_history_and_invalidates_dependent_decisions(self):
         info=self.setup(requirements=['Keep data locally.'])
         with Memory(info['database']) as m:

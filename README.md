@@ -13,7 +13,7 @@ Use it when a project repeatedly revisits research, loses the reasons behind dec
 Install [uv](https://docs.astral.sh/uv/getting-started/installation/), then run this **inside the project you want to remember**:
 
 ```sh
-uvx --from https://github.com/Dankaro-projects/project-memory/releases/download/v0.5.0b1/project_memory_mcp-0.5.0b1-py3-none-any.whl project-memory setup --client codex --trust
+uvx project-memory-mcp@0.5.0b1 setup --client codex --trust
 ```
 
 This creates `.memory/project.sqlite`, adds a project-local MCP connection and nine command hooks, and asks the installed Codex host for the exact hook hashes to enable. Existing settings and records are preserved. Open a new Codex task afterwards. `--trust` explicitly enables these project hooks; omit it to review and enable them in Codex yourself.
@@ -21,12 +21,14 @@ This creates `.memory/project.sqlite`, adds a project-local MCP connection and n
 For a permanent CLI installation:
 
 ```sh
-uv tool install --from https://github.com/Dankaro-projects/project-memory/releases/download/v0.5.0b1/project_memory_mcp-0.5.0b1-py3-none-any.whl project-memory-mcp
+uv tool install project-memory-mcp==0.5.0b1
 project-memory doctor
 project-memory view
 ```
 
 For another local MCP client, run `project-memory setup --client mcp`, then configure the client to run `project-memory serve --project /absolute/path/to/project`. Generic MCP supports explicit records and retrieval; Codex's automatic receipts are a separately verified integration. [Setup and lifecycle](docs/setup.md) includes imports, upgrades, backup, uninstall and client configuration.
+
+The same versioned wheel is available from [GitHub Releases](https://github.com/Dankaro-projects/project-memory/releases). The MCPB asset supports directory selection in compatible desktop clients.
 
 ## Use it in ordinary work
 
