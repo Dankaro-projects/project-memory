@@ -1,0 +1,238 @@
+{
+  "version": "0.5.0b1",
+  "date": "2026-09-13",
+  "host": "Codex 0.153.4 on macOS",
+  "python": "3.14.6",
+  "model": "gpt-6-astra",
+  "scope": "Installed wheel in a separate persistent virtual environment and synthetic project. Prepublication verification, not a daily-use trial.",
+  "tests_passed": 101,
+  "runtime_dependencies": 0,
+  "lifecycle_receipts": {
+    "ContextProvided": 1,
+    "DecisionBound": 2,
+    "Interrupt": 1,
+    "PostCompact": 1,
+    "PostToolUse": 1,
+    "PreCompact": 1,
+    "PreToolUse": 2,
+    "Reconciled": 1,
+    "SessionEnd": 1,
+    "SessionStart": 6,
+    "Stop": 5,
+    "UserPromptSubmit": 6
+  },
+  "own_mcp_tool_receipts": 0,
+  "interruption": {
+    "resume_adapter_calls": 7,
+    "resume_adapter_errors": 0,
+    "not_repeated": true,
+    "unconfirmed_after_interrupt": 1,
+    "unconfirmed_after_resume": 1,
+    "resume_status": "completed",
+    "input_audit": {
+      "target_input_tokens_exclusive": 10000,
+      "measurement": "Provider last.inputTokens includes instructions, tool definitions, history, task and memory. It is not an estimate from character counts.",
+      "cases": [
+        {
+          "case": ".",
+          "log": "events.jsonl",
+          "input_tokens_per_notification": [
+            14489,
+            15080,
+            15383,
+            15512,
+            15886,
+            16195,
+            16610,
+            17064
+          ],
+          "maximum_input_tokens": 17064,
+          "unmeasured_or_reset_notifications": 0,
+          "meets_target": false
+        },
+        {
+          "case": ".",
+          "log": "resume.jsonl",
+          "input_tokens_per_notification": [
+            17471,
+            18281,
+            19928,
+            20490,
+            20760,
+            21091,
+            22193,
+            22783
+          ],
+          "maximum_input_tokens": 22783,
+          "unmeasured_or_reset_notifications": 0,
+          "meets_target": false
+        }
+      ],
+      "meets_target": false,
+      "limitations": "Notifications may repeat reports or reset counters after compaction. Zero or missing counts are unmeasured and cannot establish a pass. Hidden host requests without usage notifications are outside this audit. The adapter cannot enforce a pre-request limit on the full native Codex prompt."
+    }
+  },
+  "compaction": {
+    "compaction_completed": true,
+    "completion": "completed",
+    "checks": {
+      "encoding": true,
+      "invalid_bytes": true,
+      "legacy_exception": true,
+      "production_unmeasured": true
+    },
+    "input_audit": {
+      "target_input_tokens_exclusive": 10000,
+      "measurement": "Provider last.inputTokens includes instructions, tool definitions, history, task and memory. It is not an estimate from character counts.",
+      "cases": [
+        {
+          "case": ".",
+          "log": "events.jsonl",
+          "input_tokens_per_notification": [
+            14415,
+            15616,
+            15756,
+            16126,
+            16730,
+            17113,
+            15863
+          ],
+          "maximum_input_tokens": 17113,
+          "unmeasured_or_reset_notifications": 1,
+          "meets_target": false
+        }
+      ],
+      "meets_target": false,
+      "limitations": "Notifications may repeat reports or reset counters after compaction. Zero or missing counts are unmeasured and cannot establish a pass. Hidden host requests without usage notifications are outside this audit. The adapter cannot enforce a pre-request limit on the full native Codex prompt."
+    }
+  },
+  "documents": {
+    "checks": {
+      "turn_completed": true,
+      "actual_index_call": true,
+      "actual_batch_call": true,
+      "actual_document_capture": true,
+      "actual_source_body_read": true,
+      "recognises_changed_evidence": true,
+      "preserves_proposed_status": true,
+      "preserves_exception": true,
+      "reads_current_policy": true,
+      "retains_uncertainty": true,
+      "two_source_versions": true,
+      "no_accepted_lesson": true
+    },
+    "usage": {
+      "total": {
+        "totalTokens": 115047,
+        "inputTokens": 114403,
+        "cachedInputTokens": 107264,
+        "cacheWriteInputTokens": 0,
+        "outputTokens": 644,
+        "reasoningOutputTokens": 0
+      },
+      "last": {
+        "totalTokens": 18042,
+        "inputTokens": 17966,
+        "cachedInputTokens": 17280,
+        "cacheWriteInputTokens": 0,
+        "outputTokens": 76,
+        "reasoningOutputTokens": 0
+      },
+      "modelContextWindow": 258400
+    },
+    "mcp_calls": 5,
+    "mcp_errors": 1,
+    "input_audit": {
+      "target_input_tokens_exclusive": 10000,
+      "measurement": "Provider last.inputTokens includes instructions, tool definitions, history, task and memory. It is not an estimate from character counts.",
+      "cases": [
+        {
+          "case": ".",
+          "log": "events.jsonl",
+          "input_tokens_per_notification": [
+            14707,
+            15383,
+            15680,
+            15842,
+            17306,
+            17519,
+            17966
+          ],
+          "maximum_input_tokens": 17966,
+          "unmeasured_or_reset_notifications": 0,
+          "meets_target": false
+        }
+      ],
+      "meets_target": false,
+      "limitations": "Notifications may repeat reports or reset counters after compaction. Zero or missing counts are unmeasured and cannot establish a pass. Hidden host requests without usage notifications are outside this audit. The adapter cannot enforce a pre-request limit on the full native Codex prompt."
+    }
+  },
+  "browser": {
+    "passed": true,
+    "browser": "152.0.7977.83",
+    "checks": [
+      "local file opening",
+      "pagination",
+      "search",
+      "subject and date filters",
+      "detail panel",
+      "source text",
+      "document change status",
+      "reverse evidence navigation",
+      "episode navigation",
+      "sort and page size",
+      "escaped script input",
+      "original-before-corrected wording",
+      "complete correction scope",
+      "unresolved action display",
+      "mobile width",
+      "no network requests",
+      "no JavaScript errors"
+    ],
+    "network_requests": 0,
+    "javascript_errors": []
+  },
+  "comparisons": {
+    "interruption": {
+      "runs": [
+        {
+          "stage": "before",
+          "aggregate_provider_input_tokens": 259684,
+          "mcp_calls": 12,
+          "mcp_errors": 0
+        },
+        {
+          "stage": "after",
+          "aggregate_provider_input_tokens": 289216,
+          "mcp_calls": 12,
+          "mcp_errors": 0
+        }
+      ],
+      "interpretation": "Same synthetic harness and model, one run at each stage; model variation and path lengths are uncontrolled. This does not isolate a causal token effect."
+    },
+    "documents": {
+      "runs": [
+        {
+          "stage": "before",
+          "aggregate_provider_input_tokens": 116481,
+          "mcp_calls": 5,
+          "mcp_errors": 1
+        },
+        {
+          "stage": "after",
+          "aggregate_provider_input_tokens": 114403,
+          "mcp_calls": 5,
+          "mcp_errors": 1
+        }
+      ],
+      "interpretation": "Same synthetic harness and model, one run at each stage; model variation and path lengths are uncontrolled. This does not isolate a causal token effect."
+    }
+  },
+  "unmeasured": [
+    "Daily completion and quality",
+    "Human corrections",
+    "Maintenance minutes",
+    "Long-term drift",
+    "Competitor performance"
+  ]
+}
