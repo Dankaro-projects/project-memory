@@ -33,7 +33,7 @@ The Codex plugin provides the same three MCP tools and a short workflow skill. I
 
 ## Verify the connection
 
-`project-memory doctor` starts a separate installed MCP process, initialises it, lists tools and reads project direction. It also checks SQLite integrity and reports observed hook counts and unconfirmed actions. Missing lifecycle events may not have happened yet; existing receipt counts are historical evidence, not proof that today's host configuration still works.
+`project-memory doctor` starts a separate installed MCP process, initialises it, lists tools and requests the decision schema. It also checks SQLite integrity and reports observed hook counts and unconfirmed actions. Missing lifecycle events may not have happened yet; existing receipt counts are historical evidence, not proof that today's host configuration still works.
 
 In a new Codex task, ask the assistant to capture a selected document, record a decision with evidence, perform a small project action and record its actual outcome. Inspect the records with `view` and `doctor`. Reproducible live interruption and lifecycle harnesses are in `examples/`; they require a signed-in local Codex and intentionally execute synthetic work. [Evidence](evidence.md) separates those checks from unit tests.
 
@@ -61,3 +61,7 @@ Uninstall removes only its project connection and exact hook commands. It preser
 Back up the database first. Use `project-memory setup --db /absolute/path/to/existing.sqlite --client codex --trust` to explicitly connect it. Core history remains in SQLite schema 2; optional host and project-revision tables are additive. Original immutable requirements remain revision zero. Older versions do not understand revised requirements: after the first approved revision, use this version or newer; restore the pre-upgrade backup for a deliberate rollback.
 
 Do not copy an old private evidence ZIP into the public repository. `.memory` is private operational data, including generated HTML and backups.
+
+## Desktop bundle
+
+The GitHub release also provides an MCPB file. A compatible desktop client asks you to select a project directory and starts the bundled Python server. The directory picker replaces hand-edited MCP configuration. Python 3.11+ must be available to the client (`python3` on macOS/Linux, `python` on Windows). The bundle initialises an empty selected project when needed, with no approved project-specific requirements; it preserves an existing setup. It supports generic explicit capture, not Codex lifecycle hooks. The bundle entry point is tested independently; see the compatibility evidence before assuming support in a particular client.

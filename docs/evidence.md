@@ -29,6 +29,12 @@ A later document workflow passed twelve integration and answer checks, with five
 
 The earlier host verification observed all nine Codex lifecycle events, a real interrupted command, and recovery through a new host process. The command's marker remained exactly once. Process completion remained unknown where the evidence could not establish it. Fault injection before SQLite capture blocked an action; a post-capture failure preserved its side effect and exposed an unconfirmed receipt. These observations motivate the public harnesses, not a claim that every host version behaves identically.
 
+## Public packaging defects found and corrected
+
+The initial Windows run exposed a real freshness defect: a captured `file:///D:/...` URI was not converted back to a Windows path, so changed or unreadable documents appeared current. The implementation now uses the standard library's platform-aware URL-to-path conversion. The same existing cases are rerun on Windows rather than skipped.
+
+The first bundle manifest used an unsupported platform key. The official MCPB validator rejected it; the manifest now uses the documented `platform_overrides` field and passes validation.
+
 ## What remains unmeasured
 
 Daily completion rates, human corrections, net maintenance time, long-term drift and competing products have not been measured in a representative public beta. No guarantee of autonomous learning or competitor superiority follows from the current evidence. The assistant can overlook evidence, write a poor interpretation or fail to record a dependency. Textual freshness cannot establish whether an unchanged vision is still the right vision.

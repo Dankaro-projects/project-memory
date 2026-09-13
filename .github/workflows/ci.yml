@@ -26,6 +26,7 @@ jobs:
       - run: python -m examples.document_case --output results/documents
       - run: python -m examples.host_example --output results/host-example
       - run: node tests/viewer_logic.cjs
+      - run: python scripts/build_bundle.py
       - run: uv build
       - run: python scripts/check_artifacts.py dist
       - run: python scripts/installed_smoke.py dist

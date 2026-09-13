@@ -20,7 +20,7 @@ class CodexClient:
         # Keep account authentication; disable unrelated connectors only for this
         # test process. Do not copy secrets into test logs or a second CODEX_HOME.
         for key in config.get('mcp_servers',{}):
-            if key!='memory':cmd+=['-c',f'mcp_servers.{key}.enabled=false']
+            if key!='project_memory':cmd+=['-c',f'mcp_servers.{key}.enabled=false']
         self.err=self.log.with_suffix('.stderr').open('w')
         self.out=self.log.open('w')
         self.process=subprocess.Popen(cmd,cwd=self.project,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=self.err,text=True,bufsize=1)

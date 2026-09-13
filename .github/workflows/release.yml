@@ -17,6 +17,7 @@ jobs:
       - name: Check release tag
         run: python scripts/check_version.py
       - run: python -m unittest discover -s tests -q
+      - run: python scripts/build_bundle.py
       - run: uv build
       - run: python scripts/check_artifacts.py dist
       - run: python scripts/installed_smoke.py dist
@@ -52,4 +53,22 @@ jobs:
         with:
           name: distributions
           path: dist
+      - run: mkdir pypi-dist && cp dist/*.whl dist/*.tar.gz pypi-dist/
       - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: pypi-dist/
+  registry:
+    needs: [github, pypi]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the verified MCP publisher
+        run: |
+          curl -fsSL https://github.com/modelcontextprotocol/registry/releases/download/v1.8.1/mcp-publisher_linux_amd64.tar.gz -o publisher.tar.gz
+          echo "a06c9096dcb9727c13555b6be26c7effa707b01f06a4c561ba7a3635443cf2cc  publisher.tar.gz" | sha256sum -c -
+          tar -xzf publisher.tar.gz mcp-publisher
+      - run: ./mcp-publisher login github-oidc
+      - run: ./mcp-publisher publish
