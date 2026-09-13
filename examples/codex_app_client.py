@@ -14,7 +14,9 @@ class CodexClient:
         config_path=Path.home()/'.codex/config.toml'
         config=tomllib.loads(config_path.read_text())
         self.model=config.get('model')
-        cmd=['codex','app-server','--stdio','-c','projects={'+json.dumps(str(self.project))+'={trust_level="trusted"}}',
+        if config.get('projects',{}).get(str(self.project),{}).get('trust_level')!='trusted':
+            raise RuntimeError('Run project-memory setup --client codex --trust for this project before the live check.')
+        cmd=['codex','app-server','--stdio',
              '-c','features.plugins=false','-c','features.apps=false','-c','skills.include_instructions=false',
              '-c','project_doc_max_bytes=0','-c','memories.use_memories=false','-c','memories.generate_memories=false']
         # Keep account authentication; disable unrelated connectors only for this

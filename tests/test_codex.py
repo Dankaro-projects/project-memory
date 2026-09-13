@@ -94,7 +94,8 @@ class CodexTests(unittest.TestCase):
         codex_host.capture(self.m,self.event('PreToolUse'))
         with self.assertRaises(sqlite3.IntegrityError):self.m.db.execute('DELETE FROM host_receipts')
     def test_memory_tools_do_not_capture_themselves(self):
-        codex_host.capture(self.m,self.event('PreToolUse',tool_name='mcp__memory__memory_context'))
+        for server in ['memory','project_memory']:
+            codex_host.capture(self.m,self.event('PreToolUse',tool_name='mcp__'+server+'__memory_context'))
         self.assertEqual(self.m.db.execute('SELECT count(*) FROM host_receipts').fetchone()[0],0)
     def test_small_read_does_not_cut_record_conditions(self):
         source=self.m.source('test','Test','x'*1900,'body','tool')
