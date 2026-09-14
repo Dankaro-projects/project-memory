@@ -180,17 +180,19 @@ class LiveProcessTests(unittest.TestCase):
             pieces.append(value['body'])
             if not value['body_more']:break
             offset=value['next_offset']
-        self.assertEqual(''.join(pieces),path.read_text())
+        self.assertEqual(''.join(pieces),path.read_bytes().decode('utf-8'))
         with self.get('api/health') as response:etag=response.headers['ETag']
         path.write_text('A changed exception remains unapproved.')
         with self.get('api/health',{'If-None-Match':etag}) as response:self.assertEqual(response.status,200)
         with self.get('api/records?view=documents') as response:self.assertEqual(json.load(response)['records'][0]['status'],'file_changed')
     def test_expiring_evidence_changes_the_etag_without_a_database_write(self):
         from datetime import datetime, timezone, timedelta
-        deadline=(datetime.now(timezone.utc)+timedelta(seconds=.25)).isoformat()
+        expires=datetime.now(timezone.utc)+timedelta(seconds=5)
+        deadline=expires.isoformat()
         self.m.source('expires','Timed evidence','Check freshness.','Evidence.','tool',review_after=deadline)
         with self.get('api/health') as response:etag=response.headers['ETag']
-        time.sleep(.3)
+        with self.get('api/records?view=sources') as response:self.assertEqual(json.load(response)['records'][0]['status'],'current_copy')
+        time.sleep(max(0,(expires-datetime.now(timezone.utc)).total_seconds())+.05)
         with self.get('api/health',{'If-None-Match':etag}) as response:self.assertEqual(response.status,200)
         with self.get('api/records?view=sources') as response:self.assertEqual(json.load(response)['records'][0]['status'],'review_due')
     def test_project_revision_views_obey_filters_and_keep_initial_history(self):
