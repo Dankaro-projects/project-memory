@@ -99,7 +99,7 @@ def main(argv=None):
             with Memory(database(args)) as memory:
                 if args.cancel:result=reviews.cancel(memory,args.cancel)
                 elif args.wait:
-                    deadline=time.monotonic()+125
+                    deadline=time.monotonic()+305
                     while True:
                         result=reviews.read(memory,args.wait)
                         if result['state'] not in reviews.ACTIVE or time.monotonic()>deadline:break
