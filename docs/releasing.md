@@ -22,3 +22,26 @@ python scripts/publish_smithery.py dist/project-memory-0.5.0-beta.1.mcpb --name 
 ```
 
 This development-only script uses the existing CLI login without printing its credential, runs the trusted release bundle in a temporary project, and submits the bundle with its real tool schemas. It creates the named server only if Smithery reports that it is missing. Check the result, public metadata and downloaded bundle hash before marking publication verified. Do not rerun a deployment after an ambiguous network response without inspecting its release status first. Set the server's description, repository, homepage and licence in the provider listing when creating a new listing.
+
+## Glama
+
+Sign in through GitHub and claim the [existing listing](https://glama.ai/mcp/servers/Dankaro-projects/project-memory). The root `glama.json` identifies authorised maintainers. Search for the repository before submitting another entry.
+
+In Admin > Dockerfile, pin the GitHub release commit. The tested configuration uses `debian:trixie-slim`, Python `3.14` and Glama's Node `24` proxy. Set build steps to:
+
+```json
+[
+  "uv sync --no-dev",
+  ".venv/bin/project-memory setup --client mcp --project ."
+]
+```
+
+Set CMD arguments to:
+
+```json
+["mcp-proxy", "--", "/app/.venv/bin/project-memory", "serve", "--project", "/app"]
+```
+
+No credentials or environment variables are required. Glama clones the public repository into `/app`; setup creates a new empty database there. `uv sync` installs the executable inside `.venv/bin`, so an unqualified `project-memory` command fails in Glama's default PATH. Setup must complete before `serve` starts.
+
+Run Build, inspect the actual handshake and `tools/list` result, then create a release using the matching SemVer beta version. Auto-Release is disabled because this configuration pins a specific commit; update the pin and test each release before publishing. The [dated evidence](verification-glama-2026-09-14.json) includes the tested commit, provider test URL and image reference. This container supports provider inspection; it does not connect Glama to a user's local database. Follow the README for normal local installation.

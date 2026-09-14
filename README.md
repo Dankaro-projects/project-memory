@@ -30,7 +30,7 @@ For another local MCP client, run `project-memory setup --client mcp`, then conf
 
 The same versioned wheel is available from [GitHub Releases](https://github.com/Dankaro-projects/project-memory/releases). The MCPB asset supports directory selection in compatible desktop clients.
 
-Published on [PyPI](https://pypi.org/project/project-memory-mcp/0.5.0b1/), the [official MCP Registry](https://registry.modelcontextprotocol.io/v0.1/servers/io.github.Dankaro-projects%2Fproject-memory/versions/0.5.0b1), and [Smithery](https://smithery.ai/servers/msuteu/project-memory). See [distribution and compatibility](docs/distribution.md) for verified launch paths and remaining limits.
+Published on [PyPI](https://pypi.org/project/project-memory-mcp/0.5.0b1/), the [official MCP Registry](https://registry.modelcontextprotocol.io/v0.1/servers/io.github.Dankaro-projects%2Fproject-memory/versions/0.5.0b1), and [Smithery](https://smithery.ai/servers/msuteu/project-memory). The [Glama listing](https://glama.ai/mcp/servers/Dankaro-projects/project-memory) is also claimed and has a tested beta container release. See [distribution and compatibility](docs/distribution.md) for verified launch paths and remaining limits.
 
 ![The HTML viewer shows synthetic decisions, evidence, corrections and review status.](https://raw.githubusercontent.com/Dankaro-projects/project-memory/main/docs/images/viewer.png)
 
