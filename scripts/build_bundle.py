@@ -14,6 +14,7 @@ files={p.name:p for p in (root/'bundle').iterdir() if p.is_file()}
 files['LICENSE']=root/'LICENSE'
 files.update({p.relative_to(root).as_posix():p for p in (root/'memory_module').iterdir() if p.suffix in {'.py','.html'}})
 files.update({p.relative_to(root).as_posix():p for p in (root/'memory_module/agents').glob('*.md')})
+files.update({p.relative_to(root).as_posix():p for p in (root/'memory_module/assets').glob('*.woff2')})
 with zipfile.ZipFile(output,'w',compression=zipfile.ZIP_DEFLATED) as archive:
     for name,path in sorted(files.items()):
         info=zipfile.ZipInfo(name,date_time=(2026,1,1,0,0,0));info.compress_type=zipfile.ZIP_DEFLATED;info.external_attr=0o644<<16

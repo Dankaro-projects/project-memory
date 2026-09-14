@@ -51,7 +51,7 @@ The same versioned wheel is available from [GitHub Releases](https://github.com/
 
 Published on [PyPI](https://pypi.org/project/project-memory-mcp/0.5.0b4/), the [official MCP Registry](https://registry.modelcontextprotocol.io/v0.1/servers/io.github.Dankaro-projects%2Fproject-memory/versions/0.5.0b4), and [Smithery](https://smithery.ai/servers/msuteu/project-memory). The [Glama listing](https://glama.ai/mcp/servers/Dankaro-projects/project-memory) is also claimed and has a tested beta container release. See [distribution and compatibility](docs/distribution.md) for verified launch paths and remaining limits.
 
-![The HTML viewer shows synthetic decisions, evidence, corrections and review status.](https://raw.githubusercontent.com/Dankaro-projects/project-memory/main/docs/images/viewer.png)
+![The workspace shows synthetic sprint actions, priorities and checked progress.](docs/images/viewer.png)
 
 ## Use it in ordinary work
 
@@ -68,7 +68,7 @@ Then work normally. The assistant supplies record IDs and versions. You review t
 - Selected Markdown files are captured verbatim. Changed, missing and superseded evidence is flagged. Importing a vision does not approve its proposals.
 - Approved project requirements can evolve through append-only revisions. Earlier decisions retain the version they used and become reviewable when the agreed basis changes.
 
-Run `project-memory view` for decisions, documents, corrections, patterns, drift, captures and unresolved work. It opens a live local workspace with paged records, evidence navigation and automatic refresh. The development version also lets you create actions and sprints, revise plans, add comments and inspect or cancel agent checks. Source text loads on demand. Use `--output review.html --include-bodies` for an offline snapshot.
+Run `project-memory view` for decisions, documents, corrections, patterns, drift, captures and unresolved work. It opens a live local workspace with paged records, evidence navigation and automatic refresh. The development version also lets you create actions and sprints, revise plans, add comments and inspect or cancel agent checks. The [workspace interface](docs/workspace-ui.md) adds sidebar navigation, a side inspector and formatted documents with access to the original text. Source text loads on demand. Use `--output review.html --include-bodies` for an offline snapshot.
 
 ## What is automatic
 
