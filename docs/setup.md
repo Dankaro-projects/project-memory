@@ -115,7 +115,7 @@ When mandatory context exceeds a requested budget, the error reports the minimum
 
 ## Live viewer and offline exports
 
-The live viewer binds only to `127.0.0.1`, uses a random capability in its URL, validates the request host and origin, and opens SQLite read-only. The address and credential remain in private `.memory/viewer.json`; do not share that URL. No cloud service, browser SQLite engine or additional runtime package is needed.
+The live viewer binds only to `127.0.0.1`, uses a random capability in its URL, validates the request host and origin, and uses read-only connections for retrieval. The development workspace opens a separate write connection only for validated plan, sprint, comment and review requests. Writes also require a same-origin JSON request and a session CSRF token. The address and credential remain in private `.memory/viewer.json`; do not share that URL. No cloud service, browser SQLite engine or additional runtime package is needed.
 
 The browser reads pages of records and loads source text on demand. It checks committed SQLite changes and selected-file state every two seconds while visible. Unchanged checks receive an HTTP 304 response. Filters, page selection, the open record and its scroll position survive refresh. Related evidence remains available outside the current page. The viewer identifies stale evidence and gives concrete reasons for dependent decisions that need review. Unreported costs appear as not measured.
 
@@ -130,4 +130,8 @@ project-memory view --output review.html --include-bodies --replace --no-open
 
 An explicit output path creates a static snapshot. Existing files are protected unless `--replace` is supplied; replacement uses a temporary file and atomic rename. Offline files state that they need regeneration. Source bodies remain optional. Avoid sharing an export containing private project evidence.
 
-When upgrading, setup checks the version of a running viewer. If it belongs to an older release, setup opens the current viewer at a new local address. Close the old tab; its read-only service exits after ten minutes without requests. Same-version restarts retain the existing address.
+When upgrading, setup checks the version of a running viewer. If it belongs to an older release, setup opens the current viewer at a new local address. Close the old tab; its service exits after ten minutes without requests. Same-version restarts retain the existing address.
+
+## Development workspace and agents
+
+The source version `0.5.0b5` adds the interactive workspace and agent checks. It is not yet a published release. Follow [the development install instructions](workspace-agents.md#install-this-development-version). The published commands above still install beta 4. Connecting Codex or Claude in beta 5 enables conditional model reviews through that installed host and account. These reviews consume provider usage. Generic MCP setup does not enable a reviewer.

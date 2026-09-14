@@ -154,8 +154,11 @@ def capture(memory, event, host='codex'):
             if key in event and isinstance(event[key], str): payload[key] = event[key][:200]
         if host != 'codex': payload['host'] = host
         if host_event != name: payload['host_event'] = host_event
+        if name=='Stop':payload['stop_hook_active']=bool(event.get('stop_hook_active'))
         if name == 'PostToolUse' and host_event == 'PostToolUseFailure': payload['failed'] = True
         key = [session,turn,name,tool_id,payload.get('source')]
+        if name=='Stop':
+            key.extend([payload.get('last_assistant_message',{}).get('sha256'),payload['stop_hook_active']])
         if host != 'codex': key.append(host)
         if 'documents' in payload: key.append(payload['documents'])
         # Without a turn or prompt identifier, repeated lifecycle events in one session must not collide.
@@ -205,6 +208,7 @@ def capture(memory, event, host='codex'):
             return response(prefix+dumps(packet))
         return response(text)
     if name in {'Stop', 'PostCompact'}:
+        if name=='Stop' and (host=='claude' or event.get('stop_hook_active')):return {}
         binding = active_binding(memory, session)
         if binding:
             from .planning import latest
@@ -283,6 +287,14 @@ def main():
         with Memory(args.db) as memory:
             memory.db.execute('PRAGMA busy_timeout=750')
             result=capture(memory,event,host=args.host)
+            from .reviews import hook
+            check=hook(memory,event,args.host)
+            if check:
+                if 'decision' in check: result=check
+                else:
+                    extra=check.get('hookSpecificOutput',{}).get('additionalContext','')
+                    output=result.setdefault('hookSpecificOutput',{'hookEventName':event['hook_event_name']})
+                    output['additionalContext']=output.get('additionalContext','')+' '+extra
         print(dumps(result));return 0
     except (OSError,ValueError,TypeError,KeyError,sqlite3.Error,InvalidRecord,Conflict) as exc:
         # Exit 2 blocks supported pre-tool calls and reports post-capture failures.

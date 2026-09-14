@@ -1,0 +1,996 @@
+{
+  "date": "2026-09-14",
+  "scope": "Invented encoding contract, actual Python tests, real local host accounts and browser interactions. These are not customer or production outcomes.",
+  "baseline": {
+    "package_version": "0.5.0b4",
+    "source_commit": "b65b7ae7a5aba18a8fddc9e84f62247e2d089ccf",
+    "state": "done",
+    "duration_ms": 3.28,
+    "false_completion_accepted": true,
+    "required_legacy_path_missing": true,
+    "implemented_tests_pass": 2
+  },
+  "updated": {
+    "false_completion_rejected": true,
+    "message": "Done requires a current, evidenced good outcome, no unresolved execution and a passing outcome agent check when configured. Read memory_get reviews; wait with project-memory review --wait CHECK_ID."
+  },
+  "cases": [
+    {
+      "case": "agents-codex",
+      "checks": [
+        {
+          "id": "check_6230643e1862409aa6fa58de0fccc277",
+          "host": "codex",
+          "role": "outcome",
+          "state": "failed",
+          "metrics": {
+            "duration_ms": 515,
+            "input_characters": 5407,
+            "provider_usage": null
+          },
+          "criterion_results": null
+        },
+        {
+          "id": "check_2005847d39194b87ad5610ee52ed02d1",
+          "host": "codex",
+          "role": "outcome",
+          "state": "failed",
+          "metrics": {
+            "duration_ms": 524,
+            "input_characters": 5407,
+            "provider_usage": null
+          },
+          "criterion_results": null
+        },
+        {
+          "id": "check_e8040836e1b94a59a6d2e9cb06868200",
+          "host": "codex",
+          "role": "outcome",
+          "state": "changes_required",
+          "metrics": {
+            "duration_ms": 51320,
+            "input_characters": 5407,
+            "provider_usage": [
+              {
+                "cache_write_input_tokens": 0,
+                "cached_input_tokens": 23168,
+                "input_tokens": 35596,
+                "output_tokens": 1254,
+                "reasoning_output_tokens": 502
+              }
+            ]
+          },
+          "criterion_results": [
+            "met",
+            "met",
+            "unmet",
+            "met"
+          ]
+        },
+        {
+          "id": "check_5840271b3fed471aa7154cba75158961",
+          "host": "codex",
+          "role": "outcome",
+          "state": "pass",
+          "metrics": {
+            "duration_ms": 57940,
+            "input_characters": 5494,
+            "provider_usage": [
+              {
+                "cache_write_input_tokens": 0,
+                "cached_input_tokens": 31360,
+                "input_tokens": 35889,
+                "output_tokens": 1677,
+                "reasoning_output_tokens": 844
+              }
+            ]
+          },
+          "criterion_results": [
+            "met",
+            "met",
+            "met",
+            "met"
+          ]
+        }
+      ],
+      "hooks": [
+        {
+          "event_name": "ReviewFinished",
+          "count": 4
+        },
+        {
+          "event_name": "ReviewRequested",
+          "count": 4
+        }
+      ]
+    },
+    {
+      "case": "agents-claude",
+      "checks": [
+        {
+          "id": "check_3f3b3a6aa7e54771b1d5116f29609b50",
+          "host": "claude",
+          "role": "outcome",
+          "state": "changes_required",
+          "metrics": {
+            "duration_ms": 30973,
+            "input_characters": 5408,
+            "provider_usage": {
+              "cache_creation": {
+                "ephemeral_1h_input_tokens": 6154,
+                "ephemeral_5m_input_tokens": 0
+              },
+              "cache_creation_input_tokens": 6154,
+              "cache_read_input_tokens": 11411,
+              "inference_geo": "not_available",
+              "input_tokens": 66,
+              "iterations": [
+                {
+                  "cache_creation": {
+                    "ephemeral_1h_input_tokens": 392,
+                    "ephemeral_5m_input_tokens": 0
+                  },
+                  "cache_creation_input_tokens": 392,
+                  "cache_read_input_tokens": 5762,
+                  "input_tokens": 32,
+                  "output_tokens": 1955,
+                  "type": "message"
+                }
+              ],
+              "output_tokens": 2189,
+              "output_tokens_details": {
+                "thinking_tokens": 289
+              },
+              "server_tool_use": {
+                "web_fetch_requests": 0,
+                "web_search_requests": 0
+              },
+              "service_tier": "standard",
+              "speed": "standard"
+            }
+          },
+          "criterion_results": [
+            "met",
+            "met",
+            "unmet",
+            "met",
+            "unmet"
+          ]
+        },
+        {
+          "id": "check_1da688d7c3964a20933460aba4938f63",
+          "host": "claude",
+          "role": "outcome",
+          "state": "pass",
+          "metrics": {
+            "duration_ms": 40607,
+            "input_characters": 5495,
+            "provider_usage": {
+              "cache_creation": {
+                "ephemeral_1h_input_tokens": 5075,
+                "ephemeral_5m_input_tokens": 0
+              },
+              "cache_creation_input_tokens": 5075,
+              "cache_read_input_tokens": 35714,
+              "inference_geo": "not_available",
+              "input_tokens": 162,
+              "iterations": [
+                {
+                  "cache_creation": {
+                    "ephemeral_1h_input_tokens": 535,
+                    "ephemeral_5m_input_tokens": 0
+                  },
+                  "cache_creation_input_tokens": 535,
+                  "cache_read_input_tokens": 7743,
+                  "input_tokens": 32,
+                  "output_tokens": 1699,
+                  "type": "message"
+                }
+              ],
+              "output_tokens": 2823,
+              "output_tokens_details": {
+                "thinking_tokens": 556
+              },
+              "server_tool_use": {
+                "web_fetch_requests": 0,
+                "web_search_requests": 0
+              },
+              "service_tier": "standard",
+              "speed": "standard"
+            }
+          },
+          "criterion_results": [
+            "met",
+            "met",
+            "met",
+            "met",
+            "met"
+          ]
+        }
+      ],
+      "hooks": [
+        {
+          "event_name": "ReviewFinished",
+          "count": 2
+        },
+        {
+          "event_name": "ReviewRequested",
+          "count": 2
+        }
+      ]
+    },
+    {
+      "case": "agents-native-hook",
+      "checks": [
+        {
+          "id": "check_79dfabbab9dd4e09a5d3a1c5394e04d2",
+          "host": "codex",
+          "role": "outcome",
+          "state": "changes_required",
+          "metrics": {
+            "duration_ms": 46680,
+            "input_characters": 5413,
+            "provider_usage": [
+              {
+                "cache_write_input_tokens": 0,
+                "cached_input_tokens": 19712,
+                "input_tokens": 35702,
+                "output_tokens": 1255,
+                "reasoning_output_tokens": 456
+              }
+            ]
+          },
+          "criterion_results": [
+            "met",
+            "met",
+            "unmet",
+            "met"
+          ]
+        }
+      ],
+      "hooks": [
+        {
+          "event_name": "DecisionBound",
+          "count": 1
+        },
+        {
+          "event_name": "PostToolUse",
+          "count": 9
+        },
+        {
+          "event_name": "PreToolUse",
+          "count": 9
+        },
+        {
+          "event_name": "ReviewFinished",
+          "count": 1
+        },
+        {
+          "event_name": "ReviewRequested",
+          "count": 1
+        },
+        {
+          "event_name": "SessionStart",
+          "count": 1
+        },
+        {
+          "event_name": "Stop",
+          "count": 1
+        },
+        {
+          "event_name": "UserPromptSubmit",
+          "count": 1
+        }
+      ],
+      "native_input_tokens_per_notification": [
+        14284,
+        15001,
+        16608,
+        16750,
+        16947,
+        17338,
+        18585,
+        19081,
+        19348,
+        19913,
+        20030,
+        20852,
+        21419,
+        35025,
+        41548,
+        43000,
+        43884,
+        45156,
+        45448,
+        45656,
+        45888,
+        46151,
+        46390,
+        46575,
+        46810
+      ],
+      "maximum_native_input_tokens": 46810
+    },
+    {
+      "case": "agents-native-hook-final",
+      "checks": [
+        {
+          "id": "check_cb1104bf8a384a42b67c9e4216ccc15a",
+          "host": "codex",
+          "role": "outcome",
+          "state": "changes_required",
+          "metrics": {
+            "duration_ms": 48480,
+            "input_characters": 5440,
+            "provider_usage": [
+              {
+                "cache_write_input_tokens": 0,
+                "cached_input_tokens": 23168,
+                "input_tokens": 35653,
+                "output_tokens": 1259,
+                "reasoning_output_tokens": 443
+              }
+            ]
+          },
+          "criterion_results": [
+            "met",
+            "met",
+            "unmet",
+            "met"
+          ]
+        }
+      ],
+      "hooks": [
+        {
+          "event_name": "DecisionBound",
+          "count": 1
+        },
+        {
+          "event_name": "PostToolUse",
+          "count": 6
+        },
+        {
+          "event_name": "PreToolUse",
+          "count": 6
+        },
+        {
+          "event_name": "ReviewBlockIssued",
+          "count": 1
+        },
+        {
+          "event_name": "ReviewFinished",
+          "count": 1
+        },
+        {
+          "event_name": "ReviewRequested",
+          "count": 1
+        },
+        {
+          "event_name": "SessionStart",
+          "count": 1
+        },
+        {
+          "event_name": "Stop",
+          "count": 2
+        },
+        {
+          "event_name": "UserPromptSubmit",
+          "count": 1
+        }
+      ],
+      "native_input_tokens_per_notification": [
+        14153,
+        14733,
+        16465,
+        17185,
+        18066,
+        18542,
+        19023,
+        19290,
+        19666,
+        19806,
+        19903,
+        21068,
+        21578
+      ],
+      "maximum_native_input_tokens": 21578
+    },
+    {
+      "case": "agents-native-interrupt",
+      "checks": [
+        {
+          "id": "check_ad39b5aaa99048e0ba03f2be0e7d0b62",
+          "host": "codex",
+          "role": "outcome",
+          "state": "cancelled",
+          "metrics": {
+            "duration_ms": 525,
+            "input_characters": 5418,
+            "provider_usage": null
+          },
+          "criterion_results": null
+        }
+      ],
+      "hooks": [
+        {
+          "event_name": "DecisionBound",
+          "count": 1
+        },
+        {
+          "event_name": "Interrupt",
+          "count": 1
+        },
+        {
+          "event_name": "ReviewFinished",
+          "count": 1
+        },
+        {
+          "event_name": "ReviewRequested",
+          "count": 1
+        },
+        {
+          "event_name": "SessionStart",
+          "count": 1
+        },
+        {
+          "event_name": "UserPromptSubmit",
+          "count": 1
+        }
+      ],
+      "native_input_tokens_per_notification": [],
+      "maximum_native_input_tokens": null
+    },
+    {
+      "case": "agents-native-interrupt-final",
+      "checks": [
+        {
+          "id": "check_a7941fca367c43468980c3d80db5f431",
+          "host": "codex",
+          "role": "outcome",
+          "state": "cancelled",
+          "metrics": {
+            "duration_ms": 1535,
+            "input_characters": 5445,
+            "provider_usage": null
+          },
+          "criterion_results": null
+        },
+        {
+          "id": "check_f8b477b9c53941d0b6d2bdd8229dfc14",
+          "host": "codex",
+          "role": "recovery",
+          "state": "changes_required",
+          "metrics": {
+            "duration_ms": 59551,
+            "input_characters": 5588,
+            "provider_usage": [
+              {
+                "cache_write_input_tokens": 0,
+                "cached_input_tokens": 43520,
+                "input_tokens": 48601,
+                "output_tokens": 1633,
+                "reasoning_output_tokens": 766
+              }
+            ]
+          },
+          "criterion_results": [
+            "met",
+            "met",
+            "unmet",
+            "met"
+          ]
+        }
+      ],
+      "hooks": [
+        {
+          "event_name": "DecisionBound",
+          "count": 1
+        },
+        {
+          "event_name": "Interrupt",
+          "count": 1
+        },
+        {
+          "event_name": "PostToolUse",
+          "count": 5
+        },
+        {
+          "event_name": "PreToolUse",
+          "count": 5
+        },
+        {
+          "event_name": "ReviewBlockIssued",
+          "count": 1
+        },
+        {
+          "event_name": "ReviewFinished",
+          "count": 2
+        },
+        {
+          "event_name": "ReviewRequested",
+          "count": 2
+        },
+        {
+          "event_name": "SessionStart",
+          "count": 1
+        },
+        {
+          "event_name": "Stop",
+          "count": 1
+        },
+        {
+          "event_name": "UserPromptSubmit",
+          "count": 1
+        }
+      ],
+      "native_input_tokens_per_notification": [
+        14151,
+        15651,
+        16991,
+        17639,
+        18441,
+        18974,
+        19435,
+        19435
+      ],
+      "maximum_native_input_tokens": 19435
+    },
+    {
+      "case": "agents-intent",
+      "checks": [
+        {
+          "id": "check_6d8f3825e6294d3a89ac3edc235ba106",
+          "host": "codex",
+          "role": "intent",
+          "state": "changes_required",
+          "metrics": {
+            "duration_ms": 55011,
+            "input_characters": 5458,
+            "provider_usage": [
+              {
+                "cache_write_input_tokens": 0,
+                "cached_input_tokens": 23168,
+                "input_tokens": 35754,
+                "output_tokens": 1468,
+                "reasoning_output_tokens": 492
+              }
+            ]
+          },
+          "criterion_results": [
+            "met",
+            "met",
+            "met",
+            "unmet",
+            "met",
+            "unmet",
+            "unmet"
+          ]
+        }
+      ],
+      "hooks": [
+        {
+          "event_name": "ReviewFinished",
+          "count": 1
+        },
+        {
+          "event_name": "ReviewRequested",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "case": "agents-native-claude",
+      "checks": [
+        {
+          "id": "check_497f75a596854805bf199ccca0c701a3",
+          "host": "claude",
+          "role": "outcome",
+          "state": "changes_required",
+          "metrics": {
+            "duration_ms": 25731,
+            "input_characters": 5436,
+            "provider_usage": {
+              "cache_creation": {
+                "ephemeral_1h_input_tokens": 2952,
+                "ephemeral_5m_input_tokens": 0
+              },
+              "cache_creation_input_tokens": 2952,
+              "cache_read_input_tokens": 14613,
+              "inference_geo": "not_available",
+              "input_tokens": 66,
+              "iterations": [
+                {
+                  "cache_creation": {
+                    "ephemeral_1h_input_tokens": 396,
+                    "ephemeral_5m_input_tokens": 0
+                  },
+                  "cache_creation_input_tokens": 396,
+                  "cache_read_input_tokens": 5759,
+                  "input_tokens": 32,
+                  "output_tokens": 1608,
+                  "type": "message"
+                }
+              ],
+              "output_tokens": 1841,
+              "output_tokens_details": {
+                "thinking_tokens": 86
+              },
+              "server_tool_use": {
+                "web_fetch_requests": 0,
+                "web_search_requests": 0
+              },
+              "service_tier": "standard",
+              "speed": "standard"
+            }
+          },
+          "criterion_results": [
+            "met",
+            "met",
+            "unmet",
+            "met"
+          ]
+        }
+      ],
+      "hooks": [
+        {
+          "event_name": "DecisionBound",
+          "count": 1
+        },
+        {
+          "event_name": "PostToolUse",
+          "count": 3
+        },
+        {
+          "event_name": "PreToolUse",
+          "count": 3
+        },
+        {
+          "event_name": "ReviewBlockIssued",
+          "count": 1
+        },
+        {
+          "event_name": "ReviewFinished",
+          "count": 1
+        },
+        {
+          "event_name": "ReviewRequested",
+          "count": 1
+        },
+        {
+          "event_name": "SessionEnd",
+          "count": 1
+        },
+        {
+          "event_name": "SessionStart",
+          "count": 1
+        },
+        {
+          "event_name": "Stop",
+          "count": 7
+        },
+        {
+          "event_name": "UserPromptSubmit",
+          "count": 1
+        }
+      ],
+      "native_host": {
+        "is_error": false,
+        "duration_ms": 37931,
+        "num_turns": 5,
+        "usage": {
+          "input_tokens": 96,
+          "cache_creation_input_tokens": 7711,
+          "cache_read_input_tokens": 89778,
+          "output_tokens": 1865,
+          "output_tokens_details": {
+            "thinking_tokens": 633
+          },
+          "server_tool_use": {
+            "web_search_requests": 0,
+            "web_fetch_requests": 0
+          },
+          "service_tier": "standard",
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 7711,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "inference_geo": "not_available",
+          "iterations": [
+            {
+              "input_tokens": 4,
+              "output_tokens": 178,
+              "cache_read_input_tokens": 10341,
+              "cache_creation_input_tokens": 263,
+              "cache_creation": {
+                "ephemeral_5m_input_tokens": 0,
+                "ephemeral_1h_input_tokens": 263
+              },
+              "type": "message"
+            }
+          ],
+          "speed": "standard"
+        }
+      }
+    },
+    {
+      "case": "agents-native-claude-final",
+      "checks": [
+        {
+          "id": "check_f1927e2fa4e44021b502c2f260d23dce",
+          "host": "claude",
+          "role": "outcome",
+          "state": "changes_required",
+          "metrics": {
+            "duration_ms": 32811,
+            "input_characters": 5442,
+            "provider_usage": {
+              "cache_creation": {
+                "ephemeral_1h_input_tokens": 4062,
+                "ephemeral_5m_input_tokens": 0
+              },
+              "cache_creation_input_tokens": 4062,
+              "cache_read_input_tokens": 27684,
+              "inference_geo": "not_available",
+              "input_tokens": 130,
+              "iterations": [
+                {
+                  "cache_creation": {
+                    "ephemeral_1h_input_tokens": 428,
+                    "ephemeral_5m_input_tokens": 0
+                  },
+                  "cache_creation_input_tokens": 428,
+                  "cache_read_input_tokens": 6837,
+                  "input_tokens": 32,
+                  "output_tokens": 1657,
+                  "type": "message"
+                }
+              ],
+              "output_tokens": 2233,
+              "output_tokens_details": {
+                "thinking_tokens": 125
+              },
+              "server_tool_use": {
+                "web_fetch_requests": 0,
+                "web_search_requests": 0
+              },
+              "service_tier": "standard",
+              "speed": "standard"
+            }
+          },
+          "criterion_results": [
+            "met",
+            "met",
+            "unmet",
+            "met"
+          ]
+        }
+      ],
+      "hooks": [
+        {
+          "event_name": "DecisionBound",
+          "count": 1
+        },
+        {
+          "event_name": "PostToolUse",
+          "count": 3
+        },
+        {
+          "event_name": "PreToolUse",
+          "count": 3
+        },
+        {
+          "event_name": "ReviewBlockIssued",
+          "count": 1
+        },
+        {
+          "event_name": "ReviewFinished",
+          "count": 1
+        },
+        {
+          "event_name": "ReviewRequested",
+          "count": 1
+        },
+        {
+          "event_name": "SessionEnd",
+          "count": 1
+        },
+        {
+          "event_name": "SessionStart",
+          "count": 1
+        },
+        {
+          "event_name": "Stop",
+          "count": 2
+        },
+        {
+          "event_name": "UserPromptSubmit",
+          "count": 1
+        }
+      ],
+      "native_host": {
+        "is_error": false,
+        "duration_ms": 19752,
+        "num_turns": 5,
+        "usage": {
+          "input_tokens": 68,
+          "cache_creation_input_tokens": 3629,
+          "cache_read_input_tokens": 25239,
+          "output_tokens": 1279,
+          "output_tokens_details": {
+            "thinking_tokens": 268
+          },
+          "server_tool_use": {
+            "web_search_requests": 0,
+            "web_fetch_requests": 0
+          },
+          "service_tier": "standard",
+          "cache_creation": {
+            "ephemeral_1h_input_tokens": 3629,
+            "ephemeral_5m_input_tokens": 0
+          },
+          "inference_geo": "not_available",
+          "iterations": [
+            {
+              "input_tokens": 2,
+              "output_tokens": 572,
+              "cache_read_input_tokens": 7174,
+              "cache_creation_input_tokens": 981,
+              "cache_creation": {
+                "ephemeral_5m_input_tokens": 0,
+                "ephemeral_1h_input_tokens": 981
+              },
+              "type": "message"
+            }
+          ],
+          "speed": "standard"
+        }
+      }
+    },
+    {
+      "case": "agents-mcp-outcome",
+      "checks": [
+        {
+          "id": "check_bf399a00efc340ee967c7023668e922a",
+          "host": "claude",
+          "role": "outcome",
+          "state": "changes_required",
+          "metrics": {
+            "duration_ms": 33833,
+            "input_characters": 6394,
+            "provider_usage": {
+              "cache_creation": {
+                "ephemeral_1h_input_tokens": 4739,
+                "ephemeral_5m_input_tokens": 0
+              },
+              "cache_creation_input_tokens": 4739,
+              "cache_read_input_tokens": 23239,
+              "inference_geo": "not_available",
+              "input_tokens": 98,
+              "iterations": [
+                {
+                  "cache_creation": {
+                    "ephemeral_1h_input_tokens": 558,
+                    "ephemeral_5m_input_tokens": 0
+                  },
+                  "cache_creation_input_tokens": 558,
+                  "cache_read_input_tokens": 7384,
+                  "input_tokens": 32,
+                  "output_tokens": 1724,
+                  "type": "message"
+                }
+              ],
+              "output_tokens": 2512,
+              "output_tokens_details": {
+                "thinking_tokens": 142
+              },
+              "server_tool_use": {
+                "web_fetch_requests": 0,
+                "web_search_requests": 0
+              },
+              "service_tier": "standard",
+              "speed": "standard"
+            }
+          },
+          "criterion_results": [
+            "met",
+            "met",
+            "unmet",
+            "met"
+          ]
+        }
+      ],
+      "hooks": [
+        {
+          "event_name": "ReviewFinished",
+          "count": 1
+        },
+        {
+          "event_name": "ReviewRequested",
+          "count": 1
+        }
+      ]
+    }
+  ],
+  "browser": {
+    "passed": true,
+    "browser": "152.0.7977.83",
+    "initial_ready_ms": 107,
+    "checks": [
+      "create sprint",
+      "create action",
+      "structured sprint assignment",
+      "inspect intent and lineage",
+      "add comment",
+      "reject unsupported Done",
+      "preserve draft on concurrent edit",
+      "reload current version",
+      "save revised plan",
+      "sprint filtering",
+      "mobile form width",
+      "no external requests",
+      "no JavaScript errors"
+    ]
+  },
+  "offline_browser": {
+    "passed": true,
+    "browser": "152.0.7977.83",
+    "checks": [
+      "local file opening",
+      "pagination",
+      "search",
+      "subject and date filters",
+      "detail panel",
+      "source text",
+      "document change status",
+      "reverse evidence navigation",
+      "episode navigation",
+      "sort and page size",
+      "escaped script input",
+      "original-before-corrected wording",
+      "complete correction scope",
+      "unresolved action display",
+      "mobile width",
+      "work board pagination",
+      "board search",
+      "sprint selection",
+      "intent and scope detail",
+      "board hides irrelevant filters",
+      "board mobile width",
+      "no network requests",
+      "no JavaScript errors"
+    ],
+    "network_requests": 0,
+    "javascript_errors": []
+  },
+  "local_latency": {
+    "two_card_board": {
+      "milliseconds": [
+        13.98,
+        12.73,
+        11.0,
+        13.08,
+        14.2
+      ],
+      "median_ms": 13.08
+    },
+    "revision_with_artifact_hash": {
+      "milliseconds": [
+        11.44,
+        9.64,
+        11.45,
+        9.5,
+        9.97
+      ],
+      "median_ms": 9.97
+    }
+  },
+  "runtime_dependencies": 0,
+  "unmeasured": {
+    "daily_repeated_research": null,
+    "daily_human_corrections": null,
+    "daily_maintenance_effort": null,
+    "production_quality": null,
+    "competitor_comparison": null
+  },
+  "interpretation": "Provider reviewer usage aggregates several requests. Cached tokens remain part of model input. Character counts are not token measurements. Native Codex notification counts measure full inputs where available; the 10K target is unmet. Small-fixture latency is not a scale benchmark. Earlier failed runs are retained."
+}

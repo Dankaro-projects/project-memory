@@ -20,7 +20,7 @@ for path in artifacts:
         parts=PurePosixPath(name).parts
         if any(p in {'.memory','.codex','results','__pycache__','.env'} for p in parts) or re.search(r'\.(sqlite\w*|db\w*|jsonl|pyc|zip)$',name):
             raise SystemExit('Private or generated member: '+name)
-        if name.startswith('memory_module/') and PurePosixPath(name).suffix not in {'.py','.html'}:
+        if name.startswith('memory_module/') and PurePosixPath(name).suffix not in {'.py','.html'} and name not in {'memory_module/agents/outcome.md','memory_module/agents/intent.md','memory_module/agents/recovery.md'}:
             raise SystemExit('Unexpected runtime member: '+name)
         if path.suffix=='.whl' and not (name.startswith('memory_module/') or parts[0].endswith('.dist-info')):
             raise SystemExit('Unexpected wheel member: '+name)

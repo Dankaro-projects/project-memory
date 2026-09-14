@@ -37,12 +37,13 @@ def launcher():
     if uv and (SOURCE_ROOT/'pyproject.toml').exists() and (SOURCE_ROOT/'.venv').exists():
         # A source checkout runs its own environment, so unreleased changes can be exercised in a real host.
         return [uv,'run','--project',str(SOURCE_ROOT),'project-memory']
+    if not any(part.startswith('archive-v') for part in Path(sys.executable).parts):
+        # Persistent installations must run their installed code, including unreleased wheels.
+        return [sys.executable,'-m','memory_module.cli']
     if uv:
         # The host retains a stable launcher, never an interpreter in uvx's cache.
         return [uv,'tool','run','--from',RELEASE_SOURCE,'project-memory']
-    if any(part.startswith('archive-v') for part in Path(sys.executable).parts):
-        raise Conflict('Install uv or install project-memory-mcp in a persistent environment before setting up Codex.')
-    return [sys.executable,'-m','memory_module.cli']
+    raise Conflict('Install uv or install project-memory-mcp in a persistent environment before setting up Codex.')
 
 
 def paths(project):
@@ -185,6 +186,9 @@ def setup(project, *, client='mcp', database=None, requirements=None, documents=
                 if path.exists():shutil.copy2(path,backup_dir/path.name)
             backups=[str(backup_dir)]
         initialize(memory)
+        if client in {'codex','claude'}:
+            from .reviews import configure
+            configure(memory,project,client)
         from .health import inspect
         health=inspect(memory)
         captured=[memory.document(str(Path(doc).resolve()))['id'] for doc in documents]
@@ -205,7 +209,7 @@ def setup(project, *, client='mcp', database=None, requirements=None, documents=
              'claude':'Configured only. Start a new Claude Code session in this project, approve the project MCP server if asked, and inspect doctor for actual receipts.',
              'mcp':'Explicit MCP capture only; this client has no automatic hooks.'}[client]
     result={'project':str(project),'database':str(database),'client':client,'documents':captured,'phase':'installed','capture':capture,'baseline':health['baseline'],
-            'viewer':{'available':True,'command':'project-memory view','mode':'live; read-only; local'}}
+            'viewer':{'available':True,'command':'project-memory view','mode':'live; interactive; local'}}
     if trust and client=='codex':
         from .setup_codex import trust_project_hooks
         result['trust']=trust_project_hooks(project,database,command)

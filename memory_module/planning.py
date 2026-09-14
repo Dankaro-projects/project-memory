@@ -91,7 +91,9 @@ def completed_result(memory, episode_id):
     if not row:
         return False
     outcome = json.loads(row['payload'])
-    return (outcome.get('assessment') == 'good' and outcome.get('completion') == 'complete'
+    from .reviews import required, current
+    check = current(memory,episode_id) if required(memory,episode_id) else None
+    return ((not check or check['state']=='pass') and outcome.get('assessment') == 'good' and outcome.get('completion') == 'complete'
             and not memory._needs_review(row['id']) and not memory.pending(episode_id, limit=1)['total']
             and not unresolved(memory, episode_id))
 
@@ -132,7 +134,11 @@ def validate_event(memory, episode, kind, payload, evidence):
         if found:
             raise InvalidRecord('Work dependencies cannot contain a cycle.')
     if payload['state'] == 'done' and not completion(memory, episode['id']):
-        raise InvalidRecord('Done requires a current, evidenced good outcome with completion complete and no unresolved execution.')
+        raise InvalidRecord('Done requires a current, evidenced good outcome, no unresolved execution and a passing outcome agent check when configured. Read memory_get reviews; wait with project-memory review --wait CHECK_ID.')
+    if payload['state']=='done':
+        prior=latest(memory,episode['id'],'work_plan')
+        if prior and any(prior.get(k,[] if k=='depends_on' else None)!=payload.get(k,[] if k=='depends_on' else None) for k in ('scope','autonomy','depends_on')):
+            raise InvalidRecord('Changed scope or dependencies require a new assessment before Done. Save the revised plan in Review first.')
 
 
 def save(memory, kind, *, payload, actor, evidence, episode_id=None, expected_version=None,
@@ -195,14 +201,37 @@ def card(memory, episode_id):
     outcome_row = memory.db.execute("SELECT id,payload FROM events WHERE kind='outcome' AND decision_id=? ORDER BY seq DESC LIMIT 1",
                                     (decision['id'],)).fetchone() if decision else None
     outcome = {'id': outcome_row['id'], **json.loads(outcome_row['payload'])} if outcome_row else None
+    from .reviews import required, current
+    check = current(memory,episode_id) if required(memory,episode_id) else None
+    if check and check['state']!='pass' and recorded!='cancelled' and (recorded=='done' or outcome and outcome.get('completion')=='complete'):
+        problems.append({'type':'agent_check','reason':'The outcome agent check is '+check['state'].replace('_',' ')+'.','run_id':check.get('id')})
+        if state not in {'blocked','backlog'}: state='review'
+    if check:
+        report=check.get('report')
+        check={k:v for k,v in check.items() if k!='report'}
+        if report:check['summary']=report['summary']
+        if check.get('id'):check['read_full_with']={'view':'record','id':check['id'],'max_chars':20000}
     return {'id': episode_id, 'title': episode['title'], 'subject': episode['subject'], 'date': episode['created_at'],
             'version': episode['version'], 'intent': episode['objective'], 'done_when': episode['criterion'],
             'state': state, 'recorded_state': recorded, 'plan': plan, 'issues': problems,
-            'decision_id': decision['id'] if decision else None,
+            'decision_id': decision['id'] if decision else None, **({'agent_check':check} if check else {}),
             'outcome': {'id': outcome['id'], 'assessment': outcome['assessment'], 'completion': outcome.get('completion')} if outcome else None}
 
 
 def board(memory, *, limit=25, offset=0, sprint_id=None, subject=None, query='', state=None, episode_id=None):
+    from .reviews import configured, exists, tree_signature
+    from subprocess import SubprocessError
+    config=configured(memory)
+    cache=config and exists(memory) and memory.db.execute('SELECT 1 FROM review_runs LIMIT 1').fetchone()
+    if cache:
+        try:memory._review_tree=tree_signature(config['project'])
+        except (OSError,SubprocessError):cache=False
+    try:return _board(memory,limit=limit,offset=offset,sprint_id=sprint_id,subject=subject,query=query,state=state,episode_id=episode_id)
+    finally:
+        if cache:del memory._review_tree
+
+
+def _board(memory, *, limit=25, offset=0, sprint_id=None, subject=None, query='', state=None, episode_id=None):
     from .core import InvalidRecord
     if type(limit) is not int or not 1 <= limit <= 100 or type(offset) is not int or offset < 0:
         raise InvalidRecord('Use limit 1–100 and a nonnegative offset.')

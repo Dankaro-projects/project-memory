@@ -2,7 +2,7 @@
 
 Project Memory keeps a project's decisions, evidence, outcomes and reviewed lessons in a local SQLite database. An AI assistant retrieves the relevant records through three MCP tools; people inspect the same history in a self-contained HTML viewer.
 
-The [work board](docs/work-board.md) groups actions into sprints and connects each card to its intended result, scope, next action and decision history. The assistant uses the same checked state to resume work, inspect uncertain execution and recognise when human input is needed.
+The [work board](docs/work-board.md) groups actions into sprints and connects each card to its intended result, scope, next action and decision history. The assistant uses the same checked state to resume work, inspect uncertain execution and recognise when human input is needed. The current development version adds interactive planning and conditional agent checks; see [workspace and agents](docs/workspace-agents.md).
 
 Use it when a project repeatedly revisits research, loses the reasons behind decisions, or carries outdated requirements into new work. It preserves the original evidence and the conditions under which a decision or lesson applies.
 
@@ -68,7 +68,7 @@ Then work normally. The assistant supplies record IDs and versions. You review t
 - Selected Markdown files are captured verbatim. Changed, missing and superseded evidence is flagged. Importing a vision does not approve its proposals.
 - Approved project requirements can evolve through append-only revisions. Earlier decisions retain the version they used and become reviewable when the agreed basis changes.
 
-Run `project-memory view` for decisions, documents, corrections, patterns, drift, captures and unresolved work. It opens a live, read-only local viewer with paged records, evidence navigation and automatic refresh. Source text loads on demand. Use `--output review.html --include-bodies` for an offline snapshot.
+Run `project-memory view` for decisions, documents, corrections, patterns, drift, captures and unresolved work. It opens a live local workspace with paged records, evidence navigation and automatic refresh. The development version also lets you create actions and sprints, revise plans, add comments and inspect or cancel agent checks. Source text loads on demand. Use `--output review.html --include-bodies` for an offline snapshot.
 
 ## What is automatic
 
