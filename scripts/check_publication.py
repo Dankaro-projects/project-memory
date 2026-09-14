@@ -1,5 +1,6 @@
 """Check public source and package members without printing sensitive content."""
 from pathlib import Path, PurePosixPath
+import argparse
 import re
 import subprocess
 
@@ -102,9 +103,30 @@ def check_repository(root):
     return checked
 
 
+def check_commit(root, ref):
+    entries = subprocess.check_output(['git', 'ls-tree', '-rz', ref], cwd=root)
+    checked = 0
+    for entry in entries.rstrip(b'\0').split(b'\0'):
+        if not entry:
+            continue
+        header, name = entry.split(b'\t', 1)
+        mode, kind, oid = header.split()
+        name = name.decode('utf-8')
+        if kind != b'blob' or mode not in {b'100644', b'100755'}:
+            raise ValueError(f'Unexpected public member: {name}')
+        body = subprocess.check_output(['git', 'cat-file', 'blob', oid.decode()], cwd=root)
+        check_member(name, body)
+        checked += 1
+    return checked
+
+
 if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--ref', help='Check the committed tree at this Git ref.')
+    args = parser.parse_args()
+    root = Path(__file__).resolve().parents[1]
     try:
-        count = check_repository(Path(__file__).resolve().parents[1])
+        count = check_commit(root, args.ref) if args.ref else check_repository(root)
     except ValueError as exc:
         raise SystemExit(str(exc)) from exc
     print(f'Publication check passed for {count} source files. History requires a separate audit.')

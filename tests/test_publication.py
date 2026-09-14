@@ -8,7 +8,7 @@ import tempfile
 import unittest
 import zipfile
 
-from scripts.check_publication import check_member, check_repository
+from scripts.check_publication import check_commit, check_member, check_repository
 
 
 class PublicationTests(unittest.TestCase):
@@ -50,6 +50,12 @@ class PublicationTests(unittest.TestCase):
             subprocess.run(['git', 'add', '-f', 'results/private.json'], cwd=root, check=True)
             with self.assertRaisesRegex(ValueError, 'Unapproved public file'):
                 check_repository(root)
+            subprocess.run(['git', '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test',
+                            'commit', '-qm', 'Record a synthetic publication defect'], cwd=root, check=True)
+            generated.unlink()
+            self.assertEqual(check_repository(root), 2)
+            with self.assertRaisesRegex(ValueError, 'Unapproved public file'):
+                check_commit(root, 'HEAD')
 
     def test_actual_archives_reject_a_private_report(self):
         script = Path(__file__).resolve().parents[1] / 'scripts/check_artifacts.py'
