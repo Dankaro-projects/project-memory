@@ -2,7 +2,9 @@
 
 Keep the runtime in Python's standard library unless a measured defect requires a dependency. Preserve immutable history, explicit acceptance, source provenance, subject boundaries and whole-record retrieval. Use ordinary professional sentences for record explanations and interface copy.
 
-Run the commands in the README before opening a pull request. Include a reproduction of the original defect, the changed behaviour and the relevant result. For performance claims, use comparable tasks with equal quality checks and report complete model inputs separately from retrieved characters. Count failed attempts and abandoned tasks; do not improve a ratio by excluding difficult work.
+During iteration, run local checks that cover the changed behaviour. Full GitHub Actions verification runs on request or before a beta is published; ordinary pushes and pull request updates do not trigger it. Use Actions > Verify > Run workflow when full verification is needed outside a release.
+
+Include a reproduction of the original defect, the changed behaviour and the relevant result in each pull request. For performance claims, use comparable tasks with equal quality checks and report complete model inputs separately from retrieved characters. Count failed attempts and abandoned tasks; do not improve a ratio by excluding difficult work.
 
 Examples and public evidence must be synthetic. Never commit project databases, personal paths, configuration, transcripts or private source documents. Propose schema changes with a tested migration and backup path. Do not rewrite previously recorded decisions to match a newer interpretation.
 
