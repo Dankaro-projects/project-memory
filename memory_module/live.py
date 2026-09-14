@@ -244,6 +244,7 @@ def start(path):
 
 
 def _start(path,state):
+    from . import __version__
     previous=json.loads(state.read_text()) if state.exists() else {}
     if previous.get('database')!=str(path):previous={}
     port=previous.get('port',0);token=previous.get('token')
@@ -252,7 +253,13 @@ def _start(path,state):
     if previous.get('database')==str(path) and previous.get('url')==expected and expected:
         try:
             with build_opener(ProxyHandler({})).open(previous['url']+'api/health',timeout=1) as response:
-                if json.load(response).get('database')==str(path):return {**{k:v for k,v in previous.items() if k!='token'},'reused':True}
+                health=json.load(response)
+                if health.get('database')==str(path):
+                    if health.get('package_version')==__version__:
+                        return {**{k:v for k,v in previous.items() if k!='token'},'reused':True}
+                    # Keep an older viewer intact; the new release opens its own
+                    # port instead of reusing stale code or killing an unchecked PID.
+                    port=0;token=None;valid=False
         except (OSError,ValueError):pass
     # The credential stays in a private state file, not the process arguments.
     token=token if valid else secrets.token_urlsafe(24)

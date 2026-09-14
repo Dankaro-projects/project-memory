@@ -221,5 +221,17 @@ class LiveProcessTests(unittest.TestCase):
         self.assertNotEqual(self.server['pid'],first['pid']);self.assertEqual(self.server['url'],first['url'])
         with self.get('api/health') as response:self.assertEqual(response.status,200)
 
+    def test_upgrade_does_not_reuse_an_older_viewer(self):
+        from unittest.mock import patch
+        first=self.server
+        try:
+            with patch('memory_module.__version__','next-test-release'):
+                self.server=start(self.m.path)
+            self.assertNotEqual(self.server['pid'],first['pid'])
+            self.assertNotEqual(self.server['url'],first['url'])
+            with self.get('api/health') as response:self.assertEqual(json.load(response)['database'],str(self.m.path))
+            with urlopen(first['url']+'api/health') as response:self.assertEqual(response.status,200)
+        finally:os.kill(first['pid'],signal.SIGTERM)
+
 
 if __name__=='__main__':unittest.main()

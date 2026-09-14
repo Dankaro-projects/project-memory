@@ -129,3 +129,5 @@ project-memory view --output review.html --include-bodies --replace --no-open
 ```
 
 An explicit output path creates a static snapshot. Existing files are protected unless `--replace` is supplied; replacement uses a temporary file and atomic rename. Offline files state that they need regeneration. Source bodies remain optional. Avoid sharing an export containing private project evidence.
+
+When upgrading, setup checks the version of a running viewer. If it belongs to an older release, setup opens the current viewer at a new local address. Close the old tab; its read-only service exits after ten minutes without requests. Same-version restarts retain the existing address.

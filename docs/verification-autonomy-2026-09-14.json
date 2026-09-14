@@ -8,8 +8,8 @@
   },
   "regression": {
     "baseline_tests": 130,
-    "final_tests": 148,
-    "final_seconds": 7.666,
+    "final_tests": 149,
+    "final_seconds": 7.761,
     "passed": true
   },
   "runs": [
@@ -292,5 +292,14 @@
     "The final regression suite also covers a subsequent fix that prevents an earlier decision outcome from attaching to its revised decision.",
     "Actual Codex runs disable unrelated connectors and global memory. Full input still exceeds 10K.",
     "No long-term autonomous scheduler or automatic lesson acceptance is added."
-  ]
+  ],
+  "viewer_upgrade": {
+    "before": "0.5.0b3",
+    "after": "0.5.0b4",
+    "existing_work_preserved": 3,
+    "new_process": true,
+    "same_database": true,
+    "old_viewer_remains_available": true,
+    "initial_harness_failure": "Running inside the source checkout shadowed the installed beta 3 child module. The version assertion failed; running outside the checkout verified the installed boundary."
+  }
 }
