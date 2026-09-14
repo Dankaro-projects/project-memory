@@ -2,6 +2,8 @@
 
 ## 0.5.0b5 — Unreleased
 
+Opening the internal HTML template now shows the workspace launch command instead of unstyled controls. Project information explains live updates and offline exports, and the [user guide](docs/user-guide.md) covers everyday use and recovery.
+
 Host checks now expose unassessed requests, unassigned activity, missing outcomes and capture gaps. Intent checkpoints can accompany a plan or record write. Stop intervenes once, and an explicitly assessed unknown result remains visible without another intervention. Reviewer reports must cover every numbered criterion. The live workspace displays recording gaps and capture failures without a rebuild.
 
 The live viewer becomes an interactive project workspace. Users can create actions and sprints, select dependencies, revise plans and add comments while retaining the complete decision history. Concurrent edits preserve the draft and require a current version before saving. Offline exports remain available.

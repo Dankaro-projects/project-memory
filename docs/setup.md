@@ -2,6 +2,8 @@
 
 Run commands inside the intended project or pass `--project /absolute/path`. A missing database is created only by `setup`; `serve`, `doctor` and `view` refuse a missing database rather than silently create an empty project.
 
+For everyday use, start with the [user guide](user-guide.md). Setup includes the viewer. Open it through the command or your assistant; `memory_module/viewer.html` is an internal template, not the workspace. No separate frontend installation or rebuild is required.
+
 ## Select existing documents
 
 ```sh

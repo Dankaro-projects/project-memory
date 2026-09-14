@@ -177,7 +177,16 @@ dialog#editor,dialog#about{width:min(720px,calc(100vw - 32px));max-height:90dvh;
 @media(max-width:1100px){.inspector-open .app-main{margin-right:0}#detail{width:min(650px,calc(100vw - var(--sidebar)))}.breadcrumb #project{max-width:200px}.pager{flex-wrap:wrap}}
 @media(max-width:760px){:root{--sidebar:208px}.sidebar{transform:translateX(-100%);box-shadow:var(--dk-shadow-pill)}.nav-open .sidebar{transform:translateX(0)}.app-main{margin-left:0}.top{height:52px;padding:0 14px}.breadcrumb #project,.breadcrumb .separator{display:none}#menu-toggle{display:block;padding:5px 8px}.workspace{padding:16px 14px 8px}.page-heading{margin-bottom:14px}.page-heading h2{font-size:20px}.filters{gap:6px}.filters label{flex:1;max-width:none;min-width:100px}.filters label:first-child{flex-basis:100%;max-width:none}.filters label:has(#episode){max-width:100%}.workspace-actions{margin-left:0;flex:1;justify-content:flex-end}.workspace-actions #edit-sprint{display:none}.board-controls>label{max-width:none;flex:1}.board-options{margin-left:0}.board-grid{height:calc(100dvh - 360px);min-height:260px}.work-column{flex-basis:260px}.pager>div{gap:6px}.pager label{gap:4px}#detail{width:100vw}.detail-head{padding:20px 20px 0}.detail-head h2{font-size:21px}#detail-body{padding:0 20px 24px}.editor-grid{grid-template-columns:1fr}.editor-grid .wide{grid-column:1}.dependency-row{grid-template-columns:1fr}.record-field.compact{grid-template-columns:110px minmax(0,1fr)}.connection-indicator{font-size:9px}.board-options{width:100%}.page-heading{flex-wrap:wrap}}
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{transition:none!important;animation:none!important;scroll-behavior:auto!important}}
+#template-notice{display:none}
 </style></head><body>
+<section id="template-notice">
+<h1>Open Project Memory</h1>
+<p>This file is the application template. To open your workspace, run this command in your project folder:</p>
+<pre>project-memory view</pre>
+<p>If you used uvx to set up the project, use <code>uvx project-memory-mcp view</code>.</p>
+<p>The command opens the live workspace with your records and automatic updates. No HTML installation or rebuild is needed.</p>
+</section>
+<div id="workspace-app" hidden>
 <aside class="sidebar" id="record-navigation" aria-label="Project navigation">
 <div class="brand"><span class="brand-mark" aria-hidden="true">m</span><div><strong>Project Memory</strong><small>by Dankaro</small></div></div>
 <nav aria-label="Record views">
@@ -200,9 +209,10 @@ dialog#editor,dialog#about{width:min(720px,calc(100vw - 32px));max-height:90dvh;
 <div class="table-wrap"><table><thead><tr><th>Date (UTC)</th><th>Subject</th><th>Type</th><th>Record</th><th>Status</th><th>Details</th></tr></thead><tbody id="rows"></tbody></table><p id="empty" hidden>No records match these filters.</p></div>
 <div class="pager"><span id="count" aria-live="polite"></span><div><label>Rows<select id="page-size"><option>10</option><option selected>25</option><option>50</option><option>100</option></select></label><button id="previous">Previous</button><span id="page"></span><button id="next">Next</button></div></div>
 </div></main>
-<dialog id="about" aria-labelledby="about-title"><button id="about-close">Close</button><h2 id="about-title">Project information</h2><p id="snapshot"></p><p id="scope"></p><details class="rules"><summary>Agreed requirements</summary><ul id="requirements"></ul></details><h3>Recorded measurements</h3><p id="overview"></p><footer>Read-only snapshot. Regenerate it after database or document changes. Filters cover this export only.</footer></dialog>
+<dialog id="about" aria-labelledby="about-title"><button id="about-close">Close</button><h2 id="about-title">Project information</h2><p id="snapshot"></p><p id="scope"></p><details class="rules"><summary>Using this workspace</summary><p id="workspace-help">This is an offline snapshot. It does not update or save changes. Run <code>project-memory view</code> in your project folder to open the live workspace.</p><ul><li>Use Work board to follow progress. Open a card to read its plan, decisions and outcomes.</li><li>Tell your assistant when priorities or requirements change. It records the revision and retains the earlier decision.</li><li>Check blocked work and recording issues before continuing. Live means the viewer is connected; it does not prove that every decision has been recorded.</li></ul><p>No HTML installation or rebuild is needed. If you used uvx for setup, run <code>uvx project-memory-mcp view</code>.</p></details><details class="rules"><summary>Agreed requirements</summary><ul id="requirements"></ul></details><h3>Recorded measurements</h3><p id="overview"></p><footer>Read-only snapshot. Regenerate it after database or document changes. Filters cover this export only.</footer></dialog>
 <dialog id="detail" aria-labelledby="detail-title"><div class="detail-toolbar"><button id="detail-back" hidden>Back</button><span id="detail-kind">Record</span><button id="close" aria-label="Close details">Close</button></div><div class="detail-head"><h2 id="detail-title" tabindex="-1"></h2></div><p id="detail-connection" role="status" hidden></p><div id="detail-body"></div></dialog>
 <dialog id="editor" aria-labelledby="editor-title"><h2 id="editor-title"></h2><form id="work-form"><div id="editor-fields" class="editor-grid"></div><p id="editor-error" class="form-error" role="alert" hidden></p><div class="editor-actions"><button type="button" id="editor-reload" hidden>Reload saved version</button><button type="button" id="editor-cancel">Cancel</button><button type="submit" id="editor-save" class="primary">Save</button></div></form></dialog>
+</div>
 <script id="memory-data" type="application/json">__MEMORY_DATA__</script>
 <script>
 'use strict';
@@ -441,6 +451,7 @@ async function poll(){
 function startLive(){
  el('live-status').textContent='Connecting';el('live-status').dataset.state='snapshot';
  el('snapshot').textContent='Live workspace · Plans, decisions and evidence stay in this project.';
+ el('workspace-help').textContent='This workspace updates automatically while open. Plan actions and sprints here or ask your assistant to record them. To reopen it, ask your assistant to open Project Memory or run project-memory view in your project folder.';
  document.querySelector('footer').textContent='This workspace refreshes every two seconds while visible. Capture does not approve requirements or lessons. Run project-memory view to reconnect after the service stops.';
  for(const subject of ['code','writing','research','general'])option('subject',subject,labels(subject));
  for(const status of ['active','reopened','settled','abandoned','recorded','proposed','accepted','rejected','retired','replaced','historical','current','current_copy','needs_review','review_due','superseded','file_changed','file_missing','file_unreadable','execution_unconfirmed','not_started','consequence_pending','consequence_unknown','observed'])option('status',status,labels(status));
