@@ -112,9 +112,13 @@ def export_html(memory, destination, *, episode_id=None, subject=None, since=Non
                 'status':memory.direction().get('status','current') if rev['version']==memory.direction()['version'] else 'historical',
                 'date':rev.get('created_at',''),'title':'Project requirements, version '+str(rev['version']),
                 'episode_id':'','detail':rev})
+        from .planning import card, latest
+        work = [card(memory, ep['id']) for ep in episodes if ep['task_type']!='sprint']
+        sprints = [{'id':ep['id'],'title':ep['title'],'intent':ep['objective'],'version':ep['version'],
+                    'schedule':latest(memory,ep['id'],'sprint')} for ep in episodes if ep['task_type']=='sprint']
         snapshot = {'project': memory.project, 'exported_at': memory.now(), 'requirements': memory.requirements,
                     'scope': {'episode_id': episode_id, 'subject': subject, 'since': since, 'until': until},
-                    'source_bodies_included': include_bodies, 'records': rows, 'pending': pending}
+                    'source_bodies_included': include_bodies, 'records': rows, 'pending': pending, 'work':work, 'sprints':sprints}
         encoded = dumps(snapshot).replace('&', '\\u0026').replace('<', '\\u003c').replace('>', '\\u003e')
         template = Path(__file__).with_name('viewer.html').read_text(encoding='utf-8')
         html = template.replace('__MEMORY_DATA__', encoded)

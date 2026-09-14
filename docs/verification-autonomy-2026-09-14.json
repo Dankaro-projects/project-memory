@@ -1,0 +1,296 @@
+{
+  "date": "2026-09-14",
+  "version": "0.5.0b4",
+  "baseline_commit": "f767918add1cd0d9c89ee71cfa43e365670063d7",
+  "environment": {
+    "codex": "codex-cli 0.153.4",
+    "python": "Python 3.13.13"
+  },
+  "regression": {
+    "baseline_tests": 130,
+    "final_tests": 148,
+    "final_seconds": 7.666,
+    "passed": true
+  },
+  "runs": [
+    {
+      "completion": "completed",
+      "output": {
+        "encoding": "Strict UTF-8",
+        "invalid_bytes": "Raise UnicodeDecodeError",
+        "legacy_exception": "Latin-1 only for the separately tagged legacy endpoint",
+        "production_status": "Unmeasured",
+        "work_status": "Done; all three tests pass, signature unchanged, Project Memory updated"
+      },
+      "independent_tests_pass": true,
+      "board_state": "done",
+      "issues": [],
+      "hook_counts": {
+        "DecisionBound": 1,
+        "PostToolUse": 5,
+        "PreToolUse": 5,
+        "SessionStart": 1,
+        "Stop": 1,
+        "UserPromptSubmit": 1
+      },
+      "memory_calls": 30,
+      "memory_errors": 7,
+      "strict_json_only": true,
+      "limits": "One invented repair; the host/model remains responsible for interpreting scope and selecting tools. This does not measure daily productivity.",
+      "error_measurement": "Checks transport errors and JSON error records inside tool content; the host omitted isError.",
+      "command_executions": 4,
+      "label": "Initial prototype",
+      "full_input_audit": {
+        "target_input_tokens_exclusive": 10000,
+        "measurement": "Provider last.inputTokens includes instructions, tool definitions, history, task and memory. It is not an estimate from character counts.",
+        "cases": [
+          {
+            "case": ".",
+            "log": "events.jsonl",
+            "input_tokens_per_notification": [
+              14403,
+              15702,
+              15960,
+              18068,
+              19006,
+              21331,
+              22330,
+              23260,
+              24315,
+              25206,
+              25664,
+              26339,
+              27314,
+              27868,
+              28795,
+              29687
+            ],
+            "maximum_input_tokens": 29687,
+            "unmeasured_or_reset_notifications": 0,
+            "meets_target": false
+          }
+        ],
+        "meets_target": false,
+        "limitations": "Notifications may repeat reports or reset counters after compaction. Zero or missing counts are unmeasured and cannot establish a pass. Hidden host requests without usage notifications are outside this audit. The adapter cannot enforce a pre-request limit on the full native Codex prompt."
+      }
+    },
+    {
+      "completion": "timed_out",
+      "timeout_seconds": 240,
+      "independent_tests_pass": true,
+      "board_state": "in_progress",
+      "limits": "Tests completed before the host was terminated; no assessed outcome existed yet.",
+      "memory_calls": 14,
+      "memory_errors": 0,
+      "command_executions": 5,
+      "label": "Interrupted rerun",
+      "full_input_audit": {
+        "target_input_tokens_exclusive": 10000,
+        "measurement": "Provider last.inputTokens includes instructions, tool definitions, history, task and memory. It is not an estimate from character counts.",
+        "cases": [
+          {
+            "case": ".",
+            "log": "events.jsonl",
+            "input_tokens_per_notification": [
+              14424,
+              15723,
+              16331,
+              18981,
+              20889,
+              22057,
+              22482,
+              22850,
+              23197,
+              23556,
+              23819
+            ],
+            "maximum_input_tokens": 23819,
+            "unmeasured_or_reset_notifications": 0,
+            "meets_target": false
+          }
+        ],
+        "meets_target": false,
+        "limitations": "Notifications may repeat reports or reset counters after compaction. Zero or missing counts are unmeasured and cannot establish a pass. Hidden host requests without usage notifications are outside this audit. The adapter cannot enforce a pre-request limit on the full native Codex prompt."
+      }
+    },
+    {
+      "completion": "completed",
+      "output": {
+        "encoding": "strict UTF-8",
+        "invalid_bytes": "raise UnicodeDecodeError",
+        "legacy_exception": "Latin-1 only for the tagged legacy endpoint (legacy=True)",
+        "production_status": "unmeasured",
+        "work_status": "done; three tests passed, signature preserved, outcome assessed and completion recorded"
+      },
+      "board_state": "done",
+      "memory_calls": 5,
+      "memory_errors": 0,
+      "unconfirmed": 0,
+      "command_executions": 0,
+      "label": "Recovery",
+      "full_input_audit": {
+        "target_input_tokens_exclusive": 10000,
+        "measurement": "Provider last.inputTokens includes instructions, tool definitions, history, task and memory. It is not an estimate from character counts.",
+        "cases": [
+          {
+            "case": ".",
+            "log": "events.jsonl",
+            "input_tokens_per_notification": [
+              24701,
+              26265,
+              26855,
+              27884
+            ],
+            "maximum_input_tokens": 27884,
+            "unmeasured_or_reset_notifications": 0,
+            "meets_target": false
+          }
+        ],
+        "meets_target": false,
+        "limitations": "Notifications may repeat reports or reset counters after compaction. Zero or missing counts are unmeasured and cannot establish a pass. Hidden host requests without usage notifications are outside this audit. The adapter cannot enforce a pre-request limit on the full native Codex prompt."
+      }
+    },
+    {
+      "completion": "completed",
+      "output": {
+        "encoding": "strict UTF-8",
+        "invalid_bytes": "raise UnicodeDecodeError",
+        "legacy_exception": "Latin-1 only for the tagged legacy endpoint via legacy=True",
+        "production_status": "unmeasured",
+        "work_status": "done; parser repaired, signature preserved, all 3 tests passed, Project Memory updated"
+      },
+      "independent_tests_pass": true,
+      "board_state": "done",
+      "issues": [],
+      "hook_counts": {
+        "DecisionBound": 1,
+        "PostToolUse": 6,
+        "PreToolUse": 6,
+        "SessionStart": 1,
+        "Stop": 1,
+        "UserPromptSubmit": 1
+      },
+      "memory_calls": 15,
+      "memory_errors": 0,
+      "error_measurement": "Checks transport errors and JSON error records inside tool content; the host may omit isError.",
+      "strict_json_only": true,
+      "limits": "One invented repair; the host/model remains responsible for interpreting scope and selecting tools. This does not measure daily productivity.",
+      "command_executions": 5,
+      "label": "Final uninterrupted run",
+      "full_input_audit": {
+        "target_input_tokens_exclusive": 10000,
+        "measurement": "Provider last.inputTokens includes instructions, tool definitions, history, task and memory. It is not an estimate from character counts.",
+        "cases": [
+          {
+            "case": ".",
+            "log": "events.jsonl",
+            "input_tokens_per_notification": [
+              14390,
+              15570,
+              16184,
+              18938,
+              19862,
+              20151,
+              20702,
+              21179,
+              21354,
+              21873,
+              23042,
+              23576,
+              23975,
+              24657
+            ],
+            "maximum_input_tokens": 24657,
+            "unmeasured_or_reset_notifications": 0,
+            "meets_target": false
+          }
+        ],
+        "meets_target": false,
+        "limitations": "Notifications may repeat reports or reset counters after compaction. Zero or missing counts are unmeasured and cannot establish a pass. Hidden host requests without usage notifications are outside this audit. The adapter cannot enforce a pre-request limit on the full native Codex prompt."
+      }
+    }
+  ],
+  "local_measurements": {
+    "version": "0.5.0b4",
+    "samples": [
+      {
+        "work_items": 29,
+        "view": "board",
+        "milliseconds": [
+          1.769,
+          1.756,
+          1.784,
+          1.759,
+          1.777
+        ],
+        "median_ms": 1.769,
+        "serialized_reply_characters": 8546
+      },
+      {
+        "work_items": 29,
+        "view": "next",
+        "milliseconds": [
+          0.171,
+          0.175,
+          0.154,
+          0.161,
+          0.159
+        ],
+        "median_ms": 0.161,
+        "serialized_reply_characters": 2030
+      },
+      {
+        "work_items": 100,
+        "view": "board",
+        "milliseconds": [
+          6.383,
+          6.526,
+          6.506,
+          6.645,
+          6.769
+        ],
+        "median_ms": 6.526,
+        "serialized_reply_characters": 8547
+      },
+      {
+        "work_items": 100,
+        "view": "next",
+        "milliseconds": [
+          0.185,
+          0.184,
+          0.167,
+          0.169,
+          0.169
+        ],
+        "median_ms": 0.169,
+        "serialized_reply_characters": 2030
+      }
+    ],
+    "limits": "Five warm local samples. Includes JSON serialisation; excludes host, model and browser latency. Character counts are not token measurements. No human maintenance or daily productivity is measured."
+  },
+  "browser_observations": [
+    "Live board pages contain 25 and four of 29 cards.",
+    "Sprint selection retains the two assigned cards and goal.",
+    "An external successful outcome updates the card to Done and releases its dependent card.",
+    "Expanded history retains all 20 events after an external note.",
+    "Changing the source file updates the open Done card to Review, preserves recorded Done and gives the changed-source reason.",
+    "Restoring the source returns the card to Done.",
+    "The card exposes the full scope, legacy exception and links to decision records."
+  ],
+  "unmeasured": [
+    "Daily human reminders and correction rate",
+    "Repeated research across real projects",
+    "Net human maintenance time",
+    "Long-term semantic drift",
+    "General task completion rates",
+    "Competitor performance",
+    "Browser paint latency"
+  ],
+  "limitations": [
+    "The prototype source was not committed separately; its private logs record the measured run, but that exact interim source is not a reproducible release.",
+    "The final run uses the same repair, prompt and four facts; the dependent release claim was reclassified from code to writing.",
+    "The final regression suite also covers a subsequent fix that prevents an earlier decision outcome from attaching to its revised decision.",
+    "Actual Codex runs disable unrelated connectors and global memory. Full input still exceeds 10K.",
+    "No long-term autonomous scheduler or automatic lesson acceptance is added."
+  ]
+}

@@ -15,7 +15,7 @@ from .workflow import Workflow, validate_payload, validate_event
 
 SCHEMA_VERSION = 2
 SUBJECTS = {"general", "code", "writing", "research"}
-KINDS = {"decision", "action", "outcome", "research", "lesson", "note", "review", "correction", "action_result", "follow_up", "episode_status", "lesson_review"}
+KINDS = {"decision", "action", "outcome", "research", "lesson", "note", "review", "correction", "action_result", "follow_up", "episode_status", "lesson_review", "work_plan", "sprint"}
 ASSESSMENTS = {"pending", "good", "bad", "unknown"}
 
 
@@ -292,6 +292,9 @@ class Memory(Workflow):
         return value
 
     def _validate_payload(self, kind, payload):
+        from .planning import validate_payload as validate_plan
+        if validate_plan(kind, payload):
+            return
         if validate_payload(kind, payload):
             return
         required = {
@@ -303,7 +306,7 @@ class Memory(Workflow):
             "note": {"text"},
         }[kind]
         optional = {
-            "decision": {"uncertainty", "assumptions", "alternatives", "review_after", "model", "follow_up_owner", "condition", "case_id", "project_revision"},
+            "decision": {"uncertainty", "assumptions", "alternatives", "review_after", "model", "follow_up_owner", "condition", "case_id", "project_revision", "work_plan_id"},
             "action": {"host_reference"},
             "outcome": {"tokens", "human_corrections", "duration_ms", "failure_type", "model",
                         "context_characters", "research_calls", "repeated_research", "maintenance_ms", "completion"},
@@ -380,6 +383,8 @@ class Memory(Workflow):
             for ref in evidence:
                 self.source_status(ref["source_id"])
             validate_event(self, episode, kind, payload, evidence, decision_id, links)
+            from .planning import validate_event as validate_plan
+            validate_plan(self, episode, kind, payload, evidence)
             for link in links:
                 self._event(link["event_id"])
             if kind in {"action", "outcome"}:
@@ -406,14 +411,26 @@ class Memory(Workflow):
                                            (decision_id,)).fetchone()
                 if payload["assessment"] in {"good", "bad"} and not evidence:
                     raise InvalidRecord("An assessed outcome needs observable evidence references.")
+            elif kind in {'work_plan', 'sprint'}:
+                previous = self.db.execute('SELECT id FROM events WHERE episode_id=? AND kind=? ORDER BY seq DESC LIMIT 1',
+                                           (episode_id, kind)).fetchone()
             if (previous["id"] if previous else None) != supersedes:
-                raise Conflict("supersedes must identify the latest decision/outcome being revised.")
+                raise Conflict("supersedes must identify the latest decision/outcome or plan being revised.")
             event_id, seq = _id("event"), expected_version + 1
             if kind == 'decision':
                 current_revision = self.direction()['version']
                 if 'project_revision' in payload and payload['project_revision'] != current_revision:
                     raise Conflict('The decision must use the current project direction.')
                 payload['project_revision'] = current_revision
+                from .planning import latest
+                plan = latest(self, episode_id, 'work_plan')
+                if 'work_plan_id' in payload and (not plan or payload['work_plan_id'] != plan['id']):
+                    raise Conflict('The decision must use the current work plan.')
+                if plan:
+                    payload['work_plan_id'] = plan['id']
+            if kind in {'work_plan', 'sprint'}:
+                from .schema import enable_plans
+                enable_plans(self)
             self.db.execute("INSERT INTO events VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", (
                 event_id, episode_id, seq, kind, dumps(payload), self.now(), actor,
                 decision_id, supersedes, request_key, signature, episode["subject"]))
@@ -496,7 +513,7 @@ class Memory(Workflow):
           SELECT search_index.record_id FROM search_index
           LEFT JOIN sources s ON s.id=search_index.record_id
           LEFT JOIN events e ON e.id=search_index.record_id
-          WHERE search_index MATCH ? AND search_index.kind IN ('source','decision','outcome','research','lesson','note','review','correction')
+          WHERE search_index MATCH ? AND search_index.kind IN ('source','decision','outcome','research','lesson','note','review','correction','work_plan','sprint')
         """ + filters + " ORDER BY bm25(search_index),search_index.record_id LIMIT ? OFFSET ?", params).fetchall()
         describe = self._index_entry if compact else self._descriptor
         return {"records": [describe(row[0]) for row in rows[:limit]], "more": len(rows) > limit}
@@ -552,6 +569,9 @@ class Memory(Workflow):
             subject = episode["subject"]
             required.append({"id": episode_id, "kind": "objective", "text":
                              f"Objective: {episode['objective']}\nSuccess criterion: {episode['criterion']}"})
+            plan = self.db.execute("SELECT id FROM events WHERE episode_id=? AND kind='work_plan' ORDER BY seq DESC LIMIT 1", (episode_id,)).fetchone()
+            if plan:
+                required.append(self._descriptor(plan[0]))
             current = self.db.execute("SELECT id FROM events WHERE episode_id=? AND kind='decision' ORDER BY seq DESC LIMIT 1",
                                       (episode_id,)).fetchone()
             if current:
@@ -620,7 +640,9 @@ class Memory(Workflow):
         for key in keys:
             value = event["payload"][key]
             lines.append(f"{labels.get(key, key.replace('_', ' ').capitalize())}: " +
-                         ("; ".join(item if isinstance(item, str) else f"{item['location']} ({item['severity']}): {item['issue']}" for item in value) if isinstance(value, list) else str(value)))
+                         ("; ".join(item if isinstance(item, str) else
+                          f"{item['episode_id']}: {item['reason']}" if key == 'depends_on' else
+                          f"{item['location']} ({item['severity']}): {item['issue']}" for item in value) if isinstance(value, list) else str(value)))
         if event["supersedes"]:
             lines.append("Replaces: " + event["supersedes"])
         if event["replaced_by"]:

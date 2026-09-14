@@ -188,7 +188,7 @@ class Handler(BaseHTTPRequestHandler):
         endpoint=target.path[len(prefix):]
         try:
             if endpoint=='':body=html();mime='text/html; charset=utf-8';etag=None
-            elif endpoint in {'api/health','api/records','api/record'}:
+            elif endpoint in {'api/health','api/records','api/record','api/board','api/sprints'}:
                 revision=self.server.revision();etag='"'+hashlib.sha256((revision+target.path+target.query).encode()).hexdigest()+'"'
                 if self.headers.get('If-None-Match')==etag:
                     self.send_response(304);self.send_header('ETag',etag);self.end_headers();return
@@ -197,6 +197,16 @@ class Handler(BaseHTTPRequestHandler):
                     value={'revision':revision,**inspect(memory),'requirements':memory.requirements,
                            'episodes':[dict(r) for r in memory.db.execute('SELECT id,title FROM episodes ORDER BY created_at DESC LIMIT 1000')],
                            'episodes_more':memory.db.execute('SELECT count(*) FROM episodes').fetchone()[0]>1000}
+                elif endpoint in {'api/board','api/sprints'}:
+                    from .planning import board, sprints
+                    limit,offset=int(params.get('limit','25')),int(params.get('offset','0'))
+                    if not 1<=limit<=100 or offset<0:raise InvalidRecord('Use limit 1–100 and a nonnegative offset.')
+                    memory.db.execute('BEGIN')
+                    try:
+                        value={'revision':revision,**(sprints(memory,limit,offset,params.get('episode')) if endpoint=='api/sprints' else
+                            board(memory,limit=limit,offset=offset,subject=params.get('subject'),query=params.get('query',''),
+                                  sprint_id=params.get('sprint_id'),state=params.get('state'),episode_id=params.get('episode')))}
+                    finally:memory.db.rollback()
                 elif endpoint=='api/records':value={'revision':revision,**page(memory,params)}
                 else:
                     rid=params.get('id','');offset=int(params.get('body_offset','0'))
