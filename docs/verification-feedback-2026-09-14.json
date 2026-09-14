@@ -470,14 +470,28 @@
       "platform": "macOS, Python 3.11 and 3.14",
       "failure": "Five live-viewer tests timed out at startup. A diagnostic stack located the block in socket.getfqdn called by HTTPServer.server_bind.",
       "correction": "Bind the fixed loopback address directly and set its known server name without DNS. Terminate and reap a child when startup fails.",
-      "rerun": "Pending final cross-platform CI."
+      "rerun": "All seven jobs passed in run 34828846714."
     },
     {
       "run": "https://github.com/Dankaro-projects/project-memory/actions/runs/34828177061",
       "platform": "Windows, Python 3.14",
       "failure": "Two test assumptions failed: text-mode file reads normalized CRLF while capture correctly preserved bytes; a 250 ms expiry could pass before the first HTTP check on the slower runner.",
       "correction": "Compare against decoded file bytes and establish a live current-copy response before waiting past a longer deadline.",
-      "rerun": "Pending final cross-platform CI."
+      "rerun": "All seven jobs passed in run 34828846714."
     }
-  ]
+  ],
+  "ci": {
+    "tested_commit": "c403e4027ab6dbe7a3763dddeb8dae989acbcf62",
+    "run": "https://github.com/Dankaro-projects/project-memory/actions/runs/34828846714",
+    "conclusion": "success",
+    "jobs": [
+      "browser",
+      "Windows Python 3.11",
+      "Windows Python 3.14",
+      "macOS Python 3.11",
+      "macOS Python 3.14",
+      "Linux Python 3.11",
+      "Linux Python 3.14"
+    ]
+  }
 }
