@@ -320,7 +320,7 @@ def review_evidence(snapshot, folder):
         'meaning':'Counts and tool-return fields are mechanical observations, not proof of a successful outcome. Inspect individual archived receipts when a criterion requires them; every original receipt is preserved.'}}
 
 
-def execute(memory, run_id, timeout=120):
+def execute(memory, run_id, timeout=300):
     run = read(memory, run_id)
     with memory._write():
         changed = memory.db.execute("UPDATE review_runs SET state='running',updated_at=? WHERE id=? AND state='queued'", (memory.now(), run_id)).rowcount
