@@ -31,6 +31,12 @@ print(json.dumps(start(Path(info['database']))))`);
   await page.getByRole('button',{name:'Open work Preserve encoding paths'}).click();
   await page.getByRole('button',{name:'Edit plan',exact:true}).waitFor();
   assert.match(await page.locator('#detail-body').textContent(),/tagged Latin-1/);
+  assert.equal(await page.locator('#detail').evaluate(e=>e.matches(':modal')),false);
+  await page.locator('[data-view=decisions]').click();assert.equal(await page.locator('#detail').isVisible(),true);
+  await page.locator('[data-view=board]').click();await page.getByRole('button',{name:'Open work Preserve encoding paths'}).waitFor();
+  await page.keyboard.press('Escape');await page.locator('#detail').waitFor({state:'hidden'});
+  await page.waitForFunction(()=>document.activeElement.getAttribute('aria-label')==='Open work Preserve encoding paths');
+  await page.getByRole('button',{name:'Open work Preserve encoding paths'}).click();
   await page.getByRole('button',{name:'Add comment',exact:true}).click();
   await page.locator('#edit-text').fill('The exception remains part of the completion criterion.');
   await page.locator('#editor-save').click();await page.locator('#editor').waitFor({state:'hidden'});
@@ -53,11 +59,23 @@ print('{}')`);
   await page.locator('#close').click();await page.locator('#sprint').selectOption(sprint);
   assert.equal(await page.locator('.work-card').count(),1);fs.mkdirSync(output,{recursive:true});
   await page.screenshot({path:path.join(output,'workspace-desktop.png'),fullPage:true});
+  run(`import sys,json
+from pathlib import Path
+from memory_module import Memory
+with Memory(Path(sys.argv[1])/'.memory/project.sqlite') as m:
+ m.source('long-source','Long document','A bounded source fixture.','# Long document\\n'+('text '*2700)+'\\n## Final condition\\nPreserve the exception.','document')
+print('{}')`);
+  await page.locator('[data-view=sources]').click();await page.getByRole('button',{name:'Open Long document',exact:true}).click();
+  await page.getByRole('button',{name:'Read original text',exact:true}).click();
+  assert.equal(await page.locator('[data-field=body] pre').textContent().then(s=>s.length),12000);
+  await page.getByRole('button',{name:'Read more source text',exact:true}).click();
+  await page.waitForFunction(()=>document.querySelector('[data-field=body] pre')?.textContent.endsWith('Preserve the exception.'));
+  await page.keyboard.press('Escape');await page.locator('[data-view=board]').click();
   await page.setViewportSize({width:390,height:844});await page.locator('#new-work').click();
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
   await page.screenshot({path:path.join(output,'workspace-editor-mobile.png'),fullPage:true});
   assert.deepEqual(errors,[]);assert.deepEqual(external,[]);
-  const report={passed:true,browser:await browser.version(),initial_ready_ms:readyMs,checks:['create sprint','create action','structured sprint assignment','inspect intent and lineage','add comment','reject unsupported Done','preserve draft on concurrent edit','reload current version','save revised plan','sprint filtering','mobile form width','no external requests','no JavaScript errors']};
+  const report={passed:true,browser:await browser.version(),initial_ready_ms:readyMs,checks:['create sprint','create action','structured sprint assignment','inspect intent and lineage','navigate while inspecting','Escape closes the inspector','restore focus to the current action','add comment','reject unsupported Done','preserve draft on concurrent edit','reload current version','save revised plan','sprint filtering','original text across source pagination','mobile form width','no external requests','no JavaScript errors']};
   fs.writeFileSync(path.join(output,'browser-validation.json'),JSON.stringify(report,null,2)+'\n');console.log(JSON.stringify(report));
  }finally{if(browser)await browser.close();if(server)try{process.kill(server.pid);}catch(error){if(error.code!=='ESRCH')throw error;}fs.rmSync(temp,{recursive:true,force:true});}
 })().catch(error=>{console.error(error);process.exitCode=1;});

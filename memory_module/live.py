@@ -132,7 +132,8 @@ def page(memory, params):
 
 
 def html():
-    template=Path(__file__).with_name('viewer.html').read_text(encoding='utf-8')
+    from .viewer import html_template
+    template=html_template()
     data={'live':True,'project':'Project Memory','exported_at':'','requirements':[], 'records':[],'pending':[],'scope':{},'source_bodies_included':False}
     content=template.replace('__MEMORY_DATA__',dumps(data)).replace("base-uri 'none'", "connect-src 'self'; base-uri 'none'")
     for tag in ['style','script']:

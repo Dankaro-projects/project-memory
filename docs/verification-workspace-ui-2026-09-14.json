@@ -1,0 +1,110 @@
+{
+  "date": "2026-09-14",
+  "baseline_commit": "d8fd7bd",
+  "scope": "Workspace presentation and existing planning interactions; no database migration or new model review.",
+  "kit": {
+    "repository": "Dankaro-projects/dankaro-ui-kit",
+    "commit": "fddee587cb00376b0ba2b4d82b6cabd25a1e8188",
+    "tokens_sha256": "68c5cd6019b0318fc927b2266422560174f6dbb0dbb3d466365b5f8b11738696"
+  },
+  "offline_browser": {
+    "passed": true,
+    "browser": "153.0.8010.12",
+    "checks": [
+      "local file opening",
+      "pagination",
+      "search",
+      "subject and date filters",
+      "detail panel",
+      "source text",
+      "document change status",
+      "reverse evidence navigation",
+      "episode navigation",
+      "sort and page size",
+      "escaped script input",
+      "original-before-corrected wording",
+      "complete correction scope",
+      "work board pagination",
+      "board search",
+      "sprint selection",
+      "intent and scope detail",
+      "board hides irrelevant filters",
+      "board mobile width",
+      "optional empty columns",
+      "mobile sidebar navigation",
+      "document headings, tables, lists and code",
+      "exact original source text",
+      "safe Markdown links",
+      "embedded Manrope font",
+      "side panel back navigation",
+      "document width at 320/390/768/1440px",
+      "no network requests",
+      "no JavaScript errors"
+    ],
+    "network_requests": 0,
+    "javascript_errors": []
+  },
+  "live_browser": {
+    "passed": true,
+    "browser": "153.0.8010.12",
+    "initial_ready_ms": 40,
+    "checks": [
+      "create sprint",
+      "create action",
+      "structured sprint assignment",
+      "inspect intent and lineage",
+      "navigate while inspecting",
+      "Escape closes the inspector",
+      "restore focus to the current action",
+      "add comment",
+      "reject unsupported Done",
+      "preserve draft on concurrent edit",
+      "reload current version",
+      "save revised plan",
+      "sprint filtering",
+      "original text across source pagination",
+      "mobile form width",
+      "no external requests",
+      "no JavaScript errors"
+    ]
+  },
+  "manual_inspection": {
+    "browser": "Chrome extension",
+    "data": "Existing project records",
+    "observed": [
+      "Compact board and sidebar",
+      "Decision list remains visible beside the inspector",
+      "Reasoning, uncertainty, alternatives and consequences remain readable"
+    ]
+  },
+  "packaging": {
+    "passed": true,
+    "checks": [
+      "Wheel and source archive include both fonts",
+      "MCPB starts a real MCP process",
+      "Fresh wheel installs without runtime dependencies",
+      "Installed offline and live HTTP viewer",
+      "Authenticated planning write",
+      "Backup and uninstall preserve data"
+    ]
+  },
+  "iteration_findings": [
+    "Narrowed content deduplication to decisions after a note-body regression check failed.",
+    "Separated original-source controls from table-open selectors.",
+    "Waited for the native dialog close event in the focus-return check.",
+    "Updated the complete source body when loading another page, preserving original-text mode.",
+    "Validated artifacts in a version-specific temporary directory because dist also contains older releases."
+  ],
+  "costs": {
+    "github_actions_runs": 0,
+    "model_reviewer_runs": 0,
+    "new_runtime_dependencies": 0,
+    "font_bytes": 28320
+  },
+  "limitations": [
+    "The initial-ready time is one small local fixture run, not a comparative speed benchmark.",
+    "Common document structures are supported; this is not a full CommonMark parser or block editor.",
+    "Human task-time savings, screen-reader coverage and cross-browser behaviour were not measured in this iteration.",
+    "The source changes are not a published beta."
+  ]
+}

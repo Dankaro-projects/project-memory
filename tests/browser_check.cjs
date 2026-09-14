@@ -7,6 +7,7 @@ const assert=require('node:assert/strict');
 (async()=>{
  const root=path.resolve(__dirname,'..'),browserOutput=process.env.MEMORY_BROWSER_OUTPUT||path.join(root,'results/viewer-v3'),temp=fs.mkdtempSync(path.join(os.tmpdir(),'memory-viewer-'));
  let browser;
+ const documentText=['# Product vision','','The product preserves an explicitly requested export option.','','## Conditions','','| Path | Required behaviour |','| --- | --- |','| UTF-8 | Reject invalid input. |','| Tagged Latin-1 | Preserve the exception. |','','- Keep **conditions** visible.','- Keep `source` text available.','','> Evidence remains separate from acceptance.','','```html','<img src=x onerror="window.injected=true">','```','','[Unsafe](javascript:window.injected=true)'].join('\n');
  try{
   execFileSync(process.env.MEMORY_PYTHON||'python',['-c',`
 from pathlib import Path
@@ -15,7 +16,7 @@ from memory_module import Memory
 root=Path(sys.argv[1])
 with Memory.create(root/'memory.sqlite','Browser fixture',['Plain English.']) as m:
  document=root/'Product vision.md'
- document.write_text('# Product vision\\nThe product preserves an explicitly requested export option.')
+ document.write_text(${JSON.stringify(documentText)})
  captured=m.document(str(document))
  ep=m.start('Code episode','Inspect records','test','Fields visible',subject='code')
  for i in range(32):
@@ -52,8 +53,21 @@ with Memory.create(root/'memory.sqlite','Browser fixture',['Plain English.']) as
   await page.keyboard.press('Escape');
   await page.locator('[data-view=documents]').click();assert.equal(await page.locator('#rows tr').count(),1);
   await page.locator('.row-open').click();assert.match(await page.locator('#detail-body').textContent(),/File changed/);
+  assert.equal(await page.locator('#detail-body .document h1').textContent(),'Product vision');
+  assert.equal(await page.locator('#detail-body .document table tbody tr').count(),2);
+  assert.equal(await page.locator('#detail-body .document ul li').count(),2);
+  await page.getByRole('button',{name:'Read original text',exact:true}).click();
+  assert.equal(await page.locator('#detail-body .record-field[data-field=body] pre').textContent(),documentText);
+  await page.getByRole('button',{name:'Read formatted text',exact:true}).click();
+  assert.match(await page.locator('#detail-body .document pre').textContent(),/onerror/);
+  assert.equal(await page.locator('#detail-body img, #detail-body a[href^="javascript:"]').count(),0);
+  assert.equal(await page.evaluate(()=>document.fonts.check('13px Manrope')),true);
+  assert.equal(await page.locator('#detail').evaluate(e=>e.getBoundingClientRect().right===innerWidth),true);
+  for(const width of [320,390,768,1440]){await page.setViewportSize({width,height:900});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true,'Document overflow at '+width);}
+  fs.mkdirSync(browserOutput,{recursive:true});await page.screenshot({path:path.join(browserOutput,'document-side-panel.png')});
   assert.match(await page.locator('#detail-body').textContent(),/Records that use this evidence/);
   await page.locator('#detail-body .references button').first().click();assert.match(await page.locator('#detail-body').textContent(),/Needs review/);
+  await page.locator('#detail-back').click();assert.equal(await page.locator('#detail-body .document h1').textContent(),'Product vision');
   await page.keyboard.press('Escape');
   await page.locator('[data-view=corrections]').click();await page.locator('.row-open').click();
   const correction=await page.locator('#detail-body').textContent();
@@ -115,10 +129,16 @@ with Memory.create(root/'memory.sqlite','Browser fixture',['Plain English.']) as
   assert.equal(await page.locator('.work-card').count(),2);
   assert.match(await page.locator('#sprint-summary').textContent(),/Reliable continuation/);
   await page.screenshot({path:path.join(browserOutput,'work-board-desktop.png'),fullPage:true});
+  assert((await page.locator('.work-column').count())<7);
+  await page.locator('#show-empty').check();assert.equal(await page.locator('.work-column').count(),7);
+  await page.locator('#show-empty').uncheck();
   await page.setViewportSize({width:390,height:844});
+  await page.locator('#menu-toggle').click();assert.equal(await page.locator('#menu-toggle').getAttribute('aria-expanded'),'true');
+  await page.locator('[data-view=decisions]').click();assert.equal(await page.locator('#menu-toggle').getAttribute('aria-expanded'),'false');
+  await page.locator('#menu-toggle').click();await page.locator('[data-view=board]').click();
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth),true);
   await page.screenshot({path:path.join(browserOutput,'work-board-mobile.png'),fullPage:true});
-  optionalChecks.push('work board pagination','board search','sprint selection','intent and scope detail','board hides irrelevant filters','board mobile width');
+  optionalChecks.push('work board pagination','board search','sprint selection','intent and scope detail','board hides irrelevant filters','board mobile width','optional empty columns','mobile sidebar navigation','document headings, tables, lists and code','exact original source text','safe Markdown links','embedded Manrope font','side panel back navigation','document width at 320/390/768/1440px');
   assert.deepEqual(errors,[]);assert.deepEqual(requests,[]);
   const report={passed:true,browser:await browser.version(),checks:['local file opening','pagination','search','subject and date filters','detail panel','source text','document change status','reverse evidence navigation','episode navigation','sort and page size','escaped script input','original-before-corrected wording','complete correction scope',...optionalChecks,'no network requests','no JavaScript errors'],network_requests:requests.length,javascript_errors:errors};
   fs.writeFileSync(path.join(browserOutput,'browser-validation.json'),JSON.stringify(report,null,2)+'\n');
