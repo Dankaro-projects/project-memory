@@ -8,6 +8,12 @@ import time
 import tomllib
 
 
+def project_database(project):
+    project=Path(project).resolve()
+    state=project/'.memory/install.json'
+    return Path(json.loads(state.read_text())['database']) if state.exists() else project/'memory.sqlite'
+
+
 class CodexClient:
     def __init__(self, project, log):
         self.project=Path(project).resolve();self.log=Path(log);self.events=[];self.next_id=0

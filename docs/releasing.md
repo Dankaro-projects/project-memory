@@ -11,3 +11,14 @@ Push a `vVERSION` tag matching the Python package version. The release workflow 
 MCP registry metadata identifies the public PyPI package and its exact version. Publish only after the package resolves publicly. Directory listings, plugin availability and client compatibility are separate states. Check the actual listing and execute its documented launch path before marking a channel verified.
 
 After release, use the published command in a fresh project and perform actual capture and recovery. Keep raw host logs private; publish a reviewed aggregate report with reproduction commands and limitations. Never replace an already published wheel with different code. Fixes receive a new beta version.
+
+## Smithery
+
+Smithery CLI 1.2.0 copies MCPB tool summaries into an API field that requires complete MCP tool schemas. The official MCPB validator rejects those additional fields in the manifest itself. Keep the validated bundle unchanged and publish its actual `tools/list` response separately:
+
+```sh
+npm exec --yes --package smithery@1.2.0 -- smithery auth login
+python scripts/publish_smithery.py dist/project-memory-0.5.0-beta.1.mcpb --name YOUR_NAMESPACE/project-memory
+```
+
+This development-only script uses the existing CLI login without printing its credential, runs the trusted release bundle in a temporary project, and submits the bundle with its real tool schemas. It creates the named server only if Smithery reports that it is missing. Check the result, public metadata and downloaded bundle hash before marking publication verified. Do not rerun a deployment after an ambiguous network response without inspecting its release status first. Set the server's description, repository, homepage and licence in the provider listing when creating a new listing.

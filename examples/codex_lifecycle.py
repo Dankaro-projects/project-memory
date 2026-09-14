@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 import queue
 import time
-from examples.codex_app_client import CodexClient
+from examples.codex_app_client import CodexClient, project_database
 from examples.codex_cases import final_json
 from memory_module import Memory
 
@@ -38,7 +38,7 @@ def run(project, output):
         while time.monotonic()<deadline:
             try:client.receive(timeout=.5)
             except queue.Empty:continue
-        with Memory(Path(project)/'memory.sqlite') as m:
+        with Memory(project_database(project)) as m:
             counts=dict(m.db.execute('SELECT event_name,count(*) FROM host_receipts WHERE session_id=? GROUP BY event_name',(thread,)).fetchall())
         result={'thread_id':thread,'compaction_completed':compacted,'completion':end['status'],'output':answer,
             'checks':checks,'hook_counts':counts,'shutdown_response':shutdown,

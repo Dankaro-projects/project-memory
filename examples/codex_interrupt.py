@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 import queue
 import time
-from examples.codex_app_client import CodexClient
+from examples.codex_app_client import CodexClient, project_database
 from examples.codex_documents import call_failed
 from memory_module import Memory
 from memory_module.codex_host import status
@@ -29,7 +29,7 @@ def run(project,output):
         if not interrupted:raise TimeoutError('The command did not create its marker.')
         # Interrupt completion can arrive while the interrupt response is read.
         if not any(e.get('method')=='turn/completed' and e['params']['turn']['id']==turn for e in client.events):client.complete(turn)
-        with Memory(project/'memory.sqlite') as m:
+        with Memory(project_database(project)) as m:
             before=status(m,session_id=thread,limit=20)
             (output/'after-interrupt.json').write_text(json.dumps(before,indent=2)+'\n')
         client.close()
@@ -39,7 +39,7 @@ def run(project,output):
         resume_prompt='''Resume the interrupted task. Do not rerun the marker-writing command. Use memory_get status with your session ID and limit 3 to inspect capture. Read interruption-marker.txt with the shell, record the actual text as a source, and reconcile any unconfirmed original tool receipt as completed only in the sense that its marker was written; explicitly state that the sleeping process completion is unknown. Use resolution unknown if the process completion cannot be established. Record the outcome against the criterion, using unknown where uncertainty remains. Finish with the observed marker count and any unresolved execution state.'''
         turn2=client.turn(thread,resume_prompt.replace('interruption-marker.txt',marker.name))
         finished=client.complete(turn2)
-        with Memory(project/'memory.sqlite') as m:
+        with Memory(project_database(project)) as m:
             after=status(m,session_id=thread,limit=20)
             (output/'after-resume.json').write_text(json.dumps(after,indent=2)+'\n')
             hooks={r[0]:r[1] for r in m.db.execute('SELECT event_name,count(*) FROM host_receipts WHERE session_id=? GROUP BY event_name',(thread,))}

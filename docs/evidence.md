@@ -19,6 +19,8 @@ Run the commands in the README in a fresh checkout. Each example output director
 
 The wheel has zero declared runtime dependencies. Build tools, the optional Playwright browser check and live Codex verification are development dependencies. Package sizes and hashes are emitted by `scripts/check_artifacts.py`; release assets provide the exact published bytes.
 
+The public PyPI command subsequently installed successfully from a fresh uv cache in 1.624 seconds on this machine, with Python and uv already installed. The published runtime files match those tested before release. Actual public-package execution captured all nine hooks, completed interruption recovery with eight successful MCP calls, and retained all four compaction facts. One unresolved process receipt remains visible by design. These observations and exact artifact hashes are appended to the [aggregate report](verification-0.5.0b1.json).
+
 ## Installed Codex beta boundary
 
 The installed wheel ran in a separate virtual environment and project directory with Codex 0.153.4 on macOS. The setup command persisted project trust and obtained nine exact hashes from the actual host. Fresh sessions observed all nine lifecycle events, including `SessionEnd` on ordinary CLI shutdown. The verification client no longer supplies temporary project trust. App-server unsubscribe does not itself emit `SessionEnd` on this host.
