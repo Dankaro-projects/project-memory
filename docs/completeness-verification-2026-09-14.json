@@ -1,0 +1,558 @@
+{
+  "date": "2026-09-14",
+  "baseline_revision": "9b85d68",
+  "native_host_runs": [
+    {
+      "case": "completeness-codex-20260914-2",
+      "host": "codex",
+      "status": "completed",
+      "duration_ms": 28557,
+      "coverage_status": "recorded",
+      "hooks": {
+        "IntentAssessed": 1,
+        "PostToolUse": 1,
+        "PreToolUse": 1,
+        "SessionStart": 1,
+        "Stop": 1,
+        "UserPromptSubmit": 1
+      },
+      "episodes": 0,
+      "human_correction_prompts": 0,
+      "repeated_file_reads": 0,
+      "memory_calls": 4,
+      "rejected_memory_calls": 0,
+      "aggregate_input_tokens": 63540,
+      "cached_input_tokens": 49920,
+      "output_tokens": 560,
+      "memory_result_characters": 2500,
+      "final_answer": "The tagged legacy exception remains required.",
+      "raw_result_sha256": "b23b1c80ad7dee659599074bbe7ae98f8502cbbb2548344dc62b28ace5e32fdd",
+      "reported_input_updates": 4,
+      "max_reported_input_tokens": 16937
+    },
+    {
+      "case": "completeness-claude-20260914-2",
+      "host": "claude",
+      "status": "success",
+      "duration_ms": 18834,
+      "coverage_status": "recorded",
+      "hooks": {
+        "IntentAssessed": 1,
+        "PostToolUse": 1,
+        "PreToolUse": 1,
+        "SessionEnd": 1,
+        "SessionStart": 1,
+        "Stop": 1,
+        "UserPromptSubmit": 1
+      },
+      "episodes": 0,
+      "human_correction_prompts": 0,
+      "repeated_file_reads": 0,
+      "provider_usage": {
+        "input_tokens": 130,
+        "cache_creation_input_tokens": 7778,
+        "cache_read_input_tokens": 26610,
+        "output_tokens": 859,
+        "output_tokens_details": {
+          "thinking_tokens": 133
+        },
+        "server_tool_use": {
+          "web_search_requests": 0,
+          "web_fetch_requests": 0
+        },
+        "service_tier": "standard",
+        "cache_creation": {
+          "ephemeral_1h_input_tokens": 7778,
+          "ephemeral_5m_input_tokens": 0
+        },
+        "inference_geo": "not_available",
+        "iterations": [
+          {
+            "input_tokens": 32,
+            "output_tokens": 69,
+            "cache_read_input_tokens": 7465,
+            "cache_creation_input_tokens": 313,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 313
+            },
+            "type": "message"
+          }
+        ],
+        "speed": "standard"
+      },
+      "aggregate_input_tokens": 34518,
+      "memory_calls": null,
+      "rejected_memory_calls": null,
+      "final_answer": "ANSWER.txt says \"The tagged legacy exception remains required.\" and I closed the memory hook's recording gap by logging this as an informational lookup without creating an episode, so coverage now shows no open issues.",
+      "raw_result_sha256": "6171fa979f4a8b966b7b3b36e9efc0e56f330d68171d4e4a51961ebaa03ccd68",
+      "max_reported_input_tokens": null
+    },
+    {
+      "case": "completeness-codex-stop-20260914",
+      "host": "codex",
+      "status": "completed",
+      "duration_ms": 49325,
+      "coverage_status": "recorded",
+      "hooks": {
+        "CoverageBlockIssued": 1,
+        "IntentAssessed": 1,
+        "PostToolUse": 1,
+        "PreToolUse": 1,
+        "SessionStart": 1,
+        "Stop": 2,
+        "UserPromptSubmit": 1
+      },
+      "episodes": 0,
+      "human_correction_prompts": 0,
+      "repeated_file_reads": 0,
+      "memory_calls": 7,
+      "rejected_memory_calls": 0,
+      "aggregate_input_tokens": 150256,
+      "cached_input_tokens": 142464,
+      "output_tokens": 985,
+      "memory_result_characters": 6053,
+      "final_answer": "The tagged legacy exception remains required.",
+      "raw_result_sha256": "db8a64d43ebffb44ce988449a34103c739ba4037e479d0b1428265f67e4838fa",
+      "reported_input_updates": 9,
+      "max_reported_input_tokens": 18398
+    },
+    {
+      "case": "completeness-claude-stop-20260914",
+      "host": "claude",
+      "status": "success",
+      "duration_ms": 25234,
+      "coverage_status": "recorded",
+      "hooks": {
+        "CoverageBlockIssued": 1,
+        "IntentAssessed": 1,
+        "PostToolUse": 1,
+        "PreToolUse": 1,
+        "SessionEnd": 1,
+        "SessionStart": 1,
+        "Stop": 2,
+        "UserPromptSubmit": 1
+      },
+      "episodes": 0,
+      "human_correction_prompts": 0,
+      "repeated_file_reads": 0,
+      "provider_usage": {
+        "input_tokens": 164,
+        "cache_creation_input_tokens": 5108,
+        "cache_read_input_tokens": 45996,
+        "output_tokens": 1197,
+        "output_tokens_details": {
+          "thinking_tokens": 92
+        },
+        "server_tool_use": {
+          "web_search_requests": 0,
+          "web_fetch_requests": 0
+        },
+        "service_tier": "standard",
+        "cache_creation": {
+          "ephemeral_1h_input_tokens": 5108,
+          "ephemeral_5m_input_tokens": 0
+        },
+        "inference_geo": "not_available",
+        "iterations": [
+          {
+            "input_tokens": 32,
+            "output_tokens": 84,
+            "cache_read_input_tokens": 8299,
+            "cache_creation_input_tokens": 312,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 312
+            },
+            "type": "message"
+          }
+        ],
+        "speed": "standard"
+      },
+      "aggregate_input_tokens": 51268,
+      "memory_calls": null,
+      "rejected_memory_calls": null,
+      "final_answer": "ANSWER.txt says \"The tagged legacy exception remains required,\" and I fixed the gap the Stop hook reported by recording the lookup as informational in Project Memory, with no episode and without rereading the file, so the coverage check now shows no open issues.",
+      "raw_result_sha256": "bb3acd5ee5f41b1dd3434d6f4d567460b176db0f4e6efae6eeed8749d7d253a3",
+      "max_reported_input_tokens": null
+    },
+    {
+      "case": "completeness-codex-stop-improved-20260914",
+      "host": "codex",
+      "status": "completed",
+      "duration_ms": 30200,
+      "coverage_status": "recorded",
+      "hooks": {
+        "CoverageBlockIssued": 1,
+        "IntentAssessed": 1,
+        "PostToolUse": 1,
+        "PreToolUse": 1,
+        "SessionStart": 1,
+        "Stop": 2,
+        "UserPromptSubmit": 1
+      },
+      "episodes": 0,
+      "human_correction_prompts": 0,
+      "repeated_file_reads": 0,
+      "memory_calls": 3,
+      "rejected_memory_calls": 0,
+      "aggregate_input_tokens": 93984,
+      "cached_input_tokens": 85504,
+      "output_tokens": 592,
+      "memory_result_characters": 2077,
+      "final_answer": "The tagged legacy exception remains required.",
+      "raw_result_sha256": "ac18e75bb269a36253290329984aa6fc14a41b36ee7d3467f45f82facd7706a0",
+      "reported_input_updates": 6,
+      "max_reported_input_tokens": 17084
+    }
+  ],
+  "interruption_runs": [
+    {
+      "thread_id": "01a0a0a0-f4f6-7ee1-b059-c4e876fb1c54",
+      "interrupt_turn": "01a0a0a0-f521-7763-a7a2-dbc35326a18c",
+      "resume_turn": "01a0a0a2-010b-7592-b456-6cbc6a5eada3",
+      "marker_lines": [
+        "once"
+      ],
+      "resume_adapter_calls": 14,
+      "resume_adapter_errors": 1,
+      "not_repeated": true,
+      "hook_counts": {
+        "CoverageBlockIssued": 1,
+        "DecisionBound": 1,
+        "IntentAssessed": 3,
+        "Interrupt": 1,
+        "PostToolUse": 1,
+        "PreToolUse": 2,
+        "Reconciled": 1,
+        "SessionStart": 2,
+        "Stop": 2,
+        "UserPromptSubmit": 2
+      },
+      "unconfirmed_after_interrupt": 1,
+      "unconfirmed_after_resume": 1,
+      "resume_status": "completed",
+      "limits": "The marker confirms the side effect. Interruption is not proof of rollback or of process completion. Unknown execution remains visible.",
+      "case": "completeness-interrupt-20260914",
+      "events_usage": {
+        "max_input_tokens": 18573,
+        "reported_total": {
+          "totalTokens": 102563,
+          "inputTokens": 100833,
+          "cachedInputTokens": 93184,
+          "cacheWriteInputTokens": 0,
+          "outputTokens": 1730,
+          "reasoningOutputTokens": 62
+        }
+      },
+      "resume_usage": {
+        "max_input_tokens": 27985,
+        "reported_total": {
+          "totalTokens": 243437,
+          "inputTokens": 240541,
+          "cachedInputTokens": 223104,
+          "cacheWriteInputTokens": 0,
+          "outputTokens": 2896,
+          "reasoningOutputTokens": 350
+        }
+      }
+    },
+    {
+      "thread_id": "01a0a0ac-dd71-7d63-a75b-9ca7b779ccbe",
+      "interrupt_turn": "01a0a0ac-dda2-77b3-a248-e57ac1874321",
+      "resume_turn": "01a0a0ad-e4bf-7553-b81e-b1fc365242dd",
+      "marker_lines": [
+        "once"
+      ],
+      "resume_adapter_calls": 10,
+      "resume_adapter_errors": 0,
+      "not_repeated": true,
+      "hook_counts": {
+        "DecisionBound": 1,
+        "IntentAssessed": 2,
+        "Interrupt": 1,
+        "PostToolUse": 1,
+        "PreToolUse": 2,
+        "Reconciled": 1,
+        "SessionStart": 2,
+        "Stop": 1,
+        "UserPromptSubmit": 2
+      },
+      "unconfirmed_after_interrupt": 1,
+      "unconfirmed_after_resume": 1,
+      "resume_status": "completed",
+      "limits": "The marker confirms the side effect. Interruption is not proof of rollback or of process completion. Unknown execution remains visible.",
+      "case": "completeness-interrupt-improved-20260914",
+      "events_usage": {
+        "max_input_tokens": 19008,
+        "reported_total": {
+          "totalTokens": 121442,
+          "inputTokens": 119656,
+          "cachedInputTokens": 105984,
+          "cacheWriteInputTokens": 0,
+          "outputTokens": 1786,
+          "reasoningOutputTokens": 56
+        }
+      },
+      "resume_usage": {
+        "max_input_tokens": 26365,
+        "reported_total": {
+          "totalTokens": 214609,
+          "inputTokens": 212268,
+          "cachedInputTokens": 203264,
+          "cacheWriteInputTokens": 0,
+          "outputTokens": 2341,
+          "reasoningOutputTokens": 211
+        }
+      }
+    }
+  ],
+  "actual_reviewer_comparison": [
+    {
+      "id": "check_e5815a0b4ab6449eb29eecfd718e2ef6",
+      "state": "changes_required",
+      "report": {
+        "checks": [
+          {
+            "criterion": "C001",
+            "evidence": "parser.py:1-2 uses strict UTF-8; test_parser.py:4-6 covers UTF-8 success and invalid-byte rejection, with passes recorded in .memory/tests-initial.txt:1-7. However, the legacy flag is ignored, so tagged Latin-1 decoding is unsupported. Outcome event_22baf710b2884039a7b22a6814bac517 accurately reports production effect as unmeasured.",
+            "result": "unmet"
+          },
+          {
+            "criterion": "C002",
+            "evidence": "parser.py:2 decodes UTF-8 strictly and rejects invalid UTF-8, supported by test_parser.py:4-6 and .memory/tests-initial.txt:1-7. The explicitly tagged legacy Latin-1 exception is missing: parser.py:1-2 ignores legacy. SCOPE.md:1 and outcome event_22baf710b2884039a7b22a6814bac517 preserve the production-effect limitation as unmeasured.",
+            "result": "unmet"
+          },
+          {
+            "criterion": "C003",
+            "evidence": "parser.py:2 calls raw.decode(\"utf-8\"), whose default error handling is strict. test_parser.py:4 checks non-ASCII UTF-8 decoding; .memory/tests-initial.txt:2 records its success.",
+            "result": "met"
+          },
+          {
+            "criterion": "C004",
+            "evidence": "parser.py:2 uses strict UTF-8 decoding without replacement or error suppression. test_parser.py:5-6 requires UnicodeDecodeError for b\"\\xff\"; .memory/tests-initial.txt:1 records that check passing.",
+            "result": "met"
+          },
+          {
+            "criterion": "C005",
+            "evidence": "SCOPE.md:1 requires Latin-1 on the explicitly tagged legacy endpoint. parser.py:1 accepts legacy=False, but line 2 always uses UTF-8. Consequently, tagged Latin-1 bytes containing non-UTF-8 sequences would be rejected. test_parser.py contains no legacy-path check. The required exception is absent.",
+            "result": "unmet"
+          },
+          {
+            "criterion": "C006",
+            "evidence": "SCOPE.md:1, decision event_8e3986f439264911980dc8786e5d3c68.payload.uncertainty, and outcome event_22baf710b2884039a7b22a6814bac517.payload.observed explicitly state that production effect is unmeasured. No production measurement is supplied; the effect remains unknown.",
+            "result": "met"
+          }
+        ],
+        "findings": [
+          "The two recorded test successes accurately establish the covered UTF-8 behaviors, but the outcome's complete/good assessment is contradicted by the missing legacy Latin-1 implementation.",
+          "The outcome attribution says a repair includes the legacy test. Current test_parser.py contains only the two initial tests, and no repair execution evidence is supplied. Recovery is unknown.",
+          "Production effect is accurately reported as unmeasured; local test success does not establish production impact."
+        ],
+        "lesson_proposals": [
+          {
+            "basis": "parser.py ignores the legacy flag while both implemented tests pass; the recorded completion assessment overlooks the explicit exception.",
+            "conditions": "A contract requires a default behavior and an explicitly tagged alternative path.",
+            "exceptions": "Production measurements are not required when the contract explicitly permits reporting their absence; the effect must remain unmeasured.",
+            "proposal": "Before judging completion, inspect implementation and evidence for both the default path and each required exception. Passing tests establish only the behaviors they cover."
+          }
+        ],
+        "summary": "Strict UTF-8 decoding and invalid-byte rejection are supported. The required legacy Latin-1 path is missing. Production effect is correctly reported as unmeasured.",
+        "verdict": "changes_required"
+      },
+      "metrics": {
+        "duration_ms": 57061,
+        "input_characters": 7188,
+        "provider_usage": [
+          {
+            "cache_write_input_tokens": 0,
+            "cached_input_tokens": 28288,
+            "input_tokens": 37663,
+            "output_tokens": 1513,
+            "reasoning_output_tokens": 392
+          }
+        ]
+      },
+      "error": ""
+    },
+    {
+      "id": "check_c16e31bd3ccc4bdd9e8b182c23d169a1",
+      "state": "pass",
+      "report": {
+        "checks": [
+          {
+            "criterion": "C001",
+            "evidence": "parser.py:1-2 defaults to strict UTF-8 and selects Latin-1 only through the legacy flag. test_parser.py:4-7 covers UTF-8 success, invalid UTF-8 rejection, and tagged Latin-1 success; .memory/tests-repair.txt:1-8 records all three passing. Outcome event_bf57a187fac942a292361a43188fae26 explicitly reports production effect as unmeasured.",
+            "result": "met"
+          },
+          {
+            "criterion": "C002",
+            "evidence": "parser.py:1-2 uses strict decoding, rejects invalid UTF-8 on the default path, and confines Latin-1 to the explicitly tagged legacy path. test_parser.py:4-7 and .memory/tests-repair.txt:1-8 support these behaviors. SCOPE.md:1 and outcome event_bf57a187fac942a292361a43188fae26 preserve the production-effect limitation as unmeasured.",
+            "result": "met"
+          },
+          {
+            "criterion": "C003",
+            "evidence": "parser.py:2 calls raw.decode with UTF-8 on the default path and leaves error handling at its strict default. test_parser.py:4 checks non-ASCII UTF-8 decoding; .memory/tests-repair.txt:3 records success.",
+            "result": "met"
+          },
+          {
+            "criterion": "C004",
+            "evidence": "parser.py:2 does not replace or suppress invalid UTF-8 decoding errors. test_parser.py:5-6 expects UnicodeDecodeError for b\"\\xff\" on the default path; .memory/tests-repair.txt:1 records success. The explicitly tagged legacy path retains its required Latin-1 exception.",
+            "result": "met"
+          },
+          {
+            "criterion": "C005",
+            "evidence": "parser.py:1-2 defaults legacy to False and selects Latin-1 only when that flag is enabled. test_parser.py:7 explicitly supplies legacy=True for Latin-1 bytes representing caf\u00e9; .memory/tests-repair.txt:2 records success.",
+            "result": "met"
+          },
+          {
+            "criterion": "C006",
+            "evidence": "SCOPE.md:1, decision event_005454be1f5840d2a1ae8c313f18db50.payload.uncertainty, and outcome event_bf57a187fac942a292361a43188fae26.payload.observed explicitly state that production effect is unmeasured. The supplied evidence establishes local behavior only; production impact remains unknown.",
+            "result": "met"
+          }
+        ],
+        "findings": [
+          "The previously reported missing legacy path is repaired: parser.py now branches on the legacy flag, test_parser.py includes the legacy check, and .memory/tests-repair.txt records its success.",
+          "The outcome's attribution that the initial checks omitted the legacy test and the repair added it is supported by .memory/tests-initial.txt:1-7 and .memory/tests-repair.txt:1-8. Passing initial tests did not establish the required exception.",
+          "The repair log records three passing tests and OK. The exact process exit code is unknown from the supplied artifacts: .memory/agent-runs/check_c16e31bd3ccc4bdd9e8b182c23d169a1/receipts.json is empty.",
+          "Production effect is accurately reported as unmeasured. No implementation was re-executed during this review."
+        ],
+        "lesson_proposals": [
+          {
+            "basis": "The previous review identified a missing legacy path despite two passing tests. Current implementation and recorded checks now cover that exception alongside the default UTF-8 behavior.",
+            "conditions": "A contract requires default behavior and an explicitly tagged exception.",
+            "exceptions": "When the contract permits production effect to remain unmeasured, local verification need not establish production impact; that limitation must remain explicit.",
+            "proposal": "Assess each required path against both implementation artifacts and relevant execution evidence; passing tests establish only the behaviors they cover."
+          }
+        ],
+        "summary": "All six criteria are supported by the current parser, recorded checks, and explicit production-evidence limitation. The legacy-path defect is repaired; production effect remains unmeasured.",
+        "verdict": "pass"
+      },
+      "metrics": {
+        "duration_ms": 74201,
+        "input_characters": 10643,
+        "provider_usage": [
+          {
+            "cache_write_input_tokens": 0,
+            "cached_input_tokens": 35072,
+            "input_tokens": 41423,
+            "output_tokens": 1283,
+            "reasoning_output_tokens": 69
+          }
+        ]
+      },
+      "error": ""
+    }
+  ],
+  "local_checks": {
+    "baseline_tests": 168,
+    "baseline_seconds": 9.137,
+    "latest_tests": 183,
+    "latest_seconds": 11.207,
+    "browser": {
+      "passed": true,
+      "browser": "153.0.8010.12",
+      "initial_ready_ms": 66,
+      "checks": [
+        "create sprint",
+        "create action",
+        "structured sprint assignment",
+        "inspect intent and lineage",
+        "navigate while inspecting",
+        "Escape closes the inspector",
+        "restore focus to the current action",
+        "add comment",
+        "reject unsupported Done",
+        "preserve draft on concurrent edit",
+        "reload current version",
+        "save revised plan",
+        "sprint filtering",
+        "original text across source pagination",
+        "mobile form width",
+        "recording gaps appear without reload",
+        "inspect recording gaps",
+        "resolved recording gaps and open inspector update without reload",
+        "no external requests",
+        "no JavaScript errors"
+      ]
+    },
+    "private_database_read_only_timing": {
+      "coverage_ms": 5.46,
+      "coverage_json_characters": 2170,
+      "health_ms": 0.67
+    },
+    "runtime_dependencies": 0,
+    "new_sqlite_tables": 0,
+    "packages": [
+      {
+        "passed": true,
+        "artifacts": [
+          {
+            "file": "project_memory_mcp-0.5.0b5-py3-none-any.whl",
+            "bytes": 150842,
+            "members": 31,
+            "sha256": "89b2a64778dc646c0c0908317cd1bdf9e10f664220c5c51b4523af433539c7e9"
+          },
+          {
+            "file": "project_memory_mcp-0.5.0b5.tar.gz",
+            "bytes": 370983,
+            "members": 106,
+            "sha256": "a9780bedad32bb41fb4b926a7a9ead9032818249812849e8d52fbc601df1ce4d"
+          }
+        ]
+      },
+      {
+        "passed": true,
+        "wheel": "project_memory_mcp-0.5.0b5-py3-none-any.whl",
+        "checks": [
+          "fresh wheel installation",
+          "CLI entry point",
+          "persistent installed launcher",
+          "three bundled agent roles",
+          "idempotent setup and capture",
+          "separate MCP process handshake and read",
+          "packaged offline HTML viewer",
+          "packaged live HTTP viewer",
+          "authenticated workspace write",
+          "SQLite backup",
+          "uninstall preserves data"
+        ],
+        "runtime_dependencies": 0
+      },
+      {
+        "passed": true,
+        "bundle": "project-memory-0.5.0-beta.5.mcpb",
+        "bytes": 145512,
+        "sha256": "0197b3946dd699b5a19e7700d8b016b41b9192e04c95e1a211d54543e9fec8cd",
+        "checks": [
+          "deterministic runtime-only bundle",
+          "fresh selected project setup",
+          "actual bundled MCP process handshake and read"
+        ],
+        "limitation": "The bundle entry point is tested; this does not verify installation in every desktop client."
+      }
+    ]
+  },
+  "evaluation_setup_failures": [
+    {
+      "count": 1,
+      "cause": "The first fixture lived under the configured source project, so Codex correctly rejected duplicate parent and fixture hooks.",
+      "resolution": "Use independent temporary projects."
+    },
+    {
+      "count": 2,
+      "cause": "The harness attempted to delete reviewer settings; immutable settings rejected it before any model ran.",
+      "resolution": "Keep the configuration. Informational cases naturally start no reviewers."
+    }
+  ],
+  "limitations": [
+    "Single cases establish observed behaviour, not population averages or daily productivity gains.",
+    "Hooks store prompt hashes; the agent must explicitly preserve the full meaning and exceptions.",
+    "A reviewer can still misinterpret evidence while addressing every checklist ID.",
+    "Codex full inputs exceed 10K; aggregate cached tokens are reported separately.",
+    "Claude per-input maxima and exact MCP-call counts are unavailable in the retained JSON format.",
+    "Current host runs were on macOS; this iteration did not dispatch the cross-platform GitHub Actions matrix.",
+    "Claude interruption and compaction were not rerun; its missing Interrupt hook remains a documented limitation.",
+    "No beta release or directory publication occurred."
+  ]
+}

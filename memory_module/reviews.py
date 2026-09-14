@@ -135,6 +135,12 @@ def snapshot(memory, episode_id, role):
              'intent': ep['objective'], 'criterion': ep['criterion'], 'requirements': memory.requirements,
              'direction_version': memory.direction()['version'], 'records': records, 'sources': sources,
              'receipts': receipts, 'tree_signature': getattr(memory,'_review_tree',None) or tree_signature(config['project'])}
+    intent = memory.db.execute("SELECT id,payload FROM host_receipts WHERE episode_id=? AND event_name='IntentAssessed' AND json_array_length(payload,'$.requirements')>0 ORDER BY rowid DESC LIMIT 1", (episode_id,)).fetchone()
+    conditions = [ep['criterion'], plan['scope'], *memory.requirements]
+    if intent:
+        value['intent_assessment'] = {'id':intent['id'], **json.loads(intent['payload'])}
+        conditions.extend(value['intent_assessment']['requirements'])
+    value['checklist'] = [{'id':f'C{i+1:03}', 'condition':condition} for i,condition in enumerate(dict.fromkeys(conditions))]
     signature=hashlib.sha256(dumps(value).encode()).hexdigest()
     if exists(memory):
         history=memory.db.execute("SELECT id,role,state,report,error FROM review_runs WHERE episode_id=? AND state NOT IN ('queued','running','cancelling') ORDER BY rowid DESC LIMIT 2",(episode_id,)).fetchall()
@@ -178,6 +184,9 @@ def current(memory, episode_id, role='outcome'):
         return {'state': 'missing', 'role': role}
     value = read(memory, row[0])
     try:
+        from .coverage import work_issues
+        if work_issues(memory,episode_id):
+            raise InvalidRecord('New intent or a capture gap requires explicit assessment before this check can approve work.')
         _, signature = snapshot(memory, episode_id, role)
         if signature != value['signature']:
             value['state'] = 'stale'
@@ -276,7 +285,7 @@ def command(host, project, folder, prompt):
             '--json-schema', dumps(REPORT_SCHEMA), '--system-prompt', prompt]
 
 
-def validate_report(report):
+def validate_report(report, checklist=None):
     if not isinstance(report, dict) or set(report) != set(REPORT_SCHEMA['required']):
         raise InvalidRecord('The reviewer did not return the required report fields.')
     if report['verdict'] not in {'pass', 'changes_required', 'uncertain'}:
@@ -292,6 +301,11 @@ def validate_report(report):
             raise InvalidRecord('A check result must be met, unmet or unknown.')
     if report['verdict']=='pass' and any(x['result']!='met' for x in report['checks']):
         raise InvalidRecord('A passing report cannot contain unmet or unknown checks.')
+    if checklist is not None:
+        expected = {item['id'] for item in checklist}
+        observed = [item['criterion'] for item in report['checks']]
+        if set(observed) != expected or len(observed) != len(expected):
+            raise InvalidRecord('The reviewer must assess every checklist ID exactly once; missing proof must be unknown.')
     for key in ('findings','lesson_proposals'):
         if not isinstance(report[key], list) or len(report[key])>30:
             raise InvalidRecord('The review contains too many findings or proposals.')
@@ -337,11 +351,12 @@ def execute(memory, run_id, timeout=None):
                'Start with the supplied records and inspect the artifacts needed to verify each criterion. Retrieve individual receipts by ID when needed. '
                'Keep tool output bounded, and reuse evidence already read rather than dumping directories or rereading entire transcripts. '
                'This is a check of the stated completion criteria, not a separate general code review. Once each criterion has cited support, a concrete contradiction or identified missing proof, return the report. Missing proof should produce unknown rather than indefinite searching. '
+               'Use each checklist ID (for example C001) exactly once as the criterion field. Preserve every condition and exception within it. '
                'Return only the requested JSON. A pass requires every criterion to be met.\n')
     evidence=review_evidence(run['snapshot'],folder)
     (folder/'context.json').write_text(dumps(evidence),encoding='utf-8')
     if len(dumps(evidence))>16000:
-        evidence={k:v for k,v in evidence.items() if k in {'role','project','subject','intent','criterion','requirements','direction_version'}}
+        evidence={k:v for k,v in evidence.items() if k in {'role','project','subject','intent','criterion','requirements','direction_version','checklist'}}
         evidence['work_scope']=next(r['payload'] for r in run['snapshot']['records'] if r['kind']=='work_plan')
         evidence['complete_evidence_file']=str(folder/'context.json')
         evidence['instruction']='Read the complete supporting records, sources, prior checks and execution summary from this file. It links to every original receipt without forcing unrelated tool metadata into context. Preserve conditions and exceptions.'
@@ -377,7 +392,7 @@ def execute(memory, run_id, timeout=None):
                     report = value.get('structured_output')
                     if report is None: report = json.loads(value.get('result',''))
                     metrics['provider_usage'] = value.get('usage')
-                validate_report(report)
+                validate_report(report, run['snapshot'].get('checklist'))
                 _, signature = snapshot(memory, run['episode_id'], run['role'])
                 state = report['verdict'] if signature==run['signature'] else 'stale'
                 if state=='stale': error='The work or its evidence changed while the agent checked it. This result cannot approve the current work.'
@@ -428,7 +443,9 @@ def hook(memory, event, host):
         reason = f'Project Memory {role} check {run["id"]}: {run["state"]}. Read memory_get reviews with id {ep}. '
         reason += f'Wait without repeated model calls using project-memory review --db {memory.path} --wait {run["id"]}. '
         reason += 'A missing, failed or stale check cannot establish completion. Do not repeat completed implementation work.'
-        if name=='Stop' and run['state']!='pass' and not event.get('stop_hook_active'):
+        prompt = memory.db.execute("SELECT id FROM host_receipts WHERE session_id=? AND event_name='UserPromptSubmit' ORDER BY rowid DESC LIMIT 1", (session,)).fetchone()
+        coverage_blocked = prompt and memory.db.execute("SELECT 1 FROM host_receipts WHERE session_id=? AND event_name='CoverageBlockIssued' AND json_extract(payload,'$.prompt_id')=?", (session,prompt[0])).fetchone()
+        if name=='Stop' and run['state']!='pass' and not event.get('stop_hook_active') and not coverage_blocked:
             key='review-block:'+session+':'+str(event.get('turn_id') or event.get('prompt_id') or '')+':'+run['id']
             if not memory.db.execute("SELECT 1 FROM host_receipts WHERE id=?",('host_'+hashlib.sha256(key.encode()).hexdigest()[:32],)).fetchone():
                 with memory._write():

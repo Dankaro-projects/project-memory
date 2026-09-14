@@ -165,6 +165,11 @@ class Viewer(HTTPServer):
             self.paths=[path for r in self.memory.db.execute('SELECT DISTINCT source_key FROM sources WHERE source_key LIKE ?',(PREFIX+'%',)) if (path:=document_path(r[0])) is not None]
             self.version=version
         stats=[]
+        marker=self.memory.path.with_suffix('.capture-error.json')
+        try:
+            st=marker.stat();stats.append(('capture_failure',st.st_mtime_ns,st.st_size))
+        except FileNotFoundError:
+            pass
         for p in self.paths:
             try:st=p.stat();stats.append((str(p),st.st_mtime_ns,st.st_size,st.st_ino))
             except OSError:stats.append((str(p),None))
@@ -237,7 +242,7 @@ class Handler(BaseHTTPRequestHandler):
         endpoint=target.path[len(prefix):]
         try:
             if endpoint=='':body=html();mime='text/html; charset=utf-8';etag=None
-            elif endpoint in {'api/health','api/records','api/record','api/board','api/sprints','api/reviews'}:
+            elif endpoint in {'api/health','api/records','api/record','api/board','api/sprints','api/reviews','api/coverage'}:
                 revision=self.server.revision();etag='"'+hashlib.sha256((revision+target.path+target.query).encode()).hexdigest()+'"'
                 if self.headers.get('If-None-Match')==etag:
                     self.send_response(304);self.send_header('ETag',etag);self.end_headers();return
@@ -248,6 +253,10 @@ class Handler(BaseHTTPRequestHandler):
                            'review_host':configured(memory),'interactive':True,
                            'episodes':[dict(r) for r in memory.db.execute('SELECT id,title FROM episodes ORDER BY created_at DESC LIMIT 1000')],
                            'episodes_more':memory.db.execute('SELECT count(*) FROM episodes').fetchone()[0]>1000}
+                elif endpoint=='api/coverage':
+                    from .coverage import inspect as session_coverage, sessions
+                    limit=int(params.get('limit','10'));offset=int(params.get('offset','0'))
+                    value=session_coverage(memory,params['session_id'],limit,offset) if params.get('session_id') else sessions(memory,limit,offset)
                 elif endpoint=='api/reviews':
                     from .reviews import listing, current
                     value=listing(memory,params.get('episode'),int(params.get('limit','10')),int(params.get('offset','0')))

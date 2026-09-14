@@ -63,8 +63,9 @@ class ClaudeCaptureTests(unittest.TestCase):
         self.assertEqual(self.counts()['PostCompact'],1)
         plain=self.capture('SessionStart',source='startup')['hookSpecificOutput']['additionalContext']
         self.assertNotIn('compacted',plain)
-    def test_claude_prompts_receive_context_only_when_state_needs_attention(self):
-        self.assertEqual(self.capture('UserPromptSubmit',prompt='plain question'),{})
+    def test_claude_prompts_receive_a_compact_receipt_and_expand_unresolved_state(self):
+        plain=self.capture('UserPromptSubmit',prompt='plain question')['hookSpecificOutput']['additionalContext']
+        self.assertIn('Prompt receipt:',plain);self.assertLess(len(plain),400)
         self.assertEqual(self.counts()['UserPromptSubmit'],1)
         d=self.decision()
         context=self.capture('UserPromptSubmit',prompt='next step')['hookSpecificOutput']['additionalContext']

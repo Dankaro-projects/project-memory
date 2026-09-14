@@ -1,0 +1,24 @@
+{
+  "fixture": "One lookup; no initial assessment; chat-only completion; three Stop deliveries.",
+  "boundary": "Actual hook subprocesses and SQLite; no model calls.",
+  "partial_checklist_accepted": true,
+  "integrity": "ok",
+  "episodes_created": 0,
+  "issues_before": null,
+  "checkpoint": null,
+  "issues_after": null,
+  "stop_interventions": 0,
+  "hook_output_characters": 480,
+  "hook_process_ms": [
+    27.04,
+    24.83,
+    23.89,
+    31.05,
+    28.77,
+    28.47
+  ],
+  "duration_ms": 230,
+  "model_tokens": null,
+  "human_corrections": 0,
+  "repeated_fixture_operations": 0
+}

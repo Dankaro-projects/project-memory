@@ -80,6 +80,9 @@ def completion(memory, episode_id):
 
 
 def completed_result(memory, episode_id):
+    from .coverage import work_issues
+    if work_issues(memory,episode_id):
+        return False
     plan = latest(memory, episode_id, 'work_plan')
     if plan and plan['state'] == 'cancelled':
         return False
@@ -187,6 +190,8 @@ def card(memory, episode_id):
     if decision:
         for reason in memory.review_reasons(decision['id']):
             problems.append({'type': 'evidence_review', **reason})
+    from .coverage import work_issues
+    problems.extend(work_issues(memory,episode_id))
     unconfirmed = unresolved(memory, episode_id)
     if unconfirmed:
         problems.append({'type': 'execution_unconfirmed', 'reason': f'{unconfirmed} tool calls need reconciliation before any retry.'})

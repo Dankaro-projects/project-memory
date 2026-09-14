@@ -44,6 +44,10 @@ TOOLS[0]['description'] += ' For continuing a named work item, begin with memory
 TOOLS[1]['description'] += ' Begin a named work continuation with next. Omit max_chars to use 6000; the allowed range is 500–20000. Use schema id plan to update a work_plan through operation plan, which handles revision links at the supplied version.'
 TOOLS[1]['inputSchema']['properties']['view']['enum'].append('reviews')
 TOOLS[2]['inputSchema']['properties']['operation']['enum'].append('review')
+TOOLS[1]['inputSchema']['properties']['view']['enum'].append('coverage')
+TOOLS[2]['inputSchema']['properties']['operation']['enum'].append('checkpoint')
+TOOLS[1]['description'] += ' coverage with session_id lists unassessed requests, unassigned activity, missing outcomes and capture gaps.'
+TOOLS[2]['description'] += ' checkpoint explicitly assesses observed prompt IDs; read schema id checkpoint. Bundle it as data.checkpoint on a plan or record write to avoid another call.'
 TOOLS[1]['description'] += ' reviews with the work episode id returns agent checks, findings and measured usage.'
 TOOLS[2]['description'] += ' review requests a bounded read-only host check (episode_id, role outcome/intent/recovery, optional retry). Complete outcomes start a check when configured; Done requires its current pass. Wait without repeated model calls using project-memory review --wait CHECK_ID.'
 
@@ -60,6 +64,16 @@ def bounded(value, budget):
 
 
 def schema(kind):
+    if kind=='reconcile':
+        return {'operation':'reconcile','required':['receipt_id','resolution','reason','evidence'],
+                'resolutions':['completed','failed','not_run','unknown'],
+                'evidence':'Every resolution needs [{source_id, reason}] from inspecting actual effects. Record a source first. Unknown preserves uncertainty; it does not establish success or permit a retry.'}
+    if kind=='checkpoint':
+        return {'operation':'checkpoint', 'required':['prompt_ids','effect','reason'],
+                'optional':['episode_id','plan_id','requirements','gap_ids'],
+                'effects':['new_work','changed','unchanged','informational','deferred'],
+                'rules':'Pass session_id. prompt_ids contains 1–20 observed user prompt receipt IDs including the newest prompt. Work assessments require episode_id and the current plan_id. New or changed work requires requirements: a list of complete conditions and exceptions. Changed intent requires a revised plan. Informational or deferred turns require a reason but no new episode. A checkpoint declares interpretation; it never establishes success, approves source instructions or reconciles uncertain effects.',
+                'bundling':'Place these fields in data.checkpoint on a plan or record write; episode_id is inferred from that record. Both writes commit atomically.'}
     if kind=='agent_check':
         return {'operation':'review','required':['episode_id'],'optional':{'role':['outcome','intent','recovery'],'max_seconds':'30 to 900; default 300. A longer explicit review preserves the same criteria.','retry':'Use true only to request a new check after inspecting the earlier result.'},'result':'A read-only agent checks the current work. Read memory_get reviews and wait using project-memory review --wait CHECK_ID.'}
     from .workflow import FIELDS
@@ -118,6 +132,9 @@ def write(memory, operation, request_key, data, session_id=None, receipt_ids=Non
         else:
             if not isinstance(data,dict): raise InvalidRecord('data must be an object.')
             data=dict(data)
+            checkpoint=data.pop('checkpoint',None)
+            if checkpoint is not None and operation not in {'plan','record'}:
+                raise InvalidRecord('Bundle a checkpoint only with plan or record.')
             if operation=='record':
                 kind=data.get('kind'); payload=data.get('payload',{})
                 if not isinstance(payload,dict): raise InvalidRecord('payload must be an object.')
@@ -148,14 +165,30 @@ def write(memory, operation, request_key, data, session_id=None, receipt_ids=Non
                 result=memory.approve_requirements(request_key=request_key,**data)
             elif operation=='reconcile':
                 result=codex_host.reconcile(memory,request_key=request_key,**data)
+            elif operation=='checkpoint':
+                from .coverage import assess
+                result=assess(memory,session_id=session_id,request_key=request_key,**data)
             else:
                 raise InvalidRecord('Unknown write operation.')
+            if checkpoint is not None:
+                from .coverage import assess
+                if not isinstance(checkpoint,dict): raise InvalidRecord('checkpoint must be an object.')
+                checkpoint=dict(checkpoint)
+                checkpoint.setdefault('episode_id',result.get('episode_id') or data.get('episode_id'))
+                from .planning import latest
+                plan=latest(memory,checkpoint['episode_id'],'work_plan') if checkpoint['episode_id'] else None
+                if plan:checkpoint.setdefault('plan_id',plan['id'])
+                result={**result,'checkpoint':assess(memory,session_id=session_id,request_key=request_key,**checkpoint)}
             memory.db.execute('INSERT INTO adapter_requests VALUES (?,?,?)',(request_key,signature,dumps(result)))
     if operation=='record' and data.get('kind')=='outcome' and data.get('payload',{}).get('completion')=='complete':
         from .reviews import configured, request, launch
         from .planning import latest
         if configured(memory) and latest(memory,data['episode_id'],'work_plan'):
             try:
+                if session_id:
+                    from .coverage import inspect
+                    if inspect(memory,session_id)['issues']:
+                        return {**result,'agent_check':{'state':'needs_assessment','read_with':{'view':'coverage','session_id':session_id}}}
                 run=request(memory,data['episode_id'],request_key='outcome:'+result['id'],session_id=session_id or '')
                 launch(memory,run)
                 result={**result,'agent_check':{'id':run['id'],'state':run['state'],'wait_command':'project-memory review --db '+str(memory.path)+' --wait '+run['id']}}
@@ -203,6 +236,9 @@ def dispatch(memory, name, arguments):
             page['next_offset']=offset+len(entries)
             while len(entries)>1 and len(dumps(tool_result(result)))>budget:
                 entries.pop();page['next_offset']-=1;page['more']=True
+    elif view=='coverage':
+        from .coverage import inspect, sessions
+        result=inspect(memory,args['session_id'],limit,offset) if args.get('session_id') else sessions(memory,limit,offset)
     elif view=='health':
         from .health import inspect
         result=inspect(memory)

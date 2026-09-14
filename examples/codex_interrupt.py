@@ -10,7 +10,7 @@ from memory_module import Memory
 from memory_module.codex_host import status
 
 
-def run(project,output):
+def run(project,output,planned=False):
     project=Path(project).resolve();output=Path(output);output.mkdir(parents=True,exist_ok=False)
     marker=project/(output.name+'-marker.txt')
     if marker.exists():raise FileExistsError('Use a fresh project; the marker must not exist.')
@@ -19,6 +19,9 @@ def run(project,output):
         thread=client.start()
         prompt='''This is a real interruption test. Create a code episode through memory_write start with criterion "The marker is written once and is reconciled after interruption". Store this instruction as a source, then record a decision with its evidence, explicit uncertainty and alternatives, binding it to the memory session ID. Then run exactly one shell command: python3 -u -c "from pathlib import Path; import time; p=Path('interruption-marker.txt'); p.open('a').write('once\\n'); print('marker written', flush=True); time.sleep(40)". Wait for it; the test harness will interrupt you. Do not rerun the command.'''
         prompt=prompt.replace('interruption-marker.txt',marker.name)
+        if planned:
+            prompt=prompt.replace('Create a code episode through memory_write start with criterion', 'Use memory_get schema id plan and checkpoint, then create a code work plan through memory_write plan with criterion')
+            prompt+=' The plan owns this session and permits only this fixture. Include an explicit intent checkpoint with the observed prompt ID, effect new_work and the requirements to write once, inspect before retrying and preserve uncertainty. Do not request a model review.'
         turn=client.turn(thread,prompt)
         deadline=time.monotonic()+240;interrupted=False
         while time.monotonic()<deadline:
@@ -37,6 +40,8 @@ def run(project,output):
         client=CodexClient(project,output/'resume.jsonl')
         client.request('thread/resume',{'threadId':thread,'cwd':str(project),'approvalPolicy':'never','sandbox':'workspace-write','excludeTurns':True})
         resume_prompt='''Resume the interrupted task. Do not rerun the marker-writing command. Use memory_get status with your session ID and limit 3 to inspect capture. Read interruption-marker.txt with the shell, record the actual text as a source, and reconcile any unconfirmed original tool receipt as completed only in the sense that its marker was written; explicitly state that the sleeping process completion is unknown. Use resolution unknown if the process completion cannot be established. Record the outcome against the criterion, using unknown where uncertainty remains. Finish with the observed marker count and any unresolved execution state.'''
+        if planned:
+            resume_prompt='''Resume this same work. Never rerun the marker-writing command. Inspect status and coverage for your session, read interruption-marker.txt once, and record the observed marker count as evidence. A written marker proves that side effect only. Reconcile an absent final result as unknown unless you verify process completion independently. Record an outcome with completion blocked if uncertainty remains. Acknowledge this recovery request with an unchanged intent checkpoint for the existing plan; include it with the outcome write. Do not start a reviewer. Finish with the observed count and the remaining uncertainty.'''
         turn2=client.turn(thread,resume_prompt.replace('interruption-marker.txt',marker.name))
         finished=client.complete(turn2)
         with Memory(project_database(project)) as m:
@@ -55,4 +60,4 @@ def run(project,output):
 
 
 if __name__=='__main__':
-    p=argparse.ArgumentParser(description=__doc__);p.add_argument('--project',required=True);p.add_argument('--output',required=True);a=p.parse_args();run(a.project,a.output)
+    p=argparse.ArgumentParser(description=__doc__);p.add_argument('--project',required=True);p.add_argument('--output',required=True);p.add_argument('--planned',action='store_true');a=p.parse_args();run(a.project,a.output,a.planned)
