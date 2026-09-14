@@ -72,8 +72,8 @@ The destination must be new. SQLite's backup API provides a consistent database 
 Upgrade by running the current version's setup command inside the intended project:
 
 ```sh
-uvx project-memory-mcp@0.5.0b4 setup --client codex --trust
-uvx project-memory-mcp@0.5.0b4 doctor
+uvx project-memory-mcp@0.5.0b5 setup --client codex --trust
+uvx project-memory-mcp@0.5.0b5 doctor
 ```
 
 Use `--client claude --trust` for Claude Code, or `--client mcp` for another local MCP client. The recorded launcher is versioned; setup updates its configuration and verifies new Codex host hashes. Start a new task after an upgrade. A configuration edit within the managed block produces a conflict rather than overwriting it. If you use the optional plugin, update it through the host's plugin manager as well; an already running task retains its loaded tool schemas.
@@ -134,6 +134,6 @@ An explicit output path creates a static snapshot. Existing files are protected 
 
 When upgrading, setup checks the version of a running viewer. If it belongs to an older release, setup opens the current viewer at a new local address. Close the old tab; its service exits after ten minutes without requests. Same-version restarts retain the existing address.
 
-## Development workspace and agents
+## Interactive workspace and agents
 
-The source version `0.5.0b5` adds the interactive workspace and agent checks. It is not yet a published release. Follow [the development install instructions](workspace-agents.md#install-this-development-version). The published commands above still install beta 4. Connecting Codex or Claude in beta 5 enables conditional model reviews through that installed host and account. These reviews consume provider usage. Generic MCP setup does not enable a reviewer.
+Version `0.5.0b5` adds the interactive workspace and agent checks. The commands above install it. See [workspace and agents](workspace-agents.md) for controls and limits. Connecting Codex or Claude in beta 5 enables conditional model reviews through that installed host and account. These reviews consume provider usage. Generic MCP setup does not enable a reviewer.

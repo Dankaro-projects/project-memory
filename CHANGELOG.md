@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.5.0b5 — Unreleased
+## 0.5.0b5 — 14 September 2026
 
 Opening the internal HTML template now shows the workspace launch command instead of unstyled controls. Project information explains live updates and offline exports, and the [user guide](docs/user-guide.md) covers everyday use and recovery.
 

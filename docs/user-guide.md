@@ -24,7 +24,7 @@ You still decide whether to approve proposed requirements or lessons. Capturing 
 | See evidence that may need checking | **Evidence drift**. Ask the assistant to inspect the current source before reusing it. |
 | Understand missing records | The **Recording checks** notice, when present. Ask the assistant to assess the listed gaps. |
 
-The development workspace also lets you create actions and sprints, revise plans and add comments. Saving a plan does not itself start an assistant or authorise external work. These interactive controls are in the unreleased beta 5; the published beta 4 viewer is read-only.
+The workspace also lets you create actions and sprints, revise plans and add comments. Saving a plan does not itself start an assistant or authorise external work. These interactive controls require beta 5 or newer; earlier viewers are read-only.
 
 ## Reopen the workspace
 
@@ -37,7 +37,7 @@ project-memory view
 If you used the published one-command setup without installing the CLI permanently, use the same package version:
 
 ```sh
-uvx project-memory-mcp@0.5.0b4 view
+uvx project-memory-mcp@0.5.0b5 view
 ```
 
 For a development checkout, use the command from its [development installation instructions](workspace-agents.md#install-this-development-version). Opening `memory_module/viewer.html` directly opens an internal template, not your records.
