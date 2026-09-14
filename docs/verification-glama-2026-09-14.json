@@ -1,0 +1,65 @@
+{
+  "checked_on": "2026-09-14",
+  "listing": "https://glama.ai/mcp/servers/Dankaro-projects/project-memory",
+  "repository": "https://github.com/Dankaro-projects/project-memory",
+  "method": "Observed the signed-in Glama UI through Chrome, including submission confirmation, author verification, saved listing, build logs and published release.",
+  "submission": {
+    "confirmation": "Your server has been submitted for review",
+    "review_approval_confirmed": false,
+    "existing_listing_found_in_search": true,
+    "existing_listing_updated_at_utc": "2026-09-13 20:05",
+    "author_verified": true,
+    "name": "Project Memory",
+    "categories": ["Developer Tools", "Knowledge & Memory", "Project Management"]
+  },
+  "initial_failure": {
+    "test_id": "01a09ca9-bac7-790a-95d6-c6686f045781",
+    "observed_error": "spawn project-memory ENOENT",
+    "cause": "Glama's inferred command did not use the executable installed in .venv/bin.",
+    "additional_requirement": "The serve command requires an initialised project database."
+  },
+  "build": {
+    "test_url": "https://glama.ai/mcp/servers/Dankaro-projects/project-memory/admin/dockerfile/tests/01a09e30-3bc8-7d1f-849b-904ba6650a3f",
+    "status": "success",
+    "provider_reported_duration_seconds": 10.8,
+    "commit": "9dfe5f1ca5b2c6f4de7c6362cf8a782f37d1e9b1",
+    "base_image": "debian:trixie-slim",
+    "python_version_observed": "3.14.7",
+    "node_version_setting": "24",
+    "proxy_version": "6.4.3",
+    "build_steps": [
+      "uv sync --no-dev",
+      ".venv/bin/project-memory setup --client mcp --project ."
+    ],
+    "cmd_arguments": ["mcp-proxy", "--", "/app/.venv/bin/project-memory", "serve", "--project", "/app"],
+    "database": "/app/.memory/project.sqlite",
+    "captured_documents": [],
+    "handshake_version": "0.5.0b1",
+    "protocol_version": "2025-11-25",
+    "discovered_tools": ["memory_context", "memory_get", "memory_write"],
+    "actual_tool_calls_verified_in_glama": false
+  },
+  "release": {
+    "version": "0.5.0-beta.1",
+    "status": "published",
+    "image": "registry.glama.ai/mcp-vzem7mdg1g:w5xx8ubbng",
+    "auto_release": false
+  },
+  "local_verification": {
+    "source": "Fresh temporary git archive of the same pinned commit.",
+    "commands": [
+      "uv sync --no-dev",
+      ".venv/bin/project-memory setup --client mcp --project .",
+      ".venv/bin/project-memory doctor --project ."
+    ],
+    "sqlite_integrity": "ok",
+    "mcp_process_verified": true,
+    "scope": "Native local execution verified setup, MCP handshake, tool discovery and a schema read. The actual Docker execution was verified by Glama's build test."
+  },
+  "limitations": [
+    "The public Schema page showed no indexed tools after publication; public tool indexing and quality grading remain unverified.",
+    "The container starts with an empty database and has no connection to the user's local project or Codex hooks.",
+    "Container persistence across restarts has not been verified.",
+    "A passing provider build does not establish daily-use quality or reduced token consumption."
+  ]
+}
