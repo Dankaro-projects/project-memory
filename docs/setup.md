@@ -65,7 +65,14 @@ project-memory backup /absolute/path/to/backup.sqlite
 
 The destination must be new. SQLite's backup API provides a consistent database copy. Setup also creates a backup of the database and existing Codex configuration on first connection. Keep backups on storage you control.
 
-Upgrade by installing the next published wheel using `uv tool install --force --from RELEASE_WHEEL_URL project-memory-mcp`, then rerun `project-memory setup --client codex --trust`. The recorded launcher is versioned; setup updates its configuration and verifies new host hashes. Run `doctor` and a new task after an upgrade. A configuration edit within the managed block produces a conflict rather than overwriting it.
+Upgrade by running the current version's setup command inside the intended project:
+
+```sh
+uvx project-memory-mcp@0.5.0b3 setup --client codex --trust
+uvx project-memory-mcp@0.5.0b3 doctor
+```
+
+Use `--client claude --trust` for Claude Code, or `--client mcp` for another local MCP client. The recorded launcher is versioned; setup updates its configuration and verifies new Codex host hashes. Start a new task after an upgrade. A configuration edit within the managed block produces a conflict rather than overwriting it. If you use the optional plugin, update it through the host's plugin manager as well; an already running task retains its loaded tool schemas.
 
 If setup is interrupted, repeat the same setup command. A small ownership file lets it finish after either configuration write. Uninstall after completing any pending setup:
 
