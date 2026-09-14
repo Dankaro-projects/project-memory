@@ -3,7 +3,7 @@ import argparse
 import json
 from pathlib import Path
 
-from examples.codex_app_client import CodexClient
+from examples.codex_app_client import CodexClient, project_database
 from examples.codex_cases import final_json
 from memory_module import Memory
 
@@ -29,7 +29,7 @@ def run(project, output):
     path=project/'AmberlakeDocumentPilot.md'
     with path.open('x') as stream:
         stream.write('# AmberlakeDocumentPilot vision\nKeep customer data locally. A reviewed export is allowed only after an explicit customer request.\n')
-    with Memory(project/'memory.sqlite') as m:
+    with Memory(project_database(project)) as m:
         source=m.document(str(path),subject='general')
         ep=m.start('AmberlakeDocumentPilot rollout','Review the export choice after a vision change.','document integration','The changed evidence and exception are explicit.',subject='code')
         refs=[{'source_id':source['id'],'reason':'The selected vision defines the export conditions.'}]
@@ -63,7 +63,7 @@ Use memory_get search with subject code to discover the pilot records, then read
             'preserves_exception':'explicitly requests a reviewed export' in answer.get('exception',''),
             'reads_current_policy':'scheduled' in answer.get('current_export_policy','').lower(),
             'retains_uncertainty':'unmeasured' in answer.get('uncertainty','').lower()}
-        with Memory(project/'memory.sqlite') as m:
+        with Memory(project_database(project)) as m:
             checks['two_source_versions']=m.db.execute('SELECT count(*) FROM sources WHERE source_key=(SELECT source_key FROM sources WHERE id=?)',(source['id'],)).fetchone()[0]==2
             checks['no_accepted_lesson']=m.read(lesson['id'])['lesson_status']=='proposed'
             m.export_html(output/'viewer.html',episode_id=ep['id'],include_bodies=True)

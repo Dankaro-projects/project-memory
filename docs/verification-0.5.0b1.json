@@ -234,5 +234,112 @@
     "Maintenance minutes",
     "Long-term drift",
     "Competitor performance"
-  ]
+  ],
+  "public_release": {
+    "tag": "v0.5.0b1",
+    "release_commit": "9dfe5f1ca5b2c6f4de7c6362cf8a782f37d1e9b1",
+    "release_workflow": "https://github.com/Dankaro-projects/project-memory/actions/runs/34779676300",
+    "fresh_cache_install_seconds": 1.624,
+    "install_timing_limit": "One machine, Python and uv already installed. This is elapsed command time, not a universal performance estimate.",
+    "exact_command": "uvx project-memory-mcp@0.5.0b1 setup --client codex --trust",
+    "mcp_process_verified": true,
+    "integrity": "ok",
+    "observed_hooks": {
+      "DecisionBound": 2,
+      "Interrupt": 1,
+      "PostCompact": 1,
+      "PostToolUse": 3,
+      "PreCompact": 1,
+      "PreToolUse": 4,
+      "Reconciled": 1,
+      "SessionEnd": 1,
+      "SessionStart": 5,
+      "Stop": 5,
+      "UserPromptSubmit": 6
+    },
+    "missing_hook_events": [],
+    "interruption": {
+      "not_repeated": true,
+      "resume_adapter_calls": 8,
+      "resume_adapter_errors": 0,
+      "unconfirmed_after_interrupt": 1,
+      "unconfirmed_after_resume": 1,
+      "resume_status": "completed"
+    },
+    "compaction": {
+      "completed": true,
+      "checks": {
+        "encoding": true,
+        "invalid_bytes": true,
+        "legacy_exception": true,
+        "production_unmeasured": true
+      }
+    },
+    "input_audit": {
+      "target_input_tokens_exclusive": 10000,
+      "measurement": "Provider last.inputTokens includes instructions, tool definitions, history, task and memory. It is not an estimate from character counts.",
+      "cases": [
+        {
+          "case": ".",
+          "log": "events.jsonl",
+          "input_tokens_per_notification": [
+            14034,
+            14580,
+            20720,
+            21021,
+            21616,
+            21960,
+            22389
+          ],
+          "maximum_input_tokens": 22389,
+          "unmeasured_or_reset_notifications": 0,
+          "meets_target": false
+        },
+        {
+          "case": ".",
+          "log": "resume.jsonl",
+          "input_tokens_per_notification": [
+            22783,
+            23452,
+            24300,
+            24902,
+            25196,
+            25743,
+            27037
+          ],
+          "maximum_input_tokens": 27037,
+          "unmeasured_or_reset_notifications": 0,
+          "meets_target": false
+        }
+      ],
+      "meets_target": false,
+      "limitations": "Notifications may repeat reports or reset counters after compaction. Zero or missing counts are unmeasured and cannot establish a pass. Hidden host requests without usage notifications are outside this audit. The adapter cannot enforce a pre-request limit on the full native Codex prompt."
+    },
+    "plugin": {
+      "actual_mcp_reads": 1,
+      "errors": 0,
+      "launcher_source": "Installed Codex plugin and published GitHub wheel",
+      "limits": "The test explicitly enabled only this plugin; the project-managed adapter is the default installation path."
+    },
+    "pypi_github_wheel_identical": true,
+    "tested_and_published_runtime_files_identical": true,
+    "smithery_github_bundle_identical": true,
+    "artifacts": [
+      {
+        "file": "project-memory-0.5.0-beta.1.mcpb",
+        "bytes": 54523,
+        "sha256": "de3f16ed80f124db7ed98e54b21bedb40f31ae64bd185804fd96451bbecae8cc"
+      },
+      {
+        "file": "project_memory_mcp-0.5.0b1-py3-none-any.whl",
+        "bytes": 58117,
+        "sha256": "1ff9314c280b5d0d6249dea2abfa9e330373d221a00e6c18d4c744e89f0e254e"
+      },
+      {
+        "file": "project_memory_mcp-0.5.0b1.tar.gz",
+        "bytes": 209471,
+        "sha256": "d7b4b5e63399c5281940559634a732d2e718f56910108d879de0e78309178e04"
+      }
+    ]
+  }
 }

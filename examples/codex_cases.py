@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 import re
 import time
-from examples.codex_app_client import CodexClient
+from examples.codex_app_client import CodexClient, project_database
 from memory_module import Memory
 
 FACTS = {
@@ -64,7 +64,7 @@ print('\\n'.join('Archived test note %d: This unrelated example is not a current
     fixture_file(project/'fixture-facts.json',json.dumps(FACTS,indent=2))
     fixture_file(project/'parser.py',"def decode_new_file(value):\n    return value.decode('latin-1', errors='replace')\n")
     access=project/'research-access.jsonl'
-    with Memory(project/'memory.sqlite') as m:
+    with Memory(project_database(project)) as m:
         for name,body in FACTS.items():
             stored=body if name!='limits' else '2024 standard attachment limit: 5. This stored source is overdue for review; consult the current contract.'
             if not m.db.execute('SELECT 1 FROM sources WHERE source_key=?',('paired-'+name,)).fetchone():
