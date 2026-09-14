@@ -3,6 +3,7 @@ import argparse
 import base64
 import hashlib
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from socketserver import TCPServer
 import json
 import os
 from pathlib import Path
@@ -147,6 +148,10 @@ class Viewer(HTTPServer):
         self.memory=Memory(path,read_only=True);self.token=token;self.boot=uuid.uuid4().hex
         self.last_access=time.monotonic();self.version=None;self.paths=[];self.next_review=None;self.due_count=0;self.db_identity=Path(path).stat().st_ino
         super().__init__(('127.0.0.1',port),Handler)
+    def server_bind(self):
+        # HTTPServer resolves a hostname here; this fixed loopback service needs no DNS.
+        TCPServer.server_bind(self)
+        self.server_name='127.0.0.1';self.server_port=self.server_address[1]
     def revision(self):
         if self.memory.path.stat().st_ino!=self.db_identity:
             self.last_access=0
@@ -265,10 +270,7 @@ def _start(path,state):
 def main():
     parser=argparse.ArgumentParser();parser.add_argument('--db',required=True);parser.add_argument('--state',required=True)
     args=parser.parse_args();state=Path(args.state);info=json.loads(state.read_text())
-    import faulthandler
-    faulthandler.dump_traceback_later(3)
     with Viewer(args.db,info['token'],info.get('port',0)) as server:
-        faulthandler.cancel_dump_traceback_later()
         info.update(port=server.server_port,url=f'http://127.0.0.1:{server.server_port}/{info["token"]}/',phase='ready',pid=os.getpid())
         atomic(state,dumps(info));state.chmod(0o600);server.timeout=1
         while time.monotonic()-server.last_access<600:server.handle_request()

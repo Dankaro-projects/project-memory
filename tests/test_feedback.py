@@ -17,7 +17,7 @@ from memory_module import codex_host
 from memory_module.documents import sync
 from memory_module.health import inspect, diagnose_hooks
 from memory_module.install import setup
-from memory_module.live import page, start
+from memory_module.live import page, start, Viewer
 from memory_module.mcp import dispatch, tool_result
 
 
@@ -27,6 +27,13 @@ class FeedbackTests(unittest.TestCase):
         self.info=setup(self.root);self.m=Memory(self.info['database'])
     def tearDown(self):
         self.m.close();self.temp.cleanup()
+    def test_local_viewer_starts_without_hostname_resolution(self):
+        from unittest.mock import patch
+        with patch('socket.getfqdn',side_effect=OSError('DNS is unavailable')):
+            with Viewer(self.m.path,'local-test-token') as server:
+                self.assertGreater(server.server_port,0)
+                self.assertEqual(server.server_address[0],'127.0.0.1')
+
     def test_empty_baseline_is_not_confused_with_database_health(self):
         value=dispatch(self.m,'memory_get',{'view':'health'})
         self.assertEqual(value['baseline']['status'],'not_established')

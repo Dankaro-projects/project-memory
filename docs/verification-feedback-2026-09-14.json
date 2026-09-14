@@ -10,7 +10,7 @@
   },
   "regression": {
     "baseline_passed": 112,
-    "candidate_passed": 129
+    "candidate_passed": 130
   },
   "scripted": {
     "before": {
@@ -463,5 +463,14 @@
     "long-term drift",
     "competitor performance"
   ],
-  "privacy": "This report contains invented fixtures and reviewed aggregate results. The private session feedback, project database and raw host logs are not published."
+  "privacy": "This report contains invented fixtures and reviewed aggregate results. The private session feedback, project database and raw host logs are not published.",
+  "ci_failures": [
+    {
+      "run": "https://github.com/Dankaro-projects/project-memory/actions/runs/34828432065",
+      "platform": "macOS, Python 3.11 and 3.14",
+      "failure": "Five live-viewer tests timed out at startup. A diagnostic stack located the block in socket.getfqdn called by HTTPServer.server_bind.",
+      "correction": "Bind the fixed loopback address directly and set its known server name without DNS. Terminate and reap a child when startup fails.",
+      "rerun": "Pending final cross-platform CI."
+    }
+  ]
 }
