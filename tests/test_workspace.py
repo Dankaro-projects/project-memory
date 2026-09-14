@@ -89,6 +89,19 @@ class WorkspaceTests(unittest.TestCase):
         by_id={s['id']:s for s in snapshot['sources']}
         self.assertIn(old,by_id);self.assertIn(new['id'],by_id)
         self.assertIn('Only the tagged migration route',by_id[new['id']]['body'])
+    def test_review_context_preserves_failures_and_unknown_calls_without_dumping_completed_receipts(self):
+        folder=self.root/'.memory/review-context';folder.mkdir()
+        def receipt(rid,event,tool,payload=None):return {'id':rid,'event_name':event,'session_id':'session','tool_use_id':tool,'payload':payload or {}}
+        records=[receipt('pre-ok','PreToolUse','ok'),receipt('post-ok','PostToolUse','ok'),
+                 receipt('pre-unknown','PreToolUse','unknown'),receipt('pre-reconciled','PreToolUse','reconciled'),
+                 receipt('reconciliation','Reconciled','',{'receipt_id':'pre-reconciled','resolution':'completed'}),
+                 receipt('post-failed','PostToolUse','failure',{'tool_response':{'exit_code':1}})]
+        original={'receipts':records,'criterion':'Preserve every condition and exception.','sources':[{'body':'Complete original source text.'}]}
+        packet=reviews.review_evidence(original,folder)
+        self.assertNotIn('receipts',packet);self.assertEqual(packet['sources'],original['sources'])
+        self.assertEqual([r['id'] for r in packet['execution']['unconfirmed']],['pre-unknown'])
+        self.assertEqual([r['id'] for r in packet['execution']['reported_failures']],['post-failed'])
+        self.assertEqual(json.loads((folder/'receipts.json').read_text()),records)
     def test_a_revised_decision_can_continue_after_an_unsuccessful_review(self):
         from memory_module.planning import next_work
         reviews.configure(self.m,self.root,'codex');decision,_=self.completed();ep=self.work['episode_id']

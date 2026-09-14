@@ -39,6 +39,8 @@ Real Chrome editing exposed an older-plan compatibility defect: omitting an opti
 
 The evaluation also retained a malformed MCP evidence request, which was rejected before writing. Its corrected request succeeded. Browser test development initially read asynchronous UI state before rendering finished; those test waits were corrected. Neither failure is counted as a successful product check. The first CI run also exposed a packaging-test path comparison on macOS: `/var` and `/private/var` can refer to the same installed interpreter. The assertion now compares executable identity and still checks that the launcher runs the installed module.
 
+A later review of this full development session exposed a scale issue that the small fixtures missed. Its initial prompt contained 2,505 characters, but it then read a 255,713-byte evidence file containing the full capture history. The review timed out after 120.1 seconds, with no provider usage total returned. The implementation now keeps full semantic records in review context, includes mechanical counts, reported failures and unconfirmed calls, and links to the intact receipt archive for individual reads. This removes no receipts or accepted criteria. The final-session rerun is reported separately from the original 15 fixture attempts.
+
 ## Cost and responsiveness
 
 | Independent reviewer | Broken case | Repaired case | Aggregate input tokens, including cache |
@@ -58,7 +60,7 @@ Daily repeated research, human corrections and maintenance effort remain **unmea
 
 Real Chrome extension interaction verifies sprint creation, a writing action with an explained code dependency, decision and review inspection, successful Done, and live artifact drift. The automated HTTP/browser case verifies action and sprint creation, comments, rejected unsupported Done, preserved drafts after concurrent edits, explicit reload, revised-plan saving, sprint filtering and mobile form width. It reports no JavaScript errors or external requests. Existing offline rendering, filters, source navigation, pagination, correction wording, board views and content-security checks also pass.
 
-The final Python suite passes 166 tests. The wheel was installed into a fresh environment outside the checkout. Checks verified its persistent launcher, all three packaged agent instructions, actual MCP handshake/read, offline HTML, live HTTP, authenticated plan write, backup and uninstall with preserved data. The MCPB also starts an actual bundled server in a fresh project. Distribution checks reject private databases, transcripts and unexpected runtime files. This does not prove installation in every desktop host.
+The final Python suite passes 167 tests. The wheel was installed into a fresh environment outside the checkout. Checks verified its persistent launcher, all three packaged agent instructions, actual MCP handshake/read, offline HTML, live HTTP, authenticated plan write, backup and uninstall with preserved data. The MCPB also starts an actual bundled server in a fresh project. Distribution checks reject private databases, transcripts and unexpected runtime files. This does not prove installation in every desktop host.
 
 ## Reproduce the cases
 
