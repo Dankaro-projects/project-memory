@@ -12,6 +12,22 @@ Repeated setup does not duplicate hooks or unchanged source versions. Source doc
 
 The assistant can capture another selected file using `memory_write document`. It should use `memory_get direction` before an explicitly authorised `approve_requirements` operation. That operation requires complete requirement sentences, an approval reason, actor, evidence references and the current version. File capture and approval are different actions.
 
+## Claude Code
+
+```sh
+project-memory setup --client claude --trust --document VISION.md
+```
+
+Setup adds a `project_memory` entry to `.mcp.json` in the project root and the hook commands to `.claude/settings.local.json`. Both files keep their other entries. The local settings file holds machine-specific launch paths and stays out of version control. `--trust` lists the server in `enabledMcpjsonServers` so Claude Code does not ask for approval; without it, approve the project server when a new session asks. Claude Code needs no separate hook trust step.
+
+The hook command carries `--host claude`. Claude Code sends the same field names as Codex for tool events (`tool_name`, `tool_input`, `tool_use_id`, `tool_response`) and adds `transcript_path`, `cwd` and `permission_mode`, which are not stored. Codex numbers turns; Claude Code does not, so repeated lifecycle events in one session are kept distinct by their prompt identifier or capture time. Three differences from Codex remain:
+
+- Claude Code has no `Interrupt` hook. `doctor` does not expect it for this client. An interrupted tool call leaves its `PreToolUse` receipt unconfirmed, which the assistant reconciles with evidence in the same way as after a Codex interruption.
+- Claude Code raises `PostToolUseFailure` instead of `PostToolUse` when a tool fails. It is stored as a `PostToolUse` receipt with `failed` set and the original event name in the payload, so the tool receipt closes and the failure remains visible.
+- Claude Code compacts the conversation automatically. `PreCompact` and `PostCompact` are recorded. The `SessionStart` hook returns additional context at startup, resume and after compaction: the memory session, any active decision with its version, and the number of unconfirmed tool calls. It never returns record text; the assistant retrieves that explicitly.
+
+Memory tool calls made through any server name that ends in the three tool names are not captured as receipts, which avoids recursive noise when the server is installed as `project_memory`, `project-memory` or through a plugin.
+
 ## Generic MCP configuration
 
 After `project-memory setup --client mcp`, adapt this configuration to the client's documented MCP settings:
@@ -29,11 +45,11 @@ After `project-memory setup --client mcp`, adapt this configuration to the clien
 
 Use the absolute installed executable if the desktop client cannot find it on PATH. `PROJECT_MEMORY_PROJECT` can supply the project directory when a client supports environment configuration. There is no global active-project pointer. Cloud-only clients cannot reach a local stdio process.
 
-The Codex plugin provides the same three MCP tools and a short workflow skill. Install it from this repository's marketplace. If a project already has a setup-managed MCP connection, avoid enabling a second copy through the plugin. Hooks require project setup and host trust; plugin discovery alone does not enable capture.
+The Codex and Claude Code plugins provide the same three MCP tools and a short workflow skill; the Claude Code plugin also carries the lifecycle hooks, which capture only in projects that have a Project Memory database. Install it from this repository's marketplace. If a project already has a setup-managed MCP connection, avoid enabling a second copy through the plugin. Hooks require project setup and host trust; plugin discovery alone does not enable capture.
 
 ## Verify the connection
 
-`project-memory doctor` starts a separate installed MCP process, initialises it, lists tools and requests the decision schema. It also checks SQLite integrity and reports observed hook counts and unconfirmed actions. Missing lifecycle events may not have happened yet; existing receipt counts are historical evidence, not proof that today's host configuration still works.
+`project-memory doctor` starts a separate installed MCP process, initialises it, lists tools and requests the decision schema. It also checks SQLite integrity and reports observed hook counts and unconfirmed actions. The expected lifecycle events follow the client recorded at setup: nine for Codex, eight for Claude Code. Missing lifecycle events may not have happened yet; existing receipt counts are historical evidence, not proof that today's host configuration still works.
 
 In a new Codex task, ask the assistant to capture a selected document, record a decision with evidence, perform a small project action and record its actual outcome. Inspect the records with `view` and `doctor`. Reproducible live interruption and lifecycle harnesses are in `examples/`; they require a signed-in local Codex and intentionally execute synthetic work. [Evidence](evidence.md) separates those checks from unit tests.
 
@@ -54,7 +70,9 @@ project-memory uninstall
 uv tool uninstall project-memory-mcp
 ```
 
-Uninstall removes only its project connection and exact hook commands. It preserves records, source documents, backups and other client configuration. Codex can retain inactive trust entries for removed commands. Setup never edits unrelated global MCP connectors.
+Uninstall removes only its project connection and exact hook commands, including the `.mcp.json` entry and local settings hooks written for Claude Code. It preserves records, source documents, backups and other client configuration. Codex can retain inactive trust entries for removed commands. Setup never edits unrelated global MCP connectors.
+
+When the package runs from a source checkout with its own `.venv`, setup writes a launcher that runs that checkout through `uv run --project`, so unreleased changes can be exercised in a real host. An installed wheel keeps the versioned release launcher.
 
 ## Existing memory-module databases
 
