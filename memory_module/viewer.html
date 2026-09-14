@@ -501,6 +501,7 @@ async function renderBoard(){
  }
  const pages=Math.max(1,Math.ceil(result.total/size));if(page>pages){page=pages;return renderBoard();}
  const selected=workById.get(selectedId);workById.clear();for(const card of result.cards)workById.set(card.id,card);if(selected)workById.set(selected.id,selected);
+ const focusedCard=el('board-grid').contains(document.activeElement)?document.activeElement.dataset.episode:null;
  el('board-grid').replaceChildren();
  for(const state of workStates){
   if(filter.state&&filter.state!==state)continue;
@@ -509,7 +510,7 @@ async function renderBoard(){
   const h=document.createElement('h2');h.textContent=labels(state);const count=document.createElement('span');count.textContent=result.counts[state]||0;h.append(count);column.append(h);
   const cards=result.cards.filter(r=>r.state===state);
   for(const card of cards){
-   const button=document.createElement('button');button.className='work-card';button.dataset.state=card.state;button.setAttribute('aria-label','Open work '+card.title);
+   const button=document.createElement('button');button.className='work-card';button.dataset.state=card.state;button.dataset.episode=card.id;button.setAttribute('aria-label','Open work '+card.title);
    const meta=document.createElement('span');meta.className='work-meta';meta.textContent=labels(card.subject)+' · '+labels(card.plan?(card.plan.owner||'agent'):'Unassigned')+(card.plan?.priority==='high'?' · High priority':'');
    const title=document.createElement('strong');title.textContent=card.title;button.append(meta,title);
    if(card.plan?.next_action){const next=document.createElement('p');next.textContent=card.plan.next_action;button.append(next);}
@@ -520,6 +521,7 @@ async function renderBoard(){
   if(!cards.length){const empty=document.createElement('p');empty.className='column-empty';empty.textContent=result.counts[state]?'No cards on this page.':result.total?'No actions.':data.live?'Create an action to start planning.':'No actions in this snapshot.';column.append(empty);}
   el('board-grid').append(column);
  }
+ if(focusedCard){const current=[...el('board-grid').querySelectorAll('.work-card')].find(card=>card.dataset.episode===focusedCard);(current||document.querySelector('[data-view=board]')).focus();}
  const sprint=sprintRows.find(r=>r.id===filter.sprint_id);el('sprint-summary').replaceChildren();
  if(sprint){const title=document.createElement('strong');title.textContent=sprint.title;const p=document.createElement('p');p.textContent=sprint.intent;el('sprint-summary').append(title,p);if(sprint.schedule){const dates=document.createElement('span');dates.textContent=sprint.schedule.starts_on+' – '+sprint.schedule.ends_on+' · '+labels(sprint.schedule.status);el('sprint-summary').append(dates);}}
  el('count').textContent=result.total?`${(page-1)*size+1}–${Math.min(page*size,result.total)} of ${result.total} work items`:'No work matches these filters.';

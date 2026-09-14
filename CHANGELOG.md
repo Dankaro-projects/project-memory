@@ -1,6 +1,8 @@
 # Changelog
 
-## 0.5.0b7 — 14 September 2026
+## 0.5.0b8 — 14 September 2026
+
+Board refreshes preserve keyboard focus on the same action. A delayed-response browser case reproduces the focus loss and verifies the correction. Beta 7 was withheld after the browser gate exposed this race; all six operating-system and Python combinations passed.
 
 Runtime subprocesses use UTF-8 explicitly, including on Windows where isolated Python ignores the parent UTF-8 environment setting. Beta 6 was withheld after the Windows installed-wheel gate failed. This release includes its import-isolation correction.
 
