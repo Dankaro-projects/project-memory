@@ -37,7 +37,7 @@ Claude exposed a different cause: Stop `additionalContext` also continues the co
 
 Real Chrome editing exposed an older-plan compatibility defect: omitting an optional dependency list versus explicitly saving an empty list incorrectly replaced governing evidence and invalidated a pass. The comparison now treats those representations equivalently. The fixture retains the mistaken update and its correction. A subsequent browser save reaches Done with the same passing check. Changing the parser without a memory write then moves it to Review and blocks dependent writing; restoring the checked file restores the valid result. The historical check is never rewritten.
 
-The evaluation also retained a malformed MCP evidence request, which was rejected before writing. Its corrected request succeeded. Browser test development initially read asynchronous UI state before rendering finished; those test waits were corrected. Neither failure is counted as a successful product check.
+The evaluation also retained a malformed MCP evidence request, which was rejected before writing. Its corrected request succeeded. Browser test development initially read asynchronous UI state before rendering finished; those test waits were corrected. Neither failure is counted as a successful product check. The first CI run also exposed a packaging-test path comparison on macOS: `/var` and `/private/var` can refer to the same installed interpreter. The assertion now compares executable identity and still checks that the launcher runs the installed module.
 
 ## Cost and responsiveness
 

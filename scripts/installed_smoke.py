@@ -23,7 +23,9 @@ with tempfile.TemporaryDirectory(prefix='project-memory-installed-') as director
     assert first['documents']==second['documents']
     report=run('doctor');assert report['mcp_process_verified'] and report['integrity']=='ok'
     runtime=subprocess.run([str(python),'-c',"from pathlib import Path; import json,memory_module; from memory_module.install import launcher; p=Path(memory_module.__file__).parent; assert all((p/'agents'/(role+'.md')).is_file() for role in ('intent','outcome','recovery')); print(json.dumps({'version':memory_module.__version__,'launcher':launcher()}))"],check=True,capture_output=True,text=True,cwd=project,env=env)
-    assert json.loads(runtime.stdout)['launcher'][0]==str(python)
+    installed=json.loads(runtime.stdout)
+    assert Path(installed['launcher'][0]).samefile(python), (installed['launcher'],str(python))
+    assert installed['launcher'][1:]==['-m','memory_module.cli']
     view=run('view','--output',str(project/'view.html'),'--no-open','--include-bodies');assert Path(view['path']).is_file()
     assert 'Keep data local unless' in Path(view['path']).read_text(encoding='utf-8')
     live=run('view','--no-open')
