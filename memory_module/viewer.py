@@ -6,6 +6,17 @@ from pathlib import Path
 from .core import InvalidRecord, Conflict, dumps, _time
 
 
+def html_template():
+    root = Path(__file__).parent
+    template = (root / 'viewer.html').read_text(encoding='utf-8')
+    # Opening the source file shows launch instructions; rendered pages reveal the workspace.
+    template = template.replace('<div id="workspace-app" hidden>', '<div id="workspace-app">')
+    for weight in (400, 700):
+        font = (root / 'assets' / f'manrope-latin-{weight}.woff2').read_bytes()
+        template = template.replace(f'__MANROPE_{weight}__', base64.b64encode(font).decode())
+    return template
+
+
 def export_html(memory, destination, *, episode_id=None, subject=None, since=None,
                 until=None, replace=False, max_records=1000, max_bytes=10_000_000, include_bodies=False):
     if type(max_records) is not int or not 1 <= max_records <= 10000:
@@ -120,7 +131,7 @@ def export_html(memory, destination, *, episode_id=None, subject=None, since=Non
                     'scope': {'episode_id': episode_id, 'subject': subject, 'since': since, 'until': until},
                     'source_bodies_included': include_bodies, 'records': rows, 'pending': pending, 'work':work, 'sprints':sprints}
         encoded = dumps(snapshot).replace('&', '\\u0026').replace('<', '\\u003c').replace('>', '\\u003e')
-        template = Path(__file__).with_name('viewer.html').read_text(encoding='utf-8')
+        template = html_template()
         html = template.replace('__MEMORY_DATA__', encoded)
         for tag in ['style', 'script']:
             # Only the executable script has no attributes.

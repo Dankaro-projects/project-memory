@@ -4,7 +4,7 @@ A work card is an existing episode. Its objective states the intended result; it
 
 The live HTML viewer includes **Work board**. Select a sprint, subject or state, then open a card to inspect intent and decision history. Its timeline links to the full records and their evidence. Search and pagination remain available; column totals cover all matches, while cards are paged. Existing episodes remain visible even if no plan was recorded. The viewer does not infer a plan for them.
 
-The board is read-only. Record work through the same MCP tools used for other memory records. An arbitrary card move cannot establish successful completion. Plans, source versions and failed outcomes remain in the history.
+The live board accepts structured plans, sprint assignments, dependencies and comments through the same record validation used by MCP. Offline exports remain read-only. An arbitrary card move cannot establish successful completion. Plans, source versions and failed outcomes remain in the history.
 
 ## Record work with one operation
 
@@ -43,7 +43,7 @@ Without an explicit episode or an active decision bound to this session, `next` 
 
 `autonomy: act` requires current user-origin evidence in the record. This is a consistency check, not authentication: an assistant can misclassify evidence, and a stored statement cannot grant tool permissions. The host must interpret scope against the actual user request. `suggest` preserves the proposal boundary.
 
-Startup and continuation hooks point to the next-work view for an active planned decision. Hooks do not start a background agent, schedule work, accept lessons or declare success. Done requires an evidenced good outcome with `completion: complete`, current supporting evidence, and no unresolved execution or consequence. Changed evidence can put a previously completed card back into Review without overwriting its historical state. Failed outcomes remain visible in the timeline and existing metrics.
+Startup and continuation hooks point to the next-work view for an active planned decision. In the development version, verified hooks conditionally start a read-only intent, outcome or recovery agent. They do not execute planned implementation work, schedule future sessions, accept lessons or declare success. New work in a project with agent checks enabled also requires a current passing outcome check. Done requires an evidenced good outcome with `completion: complete`, current supporting evidence, and no unresolved execution or consequence. Changed evidence can put a previously completed card back into Review without overwriting its historical state. Failed outcomes remain visible in the timeline and existing metrics.
 
 ## Storage and compatibility
 
@@ -54,3 +54,5 @@ MCP board and sprint pages fit whole cards within the requested budget and retur
 ## Design references
 
 The board uses familiar status columns, a sprint selector and direct card inspection, informed by the inspected [ClickUp sprint board](https://mobbin.com/screens/7e98b037-9d01-46b5-bd5b-50cb02ed249a), [Height project board](https://mobbin.com/screens/913e271b-5104-454a-96aa-56b7c255c167) and [Jira work board](https://mobbin.com/screens/8fadb82e-c19c-4892-a2c5-978804acdd28). Its intent panel and decision history expose this product's evidence rather than adding another task manager.
+
+See [workspace and agent controls](workspace-agents.md) for the interactive workflow, exact triggers and current limits.

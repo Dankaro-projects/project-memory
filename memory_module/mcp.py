@@ -1,9 +1,10 @@
-"""Local newline-delimited MCP adapter. Standard library only; no model calls."""
+"""Local newline-delimited MCP adapter. Standard library only."""
 import argparse
 import inspect
 import json
 from pathlib import Path
 import sqlite3
+import subprocess
 import sys
 from .core import Memory, MemoryError, InvalidRecord, BudgetTooSmall, Conflict, dumps, _digest
 from .hooks import Hooks
@@ -41,6 +42,14 @@ TOOLS[1]['description'] += ' Use next with an episode id and session_id to recov
 TOOLS[2]['description'] += ' plan and sprint create an episode and its plan atomically or revise an existing plan at expected_version; read their schema first. A plan preserves scope and next action; it does not prove execution or authorise host tools.'
 TOOLS[0]['description'] += ' For continuing a named work item, begin with memory_get next; use this context search when additional evidence is needed. Omit max_chars to use the default, or use 500–20000.'
 TOOLS[1]['description'] += ' Begin a named work continuation with next. Omit max_chars to use 6000; the allowed range is 500–20000. Use schema id plan to update a work_plan through operation plan, which handles revision links at the supplied version.'
+TOOLS[1]['inputSchema']['properties']['view']['enum'].append('reviews')
+TOOLS[2]['inputSchema']['properties']['operation']['enum'].append('review')
+TOOLS[1]['inputSchema']['properties']['view']['enum'].append('coverage')
+TOOLS[2]['inputSchema']['properties']['operation']['enum'].append('checkpoint')
+TOOLS[1]['description'] += ' coverage with session_id lists unassessed requests, unassigned activity, missing outcomes and capture gaps.'
+TOOLS[2]['description'] += ' checkpoint explicitly assesses observed prompt IDs; read schema id checkpoint. Bundle it as data.checkpoint on a plan or record write to avoid another call.'
+TOOLS[1]['description'] += ' reviews with the work episode id returns agent checks, findings and measured usage.'
+TOOLS[2]['description'] += ' review requests a bounded read-only host check (episode_id, role outcome/intent/recovery, optional retry). Complete outcomes start a check when configured; Done requires its current pass. Wait without repeated model calls using project-memory review --wait CHECK_ID.'
 
 
 def tool_result(value, error=False):
@@ -55,6 +64,18 @@ def bounded(value, budget):
 
 
 def schema(kind):
+    if kind=='reconcile':
+        return {'operation':'reconcile','required':['receipt_id','resolution','reason','evidence'],
+                'resolutions':['completed','failed','not_run','unknown'],
+                'evidence':'Every resolution needs [{source_id, reason}] from inspecting actual effects. Record a source first. Unknown preserves uncertainty; it does not establish success or permit a retry.'}
+    if kind=='checkpoint':
+        return {'operation':'checkpoint', 'required':['prompt_ids','effect','reason'],
+                'optional':['episode_id','plan_id','requirements','gap_ids'],
+                'effects':['new_work','changed','unchanged','informational','deferred'],
+                'rules':'Pass session_id. prompt_ids contains 1–20 observed user prompt receipt IDs including the newest prompt. Work assessments require episode_id and the current plan_id. New or changed work requires requirements: a list of complete conditions and exceptions. Changed intent requires a revised plan. Informational or deferred turns require a reason but no new episode. A checkpoint declares interpretation; it never establishes success, approves source instructions or reconciles uncertain effects.',
+                'bundling':'Place these fields in data.checkpoint on a plan or record write; episode_id is inferred from that record. Both writes commit atomically.'}
+    if kind=='agent_check':
+        return {'operation':'review','required':['episode_id'],'optional':{'role':['outcome','intent','recovery'],'max_seconds':'30 to 900; default 300. A longer explicit review preserves the same criteria.','retry':'Use true only to request a new check after inspecting the earlier result.'},'result':'A read-only agent checks the current work. Read memory_get reviews and wait using project-memory review --wait CHECK_ID.'}
     from .workflow import FIELDS
     from .planning import FIELDS as PLAN_FIELDS
     if kind == 'work_plan':
@@ -69,7 +90,7 @@ def schema(kind):
                            'autonomy':['suggest','act'],'owner':['agent','human'],'priority':['high','normal','low'],
                            'sprint.status':['planned','active','closed']},
                 'types':'Use complete sentences. depends_on is [{episode_id, reason}]. sprint_id is an existing sprint episode ID or null. Sprint dates use YYYY-MM-DD.',
-                'workflow':'Creation is atomic. Updates replace the complete plan at expected_version and preserve earlier versions. Pass the host session_id to claim agent work in progress. Act requires current user-origin evidence; this does not grant host permission. Done requires a current evidenced good outcome with completion complete and no unresolved execution.'}
+                'workflow':'Creation is atomic. Updates replace the complete plan at expected_version and preserve earlier versions. Pass the host session_id to claim agent work in progress. Act requires current user-origin evidence; this does not grant host permission. Done requires a current evidenced good outcome with completion complete, no unresolved execution, and a current passing outcome check when a reviewer is configured.'}
     if kind in {'start','source','document'}:
         sig=inspect.signature(getattr(Memory,kind))
         return {'fields':{k:('required' if p.default is inspect.Parameter.empty else p.default) for k,p in sig.parameters.items() if k!='self'},
@@ -97,48 +118,83 @@ def schema(kind):
 def write(memory, operation, request_key, data, session_id=None, receipt_ids=None):
     from .core import _text
     _text(request_key,'request_key',180)
+    if operation=='review':
+        from .reviews import request, launch
+        run=request(memory,request_key=request_key,session_id=session_id or '',**data)
+        launch(memory,run)
+        return {k:run[k] for k in ('id','episode_id','role','state','report','error','metrics')}
     signature=_digest(dumps([operation,data,session_id,receipt_ids]))
     with memory._write():
         prior=memory.db.execute('SELECT * FROM adapter_requests WHERE request_key=?',(request_key,)).fetchone()
         if prior:
             if prior['signature']!=signature: raise Conflict('Request key was already used for different content.')
-            return json.loads(prior['result'])
-        if not isinstance(data,dict): raise InvalidRecord('data must be an object.')
-        data=dict(data)
-        if operation=='record':
-            kind=data.get('kind'); payload=data.get('payload',{})
-            if not isinstance(payload,dict): raise InvalidRecord('payload must be an object.')
-            if receipt_ids:
-                data['evidence']=data.get('evidence',[])+codex_host.evidence_for(memory,receipt_ids)
-            if kind=='decision':
-                if not data.get('evidence') or not {'uncertainty','alternatives'} <= payload.keys():
-                    raise InvalidRecord('New Codex decisions require evidence, uncertainty and alternatives (an empty list explicitly means none considered).')
-            trigger=next((t for t,k in Hooks.CAPTURES.items() if k==kind),None)
-            if trigger:
-                actor=data.pop('actor')
-                result=Hooks(memory,actor).capture(trigger=trigger,request_key=request_key,**{k:v for k,v in data.items() if k!='kind'})
-            else:
-                result=memory.record(request_key=request_key,**data)
-            if kind=='decision' and session_id:
-                codex_host.bind(memory,session_id,result['id'],request_key)
-        elif operation in {'plan','sprint'}:
-            from .planning import save
-            result=save(memory,'work_plan' if operation=='plan' else 'sprint',request_key=request_key,session_id=session_id,**data)
-        elif operation=='sync':
-            from .documents import sync
-            result=sync(memory, **data)
-        elif operation in {'start','source','document'}:
-            if operation=='document' and (not isinstance(data.get('path'),str) or not Path(data['path']).is_absolute()):
-                raise InvalidRecord('Codex document capture requires an absolute path to the selected project file.')
-            result=getattr(memory,operation)(**data)
-        elif operation=='approve_requirements':
-            result=memory.approve_requirements(request_key=request_key,**data)
-        elif operation=='reconcile':
-            result=codex_host.reconcile(memory,request_key=request_key,**data)
+            result=json.loads(prior['result'])
         else:
-            raise InvalidRecord('Unknown write operation.')
-        memory.db.execute('INSERT INTO adapter_requests VALUES (?,?,?)',(request_key,signature,dumps(result)))
-        return result
+            if not isinstance(data,dict): raise InvalidRecord('data must be an object.')
+            data=dict(data)
+            checkpoint=data.pop('checkpoint',None)
+            if checkpoint is not None and operation not in {'plan','record'}:
+                raise InvalidRecord('Bundle a checkpoint only with plan or record.')
+            if operation=='record':
+                kind=data.get('kind'); payload=data.get('payload',{})
+                if not isinstance(payload,dict): raise InvalidRecord('payload must be an object.')
+                if receipt_ids:
+                    data['evidence']=data.get('evidence',[])+codex_host.evidence_for(memory,receipt_ids)
+                if kind=='decision':
+                    if not data.get('evidence') or not {'uncertainty','alternatives'} <= payload.keys():
+                        raise InvalidRecord('New Codex decisions require evidence, uncertainty and alternatives (an empty list explicitly means none considered).')
+                trigger=next((t for t,k in Hooks.CAPTURES.items() if k==kind),None)
+                if trigger:
+                    actor=data.pop('actor')
+                    result=Hooks(memory,actor).capture(trigger=trigger,request_key=request_key,**{k:v for k,v in data.items() if k!='kind'})
+                else:
+                    result=memory.record(request_key=request_key,**data)
+                if kind=='decision' and session_id:
+                    codex_host.bind(memory,session_id,result['id'],request_key)
+            elif operation in {'plan','sprint'}:
+                from .planning import save
+                result=save(memory,'work_plan' if operation=='plan' else 'sprint',request_key=request_key,session_id=session_id,**data)
+            elif operation=='sync':
+                from .documents import sync
+                result=sync(memory, **data)
+            elif operation in {'start','source','document'}:
+                if operation=='document' and (not isinstance(data.get('path'),str) or not Path(data['path']).is_absolute()):
+                    raise InvalidRecord('Codex document capture requires an absolute path to the selected project file.')
+                result=getattr(memory,operation)(**data)
+            elif operation=='approve_requirements':
+                result=memory.approve_requirements(request_key=request_key,**data)
+            elif operation=='reconcile':
+                result=codex_host.reconcile(memory,request_key=request_key,**data)
+            elif operation=='checkpoint':
+                from .coverage import assess
+                result=assess(memory,session_id=session_id,request_key=request_key,**data)
+            else:
+                raise InvalidRecord('Unknown write operation.')
+            if checkpoint is not None:
+                from .coverage import assess
+                if not isinstance(checkpoint,dict): raise InvalidRecord('checkpoint must be an object.')
+                checkpoint=dict(checkpoint)
+                checkpoint.setdefault('episode_id',result.get('episode_id') or data.get('episode_id'))
+                from .planning import latest
+                plan=latest(memory,checkpoint['episode_id'],'work_plan') if checkpoint['episode_id'] else None
+                if plan:checkpoint.setdefault('plan_id',plan['id'])
+                result={**result,'checkpoint':assess(memory,session_id=session_id,request_key=request_key,**checkpoint)}
+            memory.db.execute('INSERT INTO adapter_requests VALUES (?,?,?)',(request_key,signature,dumps(result)))
+    if operation=='record' and data.get('kind')=='outcome' and data.get('payload',{}).get('completion')=='complete':
+        from .reviews import configured, request, launch
+        from .planning import latest
+        if configured(memory) and latest(memory,data['episode_id'],'work_plan'):
+            try:
+                if session_id:
+                    from .coverage import inspect
+                    if inspect(memory,session_id)['issues']:
+                        return {**result,'agent_check':{'state':'needs_assessment','read_with':{'view':'coverage','session_id':session_id}}}
+                run=request(memory,data['episode_id'],request_key='outcome:'+result['id'],session_id=session_id or '')
+                launch(memory,run)
+                result={**result,'agent_check':{'id':run['id'],'state':run['state'],'wait_command':'project-memory review --db '+str(memory.path)+' --wait '+run['id']}}
+            except (MemoryError,OSError,ValueError,subprocess.SubprocessError) as exc:
+                result={**result,'agent_check':{'state':'unavailable','error':str(exc),'note':'The outcome is recorded. Its check is unresolved.'}}
+    return result
 
 
 def dispatch(memory, name, arguments):
@@ -162,6 +218,13 @@ def dispatch(memory, name, arguments):
     view=args.pop('view');rid=args.pop('id',None);limit=args.pop('limit',10);offset=args.pop('offset',0)
     if type(limit) is not int or not 1<=limit<=100 or type(offset) is not int or offset<0: raise InvalidRecord('Invalid limit or offset.')
     if view=='schema': result=schema(rid)
+    elif view=='reviews':
+        from .reviews import listing
+        result=listing(memory,rid,limit,offset)
+        for run in result['runs']:
+            if run['report']:run['report']={'verdict':run['report']['verdict'],'summary':run['report']['summary'],'read_full_with':{'view':'record','id':run['id'],'max_chars':20000}}
+        while len(result['runs'])>1 and len(dumps(tool_result(result)))>budget:
+            result['runs'].pop();result['next_offset']-=1;result['more']=True
     elif view in {'board','sprints','next'}:
         from .planning import board, sprints, next_work
         if view=='board':result=board(memory,limit=limit,offset=offset,sprint_id=args.get('sprint_id'),subject=args.get('subject'),query=args.get('query',''),state=args.get('state'),episode_id=rid)
@@ -173,6 +236,9 @@ def dispatch(memory, name, arguments):
             page['next_offset']=offset+len(entries)
             while len(entries)>1 and len(dumps(tool_result(result)))>budget:
                 entries.pop();page['next_offset']-=1;page['more']=True
+    elif view=='coverage':
+        from .coverage import inspect, sessions
+        result=inspect(memory,args['session_id'],limit,offset) if args.get('session_id') else sessions(memory,limit,offset)
     elif view=='health':
         from .health import inspect
         result=inspect(memory)
@@ -189,7 +255,10 @@ def dispatch(memory, name, arguments):
     elif view=='status':
         result={'host':codex_host.status(memory,args.get('session_id'),limit,offset),'pending':memory.pending(limit=limit,offset=offset),'due':memory.due(limit=limit)}
     elif view=='record':
-        result=codex_host.read_receipt(memory,rid) if rid and rid.startswith('host_') else memory.read(rid)
+        if rid and rid.startswith('check_'):
+            from .reviews import read
+            result=read(memory,rid);result.pop('snapshot')
+        else:result=codex_host.read_receipt(memory,rid) if rid and rid.startswith('host_') else memory.read(rid)
         if 'body_offset' in args:
             if result.get('kind')!='source': raise InvalidRecord('Only source bodies support slices.')
             pos=args['body_offset']

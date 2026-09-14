@@ -168,7 +168,7 @@ class LiveProcessTests(unittest.TestCase):
             self.assertEqual(blocked.exception.code,403)
         with self.assertRaises(HTTPError):urlopen(self.server['url'].replace(self.server['url'].split('/')[-2],'wrong')+'api/health')
         with self.assertRaises(HTTPError) as post:urlopen(Request(self.server['url']+'api/records',data=b'{}',method='POST'))
-        self.assertEqual(post.exception.code,501)
+        self.assertEqual(post.exception.code,403)
         subprocess.run([sys.executable,'-c',"from memory_module import Memory; import sys; m=Memory(sys.argv[1]); m.start('External write','Keep the exception.','test','Exact text survives.');m.close()",str(self.m.path)],check=True)
         with self.get('api/health',{'If-None-Match':etag}) as response:self.assertNotEqual(json.load(response)['revision'],health['revision'])
         with self.get('api/records?view=episodes') as response:self.assertEqual(json.load(response)['records'][0]['title'],'External write')

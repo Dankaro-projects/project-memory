@@ -1,31 +1,226 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-__SCRIPT_HASH__'; style-src 'sha256-__STYLE_HASH__'; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-__SCRIPT_HASH__'; style-src 'sha256-__STYLE_HASH__'; font-src data:; base-uri 'none'; form-action 'none'">
 <title>Project Memory</title>
-<style>
-:root{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#20252b;background:#fafafa;font-size:14px}*{box-sizing:border-box}body{margin:0;padding:28px 36px;max-width:1600px;margin-inline:auto}h1{font-size:25px;letter-spacing:-.6px;margin:0 0 6px;font-weight:650}h2{font-size:18px;margin:0 0 14px}p{margin:8px 0;color:#59616a;line-height:1.5}.meta{font-size:12px}.top{padding-bottom:20px;border-bottom:1px solid #d7dbe0}.rules{margin-top:14px}summary{cursor:pointer;font-weight:600}li{line-height:1.6}nav{display:flex;gap:6px;margin:22px 0 18px;flex-wrap:wrap}button,input,select{font:inherit;border:1px solid #bdc4cc;border-radius:3px;background:#fff;color:inherit;padding:8px 11px}button{cursor:pointer}button:hover{background:#f0f3f7}button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid #225dcc;outline-offset:2px}button[aria-pressed=true]{background:#253c60;color:white;border-color:#253c60}button:disabled{opacity:.45;cursor:default}.filters{display:flex;gap:12px;flex-wrap:wrap;align-items:end;margin-bottom:18px}label{display:flex;flex-direction:column;gap:5px;font-size:12px;color:#4c5561}input[type=search]{width:260px}select{min-width:120px}.table-wrap{overflow:auto;border:1px solid #d7dbe0;background:white}table{width:100%;border-collapse:collapse;text-align:left}th{background:#f2f4f6;font-weight:600;color:#4a535f;font-size:12px;white-space:nowrap}th,td{padding:12px 14px;border-bottom:1px solid #e4e7eb;vertical-align:top}td{font-size:13px}.title{min-width:240px;max-width:600px}.title span{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;line-height:1.5}.type,.date,.status{white-space:nowrap}.row-open{padding:4px 9px;color:#244f8d;font-size:12px}.pager{display:flex;align-items:center;justify-content:space-between;margin-top:16px;gap:12px}.pager div{display:flex;align-items:center;gap:8px}#count{color:#59616a;font-size:13px}#empty{padding:25px;text-align:center}dialog{border:1px solid #bdc4cc;border-radius:4px;padding:26px;width:min(900px,95vw);max-height:85vh;overflow:auto}dialog::backdrop{background:#18202c66}.detail-head{display:flex;justify-content:space-between;gap:20px;align-items:start}.detail-head h2{max-width:750px;overflow-wrap:anywhere}dl{margin:0}dt{font-size:12px;color:#59616a;font-weight:600;margin-top:16px;text-transform:none}dd{margin:5px 0 0;line-height:1.55;white-space:pre-wrap;overflow-wrap:anywhere}pre{white-space:pre-wrap;font:12px ui-monospace,monospace;line-height:1.5;overflow-wrap:anywhere}.references{border-top:1px solid #ddd;margin-top:20px;padding-top:10px}.references button{margin:5px 8px 5px 0}#scope{overflow-wrap:anywhere}#pending-note{margin:0 0 14px}footer{font-size:12px;color:#626b76;margin-top:25px;line-height:1.6}@media(max-width:700px){body{padding:18px 14px}.filters{gap:8px}input[type=search]{width:100%}.filters label:first-child{width:100%}.pager{flex-wrap:wrap}td,th{padding:10px}.meta{line-height:1.6}}
+<!-- Embedded Manrope fonts: Copyright 2019 The Manrope Project Authors (https://github.com/sharanda/manrope)
 
-[hidden]{display:none!important}.board-controls{display:flex;gap:12px;align-items:end;margin-bottom:18px}.board-controls[hidden],#board[hidden]{display:none}.sprint-summary{padding:14px 18px;background:#eef3fa;border-left:3px solid #253c60;margin-bottom:18px}.sprint-summary:empty{display:none}.board-grid{display:grid;grid-template-columns:repeat(7,minmax(210px,1fr));gap:12px;overflow-x:auto;padding-bottom:12px;align-items:start}.work-column{background:#f0f2f5;border-radius:6px;padding:10px;min-height:180px}.work-column h2{display:flex;justify-content:space-between;font-size:13px;margin:4px 0 12px;align-items:center}.work-column h2 span{color:#59616a;font-weight:400}.work-card{display:block;width:100%;text-align:left;background:white;border:1px solid #d7dbe0;border-left:3px solid #8290a3;border-radius:5px;padding:13px;margin-bottom:10px;box-shadow:0 1px 2px #18202c08}.work-card strong{display:block;font-size:13px;line-height:1.5;font-weight:600;overflow-wrap:anywhere}.work-card p{font-size:12px;line-height:1.5;margin:9px 0}.work-card .work-meta{display:flex;gap:8px;flex-wrap:wrap;color:#59616a;font-size:11px}.work-card[data-state=ready],.work-card[data-state=done]{border-left-color:#13776f}.work-card[data-state=in_progress]{border-left-color:#225dcc}.work-card[data-state=blocked]{border-left-color:#ad3944}.work-card[data-state=review]{border-left-color:#976319}.work-card .issue{color:#963341}.work-card .lineage-label{display:block;padding-top:9px;border-top:1px solid #edf0f3;color:#244f8d;font-size:11px}.column-empty{font-size:12px;color:#757f8b;padding:8px 2px}.intent-panel{padding:16px 18px;border:1px solid #d7dbe0;border-left:3px solid #253c60;background:#f6f8fb;margin:8px 0 20px}.intent-panel h3,.lineage h3{font-size:14px;margin:0 0 8px}.intent-panel p{color:#20252b}.timeline{list-style:none;padding:0 0 0 15px;border-left:2px solid #d7dbe0;margin:15px 0}.timeline li{padding:0 0 15px;position:relative}.timeline li::before{content:'';width:8px;height:8px;background:#8290a3;border:2px solid white;border-radius:50%;position:absolute;left:-20px;top:10px}.timeline button{text-align:left;max-width:100%;line-height:1.5}.timeline .meta{display:block;margin:4px 0}.board-help{font-size:12px;margin:0 0 16px}@media(max-width:700px){.board-grid{grid-template-columns:repeat(7,minmax(230px,1fr))}.board-controls{flex-wrap:wrap}.work-column{min-height:130px}}
+This Font Software is licensed under the SIL Open Font License, Version 1.1.
+This license is copied below, and is also available with a FAQ at:
+http://scripts.sil.org/OFL
+
+
+—————————————————————————————-
+SIL OPEN FONT LICENSE Version 1.1 - 26 February 2007
+—————————————————————————————-
+
+PREAMBLE
+The goals of the Open Font License (OFL) are to stimulate worldwide
+development of collaborative font projects, to support the font creation
+efforts of academic and linguistic communities, and to provide a free and
+open framework in which fonts may be shared and improved in partnership
+with others.
+
+The OFL allows the licensed fonts to be used, studied, modified and
+redistributed freely as long as they are not sold by themselves. The
+fonts, including any derivative works, can be bundled, embedded,
+redistributed and/or sold with any software provided that any reserved
+names are not used by derivative works. The fonts and derivatives,
+however, cannot be released under any other type of license. The
+requirement for fonts to remain under this license does not apply
+to any document created using the fonts or their derivatives.
+
+DEFINITIONS
+"Font Software" refers to the set of files released by the Copyright
+Holder(s) under this license and clearly marked as such. This may
+include source files, build scripts and documentation.
+
+"Reserved Font Name" refers to any names specified as such after the
+copyright statement(s).
+
+"Original Version" refers to the collection of Font Software components as
+distributed by the Copyright Holder(s).
+
+"Modified Version" refers to any derivative made by adding to, deleting,
+or substituting — in part or in whole — any of the components of the
+Original Version, by changing formats or by porting the Font Software to a
+new environment.
+
+"Author" refers to any designer, engineer, programmer, technical
+writer or other person who contributed to the Font Software.
+
+PERMISSION & CONDITIONS
+Permission is hereby granted, free of charge, to any person obtaining
+a copy of the Font Software, to use, study, copy, merge, embed, modify,
+redistribute, and sell modified and unmodified copies of the Font
+Software, subject to the following conditions:
+
+1) Neither the Font Software nor any of its individual components,
+in Original or Modified Versions, may be sold by itself.
+
+2) Original or Modified Versions of the Font Software may be bundled,
+redistributed and/or sold with any software, provided that each copy
+contains the above copyright notice and this license. These can be
+included either as stand-alone text files, human-readable headers or
+in the appropriate machine-readable metadata fields within text or
+binary files as long as those fields can be easily viewed by the user.
+
+3) No Modified Version of the Font Software may use the Reserved Font
+Name(s) unless explicit written permission is granted by the corresponding
+Copyright Holder. This restriction only applies to the primary font name as
+presented to the users.
+
+4) The name(s) of the Copyright Holder(s) or the Author(s) of the Font
+Software shall not be used to promote, endorse or advertise any
+Modified Version, except to acknowledge the contribution(s) of the
+Copyright Holder(s) and the Author(s) or with their explicit written
+permission.
+
+5) The Font Software, modified or unmodified, in part or in whole,
+must be distributed entirely under this license, and must not be
+distributed under any other license. The requirement for fonts to
+remain under this license does not apply to any document created
+using the Font Software.
+
+TERMINATION
+This license becomes null and void if any of the above conditions are
+not met.
+
+DISCLAIMER
+THE FONT SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO ANY WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT
+OF COPYRIGHT, PATENT, TRADEMARK, OR OTHER RIGHT. IN NO EVENT SHALL THE
+COPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+INCLUDING ANY GENERAL, SPECIAL, INDIRECT, INCIDENTAL, OR CONSEQUENTIAL
+DAMAGES, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+FROM, OUT OF THE USE OR INABILITY TO USE THE FONT SOFTWARE OR FROM
+OTHER DEALINGS IN THE FONT SOFTWARE.
+ -->
+<style>
+:root {
+  color-scheme: light;
+
+  /* Color */
+  --dk-color-ink: #111111;
+  --dk-color-accent: #4457e6;
+  --dk-color-canvas: #ede9e2;
+  --dk-color-surface: #f7f5f1;
+  --dk-color-white: #ffffff;
+  --dk-color-gray: #b9b5ae;
+  --dk-color-ink-06: rgba(17, 17, 17, 0.06);
+  --dk-color-ink-12: rgba(17, 17, 17, 0.12);
+  --dk-color-ink-45: rgba(17, 17, 17, 0.45);
+  --dk-color-ink-70: rgba(17, 17, 17, 0.7);
+  --dk-color-accent-06: rgba(68, 87, 230, 0.06);
+  --dk-color-accent-12: rgba(68, 87, 230, 0.12);
+  --dk-color-accent-glow: rgba(68, 87, 230, 0.45);
+  --dk-color-hairline: rgba(151, 144, 134, 0.28);
+  --dk-color-hairline-strong: rgba(151, 144, 134, 0.4);
+
+  /* Type */
+  --dk-font-sans: 'Manrope', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --dk-font-serif: 'Instrument Serif', Georgia, serif;
+  --dk-font-mono: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, monospace;
+  --dk-tracking-tight: -0.03em;
+  --dk-tracking-snug: -0.01em;
+  --dk-tracking-wide: 0.16em;
+
+  /* Space */
+  --dk-space-1: 0.25rem;
+  --dk-space-2: 0.5rem;
+  --dk-space-3: 0.75rem;
+  --dk-space-4: 1rem;
+  --dk-space-5: 1.25rem;
+  --dk-space-6: 1.5rem;
+  --dk-space-8: 2rem;
+  --dk-space-10: 2.5rem;
+  --dk-space-12: 3rem;
+  --dk-space-16: 4rem;
+
+  /* Layout */
+  --dk-container: 1200px;
+  --dk-gutter: 2rem;
+
+  /* Shape */
+  --dk-radius-xs: 8px;
+  --dk-radius-sm: 14px;
+  --dk-radius-md: 24px;
+  --dk-radius-lg: 32px;
+  --dk-radius-full: 9999px;
+
+  /* Elevation */
+  --dk-shadow-card: 0 8px 30px rgba(17, 17, 17, 0.02);
+  --dk-shadow-card-hover: 0 16px 40px rgba(17, 17, 17, 0.06);
+  --dk-shadow-pill: 0 10px 30px rgba(17, 17, 17, 0.08);
+
+  /* Motion */
+  --dk-ease: cubic-bezier(0.16, 1, 0.3, 1);
+  --dk-transition-fast: 0.2s var(--dk-ease);
+  --dk-transition-smooth: 0.4s var(--dk-ease);
+}
+
+@media (max-width: 768px) {
+  :root { --dk-gutter: 1.25rem; }
+}
+
+@font-face{font-family:Manrope;font-style:normal;font-weight:400;font-display:swap;src:url(data:font/woff2;base64,__MANROPE_400__) format('woff2')}
+@font-face{font-family:Manrope;font-style:normal;font-weight:700;font-display:swap;src:url(data:font/woff2;base64,__MANROPE_700__) format('woff2')}
+:root{--text:var(--dk-color-ink);--muted:#65625d;--border:var(--dk-color-hairline);--panel:var(--dk-color-white);--success:#25715a;--warning:#92631d;--danger:#a53744;--sidebar:208px;--inspector:min(620px,48vw);font-family:var(--dk-font-sans);font-size:13px;color:var(--text);background:var(--panel)}
+*{box-sizing:border-box}[hidden]{display:none!important}body{margin:0}button,input,select,textarea{font:inherit;color:inherit}button{cursor:pointer}button,input,select,textarea{border:1px solid var(--border);border-radius:var(--dk-radius-xs);background:var(--panel);padding:7px 10px}button:hover{background:var(--dk-color-ink-06)}button:disabled{opacity:.45;cursor:default}button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible,summary:focus-visible,a:focus-visible{outline:2px solid var(--dk-color-accent);outline-offset:2px}button.primary{background:var(--dk-color-accent);border-color:var(--dk-color-accent);color:white}button.primary:hover{filter:brightness(.94)}h1,h2,h3,p{margin:0}h1,h2,h3{letter-spacing:var(--dk-tracking-snug)}p{line-height:1.6}a{color:var(--dk-color-accent)}label{display:flex;flex-direction:column;gap:5px;font-size:11px;color:var(--muted)}select{min-width:0;max-width:100%}input{min-width:0}textarea{min-height:84px;resize:vertical;line-height:1.6}summary{cursor:pointer;font-weight:600}pre,code{font-family:var(--dk-font-mono)}pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px}li{line-height:1.6}.meta{font-size:11px;color:var(--muted)}
+.sidebar{position:fixed;inset:0 auto 0 0;width:var(--sidebar);background:var(--dk-color-surface);border-right:1px solid var(--border);display:flex;flex-direction:column;padding:20px 12px 12px;z-index:4}.brand{display:flex;gap:10px;align-items:center;padding:0 10px 20px}.brand-mark{width:28px;height:28px;border-radius:8px;background:var(--dk-color-accent);color:white;display:grid;place-items:center;font-weight:800;font-size:16px}.brand strong{font-size:16px;letter-spacing:-.5px}.brand small{display:block;color:var(--muted);font-size:10px;letter-spacing:.03em}.sidebar nav{display:flex;flex-direction:column;gap:2px;overflow:auto;min-height:0}.nav-label{color:var(--muted);font-size:10px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;margin:20px 10px 6px}.nav-label:first-child{margin-top:0}.sidebar [data-view]{display:flex;align-items:center;gap:10px;text-align:left;border:0;border-radius:6px;background:transparent;padding:8px 10px;line-height:1.3;font-size:12px}.nav-icon{width:16px;height:16px;flex:none;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}.sidebar [data-view]:hover{background:var(--dk-color-ink-06)}.sidebar [aria-pressed=true]{background:var(--dk-color-accent-06);color:var(--dk-color-accent);font-weight:700}.sidebar-bottom{margin-top:auto;border-top:1px solid var(--border);padding:12px 8px 0}.sidebar-bottom button{border:0;background:transparent;padding:4px 0;font-size:11px}.sidebar-bottom p{font-size:10px;color:var(--muted);margin-top:4px}
+.app-main{margin-left:var(--sidebar);min-width:0}.inspector-open .app-main{margin-right:var(--inspector)}.top{position:sticky;top:0;background:var(--panel);z-index:3;height:58px;padding:0 24px;display:flex;align-items:center;gap:12px;border-bottom:1px solid var(--border)}.breadcrumb{display:flex;gap:10px;align-items:center;min-width:0;font-size:12px}.breadcrumb #project{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted);max-width:320px}.breadcrumb .separator{color:var(--dk-color-gray)}#view-title{font-size:13px;font-weight:700;white-space:nowrap}.connection-indicator{margin-left:auto;font-size:10px;white-space:nowrap;color:var(--success);display:flex;align-items:center;gap:6px}.connection-indicator::before{content:'';width:6px;height:6px;border-radius:50%;background:currentColor}.connection-indicator[data-state=error]{color:var(--danger)}.connection-indicator[data-state=snapshot]{color:var(--muted)}#menu-toggle{display:none}.workspace{padding:20px 24px 12px}.page-heading{display:flex;align-items:center;gap:10px;margin-bottom:16px}.page-heading h2{font-size:22px;letter-spacing:var(--dk-tracking-tight);font-weight:700}.filters{display:flex;gap:8px;align-items:end;flex-wrap:wrap;margin-bottom:16px}.filters label{min-width:100px;max-width:210px}.filters label:first-child{flex:1;min-width:180px;max-width:330px}.filters input[type=search]{width:100%}.filters #clear{color:var(--muted);border-color:transparent}.filters label:has(#episode){max-width:240px}.board-controls{display:flex;gap:8px;align-items:end;margin-bottom:18px;flex-wrap:wrap}.board-controls>label{min-width:190px;max-width:290px}.workspace-actions{margin-left:auto;display:flex;gap:6px;flex-wrap:wrap}.workspace-actions button{font-size:12px}.workspace-actions #edit-sprint{border-color:transparent;color:var(--muted)}#workspace-message:empty{display:none}#workspace-message{color:var(--success);font-size:12px;margin-bottom:12px}#connection{padding:10px 14px;border:1px solid var(--border);border-left:3px solid var(--danger);background:var(--dk-color-surface);font-size:12px;margin-bottom:14px}
+.board-grid{display:flex;gap:14px;overflow:auto;align-items:stretch;padding:0 0 14px;height:calc(100dvh - 285px);min-height:260px}.work-column{flex:1 0 230px;min-width:230px;background:var(--dk-color-surface);border-radius:var(--dk-radius-xs);padding:10px;max-width:380px;overflow-y:auto}.work-column h2{position:sticky;top:-10px;background:var(--dk-color-surface);z-index:1;display:flex;align-items:center;gap:7px;font-size:12px;padding:3px 2px 12px;font-weight:700}.work-column h2::before{content:'';width:8px;height:8px;border:1.5px solid var(--muted);border-radius:50%}.work-column[data-state=review] h2::before{border-color:var(--warning);background:var(--warning)}.work-column[data-state=blocked] h2::before{border-color:var(--danger);background:var(--danger)}.work-column[data-state=in_progress] h2::before{border-color:var(--dk-color-accent);background:var(--dk-color-accent)}.work-column[data-state=done] h2::before{border-color:var(--success);background:var(--success)}.work-column h2 span{font-weight:400;color:var(--muted);margin-left:auto}.work-card{display:block;width:100%;text-align:left;padding:12px;margin-bottom:8px;border:1px solid var(--border);border-radius:var(--dk-radius-xs);box-shadow:var(--dk-shadow-card)}.work-card:hover,.work-card[aria-current=true]{background:var(--panel);border-color:var(--dk-color-accent);box-shadow:0 0 0 1px var(--dk-color-accent-12)}.work-card strong{display:block;font-size:12px;line-height:1.55;font-weight:700;overflow-wrap:anywhere}.work-meta{display:block;color:var(--muted);font-size:10px;margin-bottom:5px}.work-card p{font-size:11px;color:var(--muted);margin-top:7px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}.work-card .issue{color:var(--danger);font-size:10px}.card-foot{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:10px}.lineage-label{font-size:10px;color:var(--dk-color-accent)}.column-empty{font-size:11px;color:var(--muted);padding:12px 2px}.sprint-summary{display:flex;gap:6px 16px;flex-wrap:wrap;align-items:baseline;padding:0 0 16px;font-size:12px}.sprint-summary:empty{display:none}.sprint-summary p{color:var(--muted)}.sprint-summary span{font-size:10px;color:var(--muted)}.board-options{margin-left:auto;font-size:11px}.board-options input{margin:0}.board-options label{flex-direction:row;align-items:center;gap:6px}.pager{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:14px 0;color:var(--muted);font-size:11px}.pager>div{display:flex;align-items:center;gap:8px}.pager label{flex-direction:row;align-items:center;gap:8px}.pager button{font-size:11px;padding:5px 8px}.pager select{padding:4px}.pager #page{white-space:nowrap}
+.table-wrap{overflow:auto;max-width:100%;border-top:1px solid var(--border)}table{width:100%;border-collapse:collapse;text-align:left}th{font-size:10px;color:var(--muted);font-weight:600;background:var(--dk-color-surface);white-space:nowrap}th,td{padding:10px 12px;border-bottom:1px solid var(--border);vertical-align:top}td{font-size:12px;line-height:1.5}tbody tr:hover{background:var(--dk-color-accent-06)}.title{min-width:230px;width:55%}.title span{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}.type,.date,.status{white-space:nowrap}.row-open,.source-toggle{padding:3px 7px;font-size:11px;border-color:transparent;color:var(--dk-color-accent)}#empty{padding:30px 10px;color:var(--muted);font-size:12px}.badge{display:inline-flex;align-items:center;border-radius:4px;font-size:10px;padding:3px 6px;background:var(--dk-color-ink-06);color:var(--muted);white-space:nowrap}.badge[data-state=needs_review],.badge[data-state=file_changed],.badge[data-state=blocked]{color:var(--danger)}.badge[data-state=accepted],.badge[data-state=done]{color:var(--success)}#pending-note{font-size:12px;color:var(--warning);margin:0 0 12px}
+#detail{position:fixed;inset:0 0 0 auto;width:var(--inspector);height:100dvh;max-height:none;max-width:100vw;margin:0;border:0;border-left:1px solid var(--border);border-radius:0;padding:0;overflow:auto;box-shadow:-10px 0 40px var(--dk-color-ink-06);z-index:6;background:var(--panel)}.detail-toolbar{position:sticky;top:0;background:var(--panel);border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px;padding:12px 20px;z-index:2}.detail-toolbar span{font-size:11px;color:var(--muted)}.detail-toolbar button{font-size:11px;padding:5px 8px}.detail-toolbar #close{margin-left:auto}.detail-head{padding:26px 28px 0}.detail-head h2{font-size:24px;line-height:1.35;font-weight:700;letter-spacing:var(--dk-tracking-tight);overflow-wrap:anywhere}#detail-body{padding:0 28px 32px}.record-meta{display:flex;flex-wrap:wrap;gap:6px;align-items:center;padding:12px 0 20px}.record-meta time{font-size:10px;color:var(--muted);margin-left:3px}.record-content{margin:0}.record-field{margin:0 0 22px}.record-field>dt{font-size:12px;font-weight:700;margin-bottom:7px}.record-field>dd{margin:0;line-height:1.7;overflow-wrap:anywhere}.record-field.compact{display:grid;grid-template-columns:132px minmax(0,1fr);gap:12px;margin-bottom:10px;align-items:baseline}.record-field.compact>dt{font-size:11px;color:var(--muted);font-weight:500}.record-field.compact>dd{font-size:12px}.record-field:has(table){overflow:auto}.record-field ul{margin:0;padding-left:20px}.record-field table th,.record-field table td{font-size:11px;padding:8px}.technical{border-top:1px solid var(--border);padding-top:12px;margin-top:24px;color:var(--muted);font-size:11px}.technical dl{margin-top:12px}.technical .record-field{font-size:11px;margin-bottom:10px}.technical dd{font-family:var(--dk-font-mono);font-size:10px}.references{border-top:1px solid var(--border);margin-top:20px;padding-top:16px}.references:empty{display:none}.references h2{font-size:13px;margin:6px 0 12px}.references p{margin:0 0 10px;font-size:12px}.references button,.timeline button{color:var(--dk-color-accent);font-size:12px;text-align:left;line-height:1.5;border:0;background:var(--dk-color-accent-06)}.references p>span{display:block;margin-top:5px;color:var(--muted);font-size:11px}.document p{margin:0 0 12px;white-space:pre-wrap}.document h1,.document h2,.document h3,.document h4,.document h5,.document h6{margin:24px 0 10px;line-height:1.4}.document h1{font-size:22px}.document h2{font-size:18px}.document h3{font-size:15px}.document ul,.document ol{margin:10px 0 16px;padding-left:22px}.document li{margin-bottom:5px}.document code{background:var(--dk-color-surface);border-radius:4px;padding:2px 4px;font-size:.9em}.document pre{background:var(--dk-color-surface);padding:14px;border-radius:8px;margin:12px 0}.document pre code{padding:0}.document blockquote{border-left:3px solid var(--dk-color-accent);margin:14px 0;padding:2px 0 2px 14px;color:var(--muted)}.document .table-wrap{margin:14px 0;border:1px solid var(--border);border-radius:6px}.document .table-wrap td{min-width:100px}.intent-panel{border-left:2px solid var(--dk-color-accent);padding:4px 0 4px 14px;margin:8px 0 24px}.intent-panel h3{font-size:11px;color:var(--muted);margin-bottom:5px}.intent-panel p{font-size:14px;line-height:1.65}.work-actions{display:flex;gap:8px;margin:16px 0}.work-actions button{font-size:11px}.lineage{margin-top:26px}.lineage h3{font-size:13px}.timeline{list-style:none;padding-left:18px;border-left:1px solid var(--border);margin:16px 0 16px 5px}.timeline li{position:relative;margin-bottom:18px}.timeline li::before{content:'';width:7px;height:7px;border:2px solid var(--panel);background:var(--dk-color-accent);border-radius:50%;position:absolute;left:-23px;top:4px}.timeline .meta{display:block;font-size:10px;margin-bottom:6px}.timeline p{margin:0}.agent-checks{border-top:1px solid var(--border);border-bottom:1px solid var(--border);padding:16px 0;margin:24px 0}.agent-checks>summary,.agent-checks h3{font-size:13px;margin-bottom:12px}.agent-checks>summary{margin:0}.check-result{padding:12px 0;border-top:1px solid var(--border)}.check-status{font-size:11px;font-weight:700}.check-result[data-state=pass] .check-status{color:var(--success)}.check-result[data-state=changes_required] .check-status{color:var(--danger)}.check-result p{font-size:12px;margin-top:6px}.check-result details{margin-top:10px}.check-result ol{padding-left:20px}.check-metrics{font-size:10px!important;color:var(--muted)}
+dialog#editor,dialog#about{width:min(720px,calc(100vw - 32px));max-height:90dvh;border:1px solid var(--border);border-radius:var(--dk-radius-sm);padding:24px;overflow:auto}dialog::backdrop{background:var(--dk-color-ink-45)}#editor h2,#about h2{font-size:20px;margin-bottom:20px}.editor-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}.editor-grid .wide{grid-column:1/-1}.editor-grid h3{font-size:12px;margin-bottom:10px}.editor-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:flex-end;border-top:1px solid var(--border);margin-top:20px;padding-top:14px}.editor-actions select{font-size:11px;max-width:100%}.form-error{border-left:3px solid var(--danger);background:var(--dk-color-surface);color:var(--danger);padding:10px;margin-top:12px;font-size:12px}.dependency-row{display:grid;grid-template-columns:1fr 1fr auto;gap:8px;align-items:end;margin-bottom:10px}#dependency-rows:empty::after{content:'No dependencies';font-size:11px;color:var(--muted)}#detail-connection{padding:12px 28px;color:var(--danger);font-size:11px}#about p,#about li,#about footer{font-size:12px;line-height:1.7;margin:12px 0;color:var(--muted)}#about-close{float:right}#overview{white-space:pre-line}.rules{margin:20px 0}.rules summary{font-size:12px}
+@media(min-width:1800px){:root{--sidebar:224px;--inspector:700px}.workspace{padding:24px 32px}.work-column{flex-basis:250px}}
+@media(max-width:1100px){.inspector-open .app-main{margin-right:0}#detail{width:min(650px,calc(100vw - var(--sidebar)))}.breadcrumb #project{max-width:200px}.pager{flex-wrap:wrap}}
+@media(max-width:760px){:root{--sidebar:208px}.sidebar{transform:translateX(-100%);box-shadow:var(--dk-shadow-pill)}.nav-open .sidebar{transform:translateX(0)}.app-main{margin-left:0}.top{height:52px;padding:0 14px}.breadcrumb #project,.breadcrumb .separator{display:none}#menu-toggle{display:block;padding:5px 8px}.workspace{padding:16px 14px 8px}.page-heading{margin-bottom:14px}.page-heading h2{font-size:20px}.filters{gap:6px}.filters label{flex:1;max-width:none;min-width:100px}.filters label:first-child{flex-basis:100%;max-width:none}.filters label:has(#episode){max-width:100%}.workspace-actions{margin-left:0;flex:1;justify-content:flex-end}.workspace-actions #edit-sprint{display:none}.board-controls>label{max-width:none;flex:1}.board-options{margin-left:0}.board-grid{height:calc(100dvh - 360px);min-height:260px}.work-column{flex-basis:260px}.pager>div{gap:6px}.pager label{gap:4px}#detail{width:100vw}.detail-head{padding:20px 20px 0}.detail-head h2{font-size:21px}#detail-body{padding:0 20px 24px}.editor-grid{grid-template-columns:1fr}.editor-grid .wide{grid-column:1}.dependency-row{grid-template-columns:1fr}.record-field.compact{grid-template-columns:110px minmax(0,1fr)}.connection-indicator{font-size:9px}.board-options{width:100%}.page-heading{flex-wrap:wrap}}
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{transition:none!important;animation:none!important;scroll-behavior:auto!important}}
+#template-notice{display:none}
 </style></head><body>
-<header class="top"><h1 id="project">Project Memory</h1><p>Decisions, evidence and follow-up work.</p><p class="meta" id="snapshot"></p><p class="meta" id="scope"></p><details class="rules"><summary>Agreed requirements</summary><ul id="requirements"></ul></details></header>
-<p id="connection" role="status" hidden></p><p id="overview" class="meta"></p>
-<nav aria-label="Record views"><button data-view="board" aria-pressed="false">Work board</button><button data-view="decisions" aria-pressed="false">Decisions</button><button data-view="episodes" aria-pressed="true">Episodes</button><button data-view="direction" aria-pressed="false">Project requirements</button><button data-view="events" aria-pressed="false">Events</button><button data-view="sources" aria-pressed="false">Sources</button><button data-view="documents" aria-pressed="false">Documents</button><button data-view="lessons" aria-pressed="false">Lessons</button><button data-view="pending" aria-pressed="false">Follow-up work</button><button data-view="research" aria-pressed="false">Research</button><button data-view="corrections" aria-pressed="false">Writing corrections</button><button data-view="patterns" aria-pressed="false">Patterns</button><button data-view="drift" aria-pressed="false">Evidence drift</button><button data-view="captures" aria-pressed="false">Host capture</button></nav>
+<section id="template-notice">
+<h1>Open Project Memory</h1>
+<p>This file is the application template. To open your workspace, run this command in your project folder:</p>
+<pre>project-memory view</pre>
+<p>If you used uvx to set up the project, use <code>uvx project-memory-mcp view</code>.</p>
+<p>The command opens the live workspace with your records and automatic updates. No HTML installation or rebuild is needed.</p>
+</section>
+<div id="workspace-app" hidden>
+<aside class="sidebar" id="record-navigation" aria-label="Project navigation">
+<div class="brand"><span class="brand-mark" aria-hidden="true">m</span><div><strong>Project Memory</strong><small>by Dankaro</small></div></div>
+<nav aria-label="Record views">
+<span class="nav-label">Workspace</span>
+<button data-view="board" aria-pressed="false">Work board</button><button data-view="episodes" aria-pressed="true">Episodes</button><button data-view="pending" aria-pressed="false">Follow-up work</button>
+<span class="nav-label">Knowledge</span>
+<button data-view="decisions" aria-pressed="false">Decisions</button><button data-view="documents" aria-pressed="false">Documents</button><button data-view="sources" aria-pressed="false">Sources</button><button data-view="direction" aria-pressed="false">Project requirements</button><button data-view="research" aria-pressed="false">Research</button><button data-view="corrections" aria-pressed="false">Writing corrections</button>
+<span class="nav-label">Learning &amp; history</span>
+<button data-view="lessons" aria-pressed="false">Lessons</button><button data-view="patterns" aria-pressed="false">Patterns</button><button data-view="drift" aria-pressed="false">Evidence drift</button><button data-view="events" aria-pressed="false">Events</button><button data-view="captures" aria-pressed="false">Host capture</button>
+</nav><div class="sidebar-bottom"><button id="about-open">Project information</button><p>Local workspace</p></div></aside>
+<main class="app-main"><header class="top"><button id="menu-toggle" aria-label="Toggle navigation" aria-controls="record-navigation" aria-expanded="false">☰</button><div class="breadcrumb"><span id="project">Project Memory</span><span class="separator">/</span><h1 id="view-title">Episodes</h1></div><span id="live-status" class="connection-indicator" data-state="snapshot">Snapshot</span></header>
+<div class="workspace"><div class="page-heading"><h2 id="page-title">Episodes</h2><div class="board-options" id="board-options" hidden><label><input id="show-empty" type="checkbox">Show empty columns</label></div></div>
+<p id="connection" role="status" hidden></p>
 <div class="filters"><label>Search<input id="query" type="search" placeholder="Search titles and record contents"></label><label>Subject<select id="subject"><option value="">All subjects</option></select></label><label>Status<select id="status"><option value="">All statuses</option></select></label><label>Episode<select id="episode"><option value="">All episodes</option></select></label><label>From<input id="from" type="date"></label><label>To<input id="to" type="date"></label><label>Order<select id="order"><option value="newest">Newest first</option><option value="oldest">Oldest first</option><option value="title">Title</option></select></label><button id="clear">Clear filters</button></div>
-<section id="board-controls" class="board-controls" hidden><label>Sprint<select id="sprint"><option value="">All sprints</option><option value="unassigned">Unassigned work</option></select></label><button id="more-sprints" hidden>Load more sprints</button></section>
-<section id="board" hidden><div id="sprint-summary" class="sprint-summary"></div><p class="board-help">Cards show recorded intent and checked progress. Open a card to inspect its scope, dependencies and decision history.</p><div id="board-grid" class="board-grid"></div></section>
+<section id="board-controls" class="board-controls" hidden><label>Sprint<select id="sprint"><option value="">All sprints</option><option value="unassigned">Unassigned work</option></select></label><button id="more-sprints" hidden>Load more sprints</button><div id="workspace-actions" class="workspace-actions" hidden><button id="edit-sprint" disabled>Edit sprint</button><button id="new-sprint">New sprint</button><button id="new-work" class="primary">New action</button></div></section>
+<p id="workspace-message" role="status"></p>
+<p id="recording-status" role="status" hidden></p>
+<section id="board" hidden><div id="sprint-summary" class="sprint-summary"></div><div id="board-grid" class="board-grid"></div></section>
 <p id="pending-note" hidden>Unconfirmed execution requires a host check. Do not repeat the action automatically.</p>
 <div class="table-wrap"><table><thead><tr><th>Date (UTC)</th><th>Subject</th><th>Type</th><th>Record</th><th>Status</th><th>Details</th></tr></thead><tbody id="rows"></tbody></table><p id="empty" hidden>No records match these filters.</p></div>
 <div class="pager"><span id="count" aria-live="polite"></span><div><label>Rows<select id="page-size"><option>10</option><option selected>25</option><option>50</option><option>100</option></select></label><button id="previous">Previous</button><span id="page"></span><button id="next">Next</button></div></div>
-<footer>Read-only snapshot. Regenerate it after database or document changes. Filters and pagination cover this export only.<br>Source freshness describes the stored copy; it does not establish that its claims are true. Proposed lessons are suggestions, not standing instructions.</footer>
-<dialog id="detail"><div class="detail-head"><h2 id="detail-title"></h2><button id="close">Close</button></div><p id="detail-connection" role="status" hidden></p><div id="detail-body"></div></dialog>
+</div></main>
+<dialog id="about" aria-labelledby="about-title"><button id="about-close">Close</button><h2 id="about-title">Project information</h2><p id="snapshot"></p><p id="scope"></p><details class="rules"><summary>Using this workspace</summary><p id="workspace-help">This is an offline snapshot. It does not update or save changes. Run <code>project-memory view</code> in your project folder to open the live workspace.</p><ul><li>Use Work board to follow progress. Open a card to read its plan, decisions and outcomes.</li><li>Tell your assistant when priorities or requirements change. It records the revision and retains the earlier decision.</li><li>Check blocked work and recording issues before continuing. Live means the viewer is connected; it does not prove that every decision has been recorded.</li></ul><p>No HTML installation or rebuild is needed. If you used uvx for setup, run <code>uvx project-memory-mcp view</code>.</p></details><details class="rules"><summary>Agreed requirements</summary><ul id="requirements"></ul></details><h3>Recorded measurements</h3><p id="overview"></p><footer>Read-only snapshot. Regenerate it after database or document changes. Filters cover this export only.</footer></dialog>
+<dialog id="detail" aria-labelledby="detail-title"><div class="detail-toolbar"><button id="detail-back" hidden>Back</button><span id="detail-kind">Record</span><button id="close" aria-label="Close details">Close</button></div><div class="detail-head"><h2 id="detail-title" tabindex="-1"></h2></div><p id="detail-connection" role="status" hidden></p><div id="detail-body"></div></dialog>
+<dialog id="editor" aria-labelledby="editor-title"><h2 id="editor-title"></h2><form id="work-form"><div id="editor-fields" class="editor-grid"></div><p id="editor-error" class="form-error" role="alert" hidden></p><div class="editor-actions"><button type="button" id="editor-reload" hidden>Reload saved version</button><button type="button" id="editor-cancel">Cancel</button><button type="submit" id="editor-save" class="primary">Save</button></div></form></dialog>
+</div>
 <script id="memory-data" type="application/json">__MEMORY_DATA__</script>
 <script>
 'use strict';
 const data=JSON.parse(document.getElementById('memory-data').textContent);
 const el=id=>document.getElementById(id);
 const words={when:'Applies when',do:'Suggested action',because:'Reason',why:'Decision basis',expected:'Expected consequence',attribution:'Attributed cause',uncertainty:'Uncertainty',anti_pattern:'Anti-pattern',needs_review:'Needs review',review_due:'Review due',current_copy:'Current stored copy',file_changed:'File changed',file_missing:'File missing',file_unreadable:'File cannot be checked',execution_unconfirmed:'Execution not confirmed',consequence_pending:'Consequence not assessed',action_result:'Execution result',host_receipt:'Host receipt',replaced:'Revised',observed:'Observed',supersedes:'Earlier choice',replaced_by:'Later revision',decision_id:'Decision',good:'Good outcome',bad:'Bad outcome'};
-Object.assign(words,{tokens:'Model tokens',context_characters:'Context characters',human_corrections:'Human corrections',maintenance_ms:'Maintenance (ms)',repeated_research:'Repeated research',alternatives:'Alternatives considered',decision:'Decision',reconsider_when:'Reconsider when',source_id:'Evidence source',not_established:'Not established',before:'Original wording',after:'Corrected wording',scope:'Scope of this correction',reason:'Reason',date:'Recorded at',recorded:'Recorded',subject:'Subject',kind:'Record type',id:'Record ID',status:'Status',project_revision:'Project revision',requirements:'Requirements',version:'Version',actor:'Recorded by'});
-const labels=s=>words[s]||String(s).replaceAll('_',' ');
+Object.assign(words,{intent_unassessed:'Unassessed requests',activity_unassigned:'Unassigned activity',outcome_missing:'Missing outcomes',capture_gap:'Capture gap',plan_missing:'Missing plan',tokens:'Model tokens',context_characters:'Context characters',human_corrections:'Human corrections',maintenance_ms:'Maintenance (ms)',repeated_research:'Repeated research',alternatives:'Alternatives considered',decision:'Decision',reconsider_when:'Reconsider when',source_id:'Evidence source',not_established:'Not established',before:'Original wording',after:'Corrected wording',scope:'Scope of this correction',reason:'Reason',date:'Recorded at',recorded:'Recorded',subject:'Subject',kind:'Record type',id:'Record ID',status:'Status',project_revision:'Project revision',requirements:'Requirements',version:'Version',actor:'Recorded by'});
+const labels=s=>words[s]||String(s).replaceAll('_',' ').replace(/^./,c=>c.toUpperCase());
 Object.assign(words,{backlog:'Backlog',ready:'Ready',in_progress:'In progress',blocked:'Blocked',review:'Review',done:'Done',cancelled:'Cancelled',work_plan:'Work plan',sprint:'Sprint',autonomy:'Autonomy',suggest:'Suggest first',act:'Act within scope',agent:'Agent',human:'Human',intent:'Intended result',done_when:'Completion criterion',next_action:'Next action'});
 const workById=new Map((data.work||[]).map(r=>[r.id,r]));
 let sprintRows=data.sprints||[],sprintOffset=0,workDetail=false;
@@ -35,6 +230,29 @@ const byId=new Map(data.records.map(r=>[r.id,r]));
 const pending=new Map(data.pending.map(r=>[r.id,r]));
 let view='episodes',page=1,selectedId=null;
 let livePage=null,renderVersion=0,healthTag=null,polling=false,lastSuccess=null;
+let csrf=null,reviewHost=null,editorState=null;
+const expandedChecks=new Set();
+const expandedCheckPanels=new Set();
+const originalTextShown=new Set();
+const detailHistory=[];
+let restoringDetail=false,detailTrigger=null,detailTriggerLabel=null;
+function selectDetail(id,refresh){
+ if(!refresh&&selectedId&&selectedId!==id&&!restoringDetail)detailHistory.push({id:selectedId,work:workDetail});
+ if(!el('detail').open){detailTrigger=document.activeElement;detailTriggerLabel=detailTrigger?.getAttribute('aria-label');}
+ el('detail-back').hidden=!detailHistory.length;
+}
+function showDetail(refresh,scroll){
+ if(!el('detail').open){el('detail').show();document.body.classList.add('inspector-open');el('detail-title').focus();}
+ el('detail').scrollTop=refresh?scroll:0;
+}
+const dateLabel=value=>{const date=new Date(value);return Number.isNaN(date.getTime())?String(value):new Intl.DateTimeFormat('en-GB',{day:'numeric',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit',timeZone:'UTC'}).format(date)+' UTC';};
+function metadata(parent,record){
+ const group=document.createElement('div');group.className='record-meta';
+ for(const value of [record.kind,record.subject,record.state||record.status])if(value){const span=document.createElement('span');span.className='badge';span.dataset.state=value;span.textContent=labels(value);group.append(span);}
+ if(record.date){const time=document.createElement('time');time.dateTime=record.date;time.textContent=dateLabel(record.date);group.append(time);}parent.append(group);
+ el('detail-kind').textContent=labels(record.kind||'Work item');
+}
+Object.assign(words,{owner:'Responsible',outcome:'Outcome',action:'Action',intent:'Intent',recovery:'Recovery',pass:'Passed',changes_required:'Changes required',uncertain:'Uncertain',failed:'Failed',queued:'Queued',running:'Running',cancelling:'Cancelling',timed_out:'Timed out',interrupted:'Interrupted',stale:'Stale',high:'High',normal:'Normal',low:'Low',planned:'Planned',closed:'Closed'});
 const initialFilters=new URLSearchParams(location.search);
 const decisions=data.records.filter(r=>r.kind==='decision'),assessed=data.records.filter(r=>r.kind==='outcome'&&['good','bad'].includes(r.detail.payload.assessment));
 el('overview').textContent=decisions.length+' decisions · '+assessed.length+' recorded assessments · '+data.pending.length+' follow-ups · '+data.records.filter(r=>r.status==='needs_review').length+' records need review';
@@ -74,8 +292,8 @@ function draw(records,total,pages,size){
  el('rows').replaceChildren();
  for(const r of records){
   const tr=document.createElement('tr');
-  for(const [value,cls] of [[r.date.slice(0,16).replace('T',' '),'date'],[labels(r.subject),''],[labels(r.kind),'type'],[r.title,'title'],[labels(view==='pending'?pending.get(r.id)?.state:r.status),'status']]){
-   const td=document.createElement('td');td.className=cls;const span=document.createElement('span');span.textContent=value;td.append(span);tr.append(td);
+  for(const [value,cls] of [[r.date.slice(0,10),'date'],[labels(r.subject),''],[labels(r.kind),'type'],[r.title,'title'],[labels(view==='pending'?pending.get(r.id)?.state:r.status),'status']]){
+   const td=document.createElement('td');td.className=cls;const span=document.createElement('span');span.textContent=value;if(cls==='status'){span.className='badge';span.dataset.state=r.status;}if(cls==='date')span.title=dateLabel(r.date);td.append(span);tr.append(td);
   }
   const td=document.createElement('td'),button=document.createElement('button');button.className='row-open';button.textContent='Open';button.setAttribute('aria-label','Open '+r.title);button.addEventListener('click',()=>open(r.id));td.append(button);tr.append(td);el('rows').append(tr);
  }
@@ -84,17 +302,49 @@ function draw(records,total,pages,size){
  el('page').textContent=`Page ${page} of ${pages}`;el('previous').disabled=page===1;el('next').disabled=page===pages;
 }
 function field(parent,key,value){
- const dt=document.createElement('dt'),dd=document.createElement('dd');dt.textContent=labels(key);parent.append(dt,dd);
+ const wrap=document.createElement('div');wrap.className='record-field';wrap.dataset.field=key;
+ if(['status','Recorded state','autonomy','owner','version','project_revision','origin','checked_at','review_after','date','subject','kind','actor'].includes(key))wrap.classList.add('compact');
+ const dt=document.createElement('dt'),dd=document.createElement('dd');dt.textContent=labels(key);if(key==='body'&&typeof value==='string'&&/^#{1,6} /m.test(value))dt.hidden=true;wrap.append(dt,dd);parent.append(wrap);
  if(Array.isArray(value)&&value.length&&typeof value[0]==='object'){
-  const table=document.createElement('table'),head=document.createElement('tr'),keys=[...new Set(value.flatMap(item=>Object.keys(item)))];
-  for(const k of keys){const th=document.createElement('th');th.textContent=labels(k);head.append(th);}table.append(head);
-  for(const item of value){const tr=document.createElement('tr');for(const k of keys){const td=document.createElement('td');td.textContent=typeof item[k]==='string'&&words[item[k]]?labels(item[k]):String(item[k]??'Not recorded');tr.append(td);}table.append(tr);}dd.append(table);
- }else if(Array.isArray(value)){dd.textContent=value.length?value.join('\n'):'None recorded';}
+  const table=document.createElement('table'),thead=document.createElement('thead'),head=document.createElement('tr'),tbody=document.createElement('tbody'),keys=[...new Set(value.flatMap(item=>Object.keys(item)))];
+  for(const k of keys){const th=document.createElement('th');th.scope='col';th.textContent=labels(k);head.append(th);}thead.append(head);table.append(thead,tbody);
+  for(const item of value){const tr=document.createElement('tr');for(const k of keys){const td=document.createElement('td');const val=item[k];td.textContent=val&&typeof val==='object'?JSON.stringify(val,null,2):typeof val==='string'&&words[val]?labels(val):String(val??'Not recorded');tr.append(td);}tbody.append(tr);}dd.append(table);
+ }else if(Array.isArray(value)){if(value.length){const list=document.createElement('ul');for(const text of value){const li=document.createElement('li');li.textContent=String(text);list.append(li);}dd.append(list);}else dd.textContent='None recorded';}
  else if(value&&typeof value==='object'){const dl=document.createElement('dl');dd.append(dl);for(const [k,v] of Object.entries(value))field(dl,k,v);}
- else{dd.textContent=typeof value==='string'&&words[value]?labels(value):String(value??'Not recorded');}
+ else if(typeof value==='string'&&!words[value]&&!wrap.classList.contains('compact')){
+  if(key==='body'){const toggle=document.createElement('button'),content=document.createElement('div'),recordId=selectedId;toggle.type='button';toggle.className='source-toggle';const draw=()=>{const original=originalTextShown.has(recordId);toggle.textContent=original?'Read formatted text':'Read original text';content.replaceChildren();if(original){const pre=document.createElement('pre');pre.textContent=value;content.append(pre);}else content.append(documentText(value));};toggle.addEventListener('click',()=>{if(originalTextShown.has(recordId))originalTextShown.delete(recordId);else originalTextShown.add(recordId);draw();});draw();dd.append(toggle,content);}
+  else dd.append(documentText(value));
+ }
+ else{dd.textContent=['checked_at','review_after','date'].includes(key)&&value?dateLabel(value):typeof value==='string'&&words[value]?labels(value):String(value??'Not recorded');}
 }
-function reference(parent,id,reason){const p=document.createElement('p');if(byId.has(id)||data.live){const b=document.createElement('button');b.textContent=byId.has(id)?labels(byId.get(id).kind)+': '+byId.get(id).title:'Open '+id;b.addEventListener('click',()=>open(id));p.append(b);}else{const span=document.createElement('span');span.textContent=id+' (outside this export)';p.append(span);}if(reason){const span=document.createElement('span');span.textContent=' '+reason;p.append(span);}parent.append(p);}
+function inlineText(parent,text){
+ const pattern=/(`[^`\n]+`|\*\*[^*\n]+\*\*|\*[^*\n]+\*|\[[^\]\n]+\]\(https?:\/\/[^\s)]+\))/g;let start=0;
+ for(const match of text.matchAll(pattern)){parent.append(document.createTextNode(text.slice(start,match.index)));const part=match[0];let node;
+  if(part.startsWith('`')){node=document.createElement('code');node.textContent=part.slice(1,-1);}
+  else if(part.startsWith('**')){node=document.createElement('strong');node.textContent=part.slice(2,-2);}
+  else if(part.startsWith('*')){node=document.createElement('em');node.textContent=part.slice(1,-1);}
+  else{const link=part.match(/^\[([^\]]+)\]\((.+)\)$/);node=document.createElement('a');node.textContent=link[1];node.href=link[2];node.target='_blank';node.rel='noopener noreferrer';}
+  parent.append(node);start=match.index+part.length;
+ }parent.append(document.createTextNode(text.slice(start)));
+}
+function documentText(text){
+ const root=document.createElement('div');root.className='document';const lines=text.replace(/\r\n/g,'\n').split('\n');
+ const cells=line=>line.trim().replace(/^\||\|$/g,'').split('|').map(s=>s.trim());
+ const tableRule=line=>line.includes('|')&&cells(line).every(s=>/^:?-{3,}:?$/.test(s));
+ const block=line=>/^(#{1,6}\s|```|>\s?|[-*+]\s|\d+\.\s)/.test(line);
+ for(let i=0;i<lines.length;){const line=lines[i];if(!line.trim()){i++;continue;}
+  if(line.startsWith('```')){const pre=document.createElement('pre'),code=document.createElement('code'),body=[];i++;while(i<lines.length&&!lines[i].startsWith('```'))body.push(lines[i++]);if(i<lines.length)i++;code.textContent=body.join('\n');pre.append(code);root.append(pre);continue;}
+  const heading=line.match(/^(#{1,6})\s+(.+)$/);if(heading){const h=document.createElement('h'+heading[1].length);inlineText(h,heading[2]);root.append(h);i++;continue;}
+  if(i+1<lines.length&&tableRule(lines[i+1])){const wrap=document.createElement('div');wrap.className='table-wrap';const table=document.createElement('table'),thead=document.createElement('thead'),tr=document.createElement('tr');for(const cell of cells(line)){const th=document.createElement('th');th.scope='col';inlineText(th,cell);tr.append(th);}thead.append(tr);table.append(thead);const body=document.createElement('tbody');table.append(body);i+=2;while(i<lines.length&&lines[i].includes('|')&&lines[i].trim()){const row=document.createElement('tr');for(const cell of cells(lines[i++])){const td=document.createElement('td');inlineText(td,cell);row.append(td);}body.append(row);}wrap.append(table);root.append(wrap);continue;}
+  const item=line.match(/^([-*+]|\d+\.)\s+(.+)$/);if(item){const ordered=/\d/.test(item[1]),list=document.createElement(ordered?'ol':'ul');if(ordered)list.start=parseInt(item[1]);while(i<lines.length){const next=lines[i].match(/^([-*+]|\d+\.)\s+(.+)$/);if(!next||/\d/.test(next[1])!==ordered)break;const li=document.createElement('li');inlineText(li,next[2]);list.append(li);i++;}root.append(list);continue;}
+  if(line.startsWith('>')){const quote=document.createElement('blockquote'),parts=[];while(i<lines.length&&lines[i].startsWith('>'))parts.push(lines[i++].replace(/^>\s?/,''));inlineText(quote,parts.join('\n'));root.append(quote);continue;}
+  const paragraph=document.createElement('p'),parts=[line];i++;while(i<lines.length&&lines[i].trim()&&!block(lines[i])&&!(i+1<lines.length&&tableRule(lines[i+1])))parts.push(lines[i++]);inlineText(paragraph,parts.join('\n'));root.append(paragraph);
+ }return root;
+}
+function reference(parent,id,reason){const p=document.createElement('p');if(byId.has(id)||data.live){const b=document.createElement('button');b.textContent=byId.has(id)?labels(byId.get(id).kind)+': '+byId.get(id).title:id.startsWith('source_')?'Open evidence':id.startsWith('direction_')?'Project requirements':'Open linked record';b.addEventListener('click',()=>open(id));p.append(b);}else{const span=document.createElement('span');span.textContent=id+' (outside this export)';p.append(span);}if(reason){const span=document.createElement('span');span.textContent=' '+reason;p.append(span);}parent.append(p);}
 async function open(id,refresh=false){
+ coverageSession=null;
+ selectDetail(id,refresh);
  workDetail=false;
  selectedId=id;
  const scroll=el('detail').scrollTop,shownLength=refresh?(byId.get(id)?.detail.body?.length||12000):12000;
@@ -104,12 +354,14 @@ async function open(id,refresh=false){
    byId.set(id,result.record);}
   catch(error){disconnected(error);return;}
  }
- const r=byId.get(id);if(!r)return;el('detail-title').textContent=r.title;const body=el('detail-body');body.replaceChildren();const dl=document.createElement('dl');body.append(dl);
- for(const key of ['id','subject','kind','status','date'])field(dl,key,r[key]);
+ const r=byId.get(id);if(!r)return;el('detail-title').textContent=r.title;const body=el('detail-body');body.replaceChildren();metadata(body,r);const dl=document.createElement('dl');dl.className='record-content';body.append(dl);
  const detail=r.detail;
  const payload=detail.payload||detail;
- const ordered=r.kind==='correction'?['before','after','reason','scope',...Object.keys(payload).filter(k=>!['before','after','reason','scope'].includes(k))]:Object.keys(payload);
- for(const key of ordered)if(key in payload&&!['id','subject','kind','status','created_at','evidence','links','source_text','payload','decision_id','supersedes','replaced_by','review_reasons','body_offset','next_offset','body_more'].includes(key))field(dl,key,payload[key]);
+ const first=r.kind==='correction'?['before','after','reason','scope']:r.kind==='decision'?['decision','why','uncertainty','alternatives','expected','reconsider_when']:r.kind==='source'?['summary','body']:[];
+ const ordered=[...first,...Object.keys(payload).filter(k=>!first.includes(k))];
+ const documentSummary=r.kind==='source'&&detail.origin==='document';
+ const technicalKeys=['id','episode_id','session_id','turn_id','tool_use_id','tool_name','event_name','source_key','project_revision','work_plan_id','version','actor','seq','request_key','content_hash','hash','document'];
+ for(const key of ordered)if(key in payload&&!(documentSummary&&key==='summary')&&!(payload[key]===r.title&&key==='decision')&&!technicalKeys.includes(key)&&!['subject','kind','status','created_at','evidence','links','source_text','payload','decision_id','supersedes','replaced_by','review_reasons','body_offset','next_offset','body_more'].includes(key))field(dl,key==='scope'&&r.kind!=='correction'?'Scope and exceptions':key,payload[key]);
  if(pending.has(id)){field(dl,'Follow-up',pending.get(id));}
  if(r.kind==='lesson'){field(dl,'Review status',detail.lesson_status||detail.status);field(dl,'Use','Apply accepted lessons only within their recorded conditions and exceptions.');}
  if(r.kind==='host_receipt')for(const key of ['session_id','turn_id','tool_use_id','tool_name','event_name'])if(detail[key])field(dl,key,detail[key]);
@@ -118,7 +370,7 @@ async function open(id,refresh=false){
  if(detail.review_reasons)field(dl,'Why this needs review',detail.review_reasons);
  if(data.live&&r.kind==='source'&&detail.body_more){
   const more=document.createElement('button');more.textContent='Read more source text';let offset=detail.next_offset;
-  more.addEventListener('click',async()=>{more.disabled=true;try{const next=(await api('record',{id,body_offset:offset})).record.detail;if(selectedId!==id)return;detail.body+=next.body;field(dl,'Source text continued',next.body);offset=next.next_offset;more.hidden=!next.body_more;}catch(error){disconnected(error);}finally{more.disabled=false;}});body.append(more);
+  more.addEventListener('click',async()=>{more.disabled=true;try{const next=(await api('record',{id,body_offset:offset})).record.detail;if(selectedId!==id)return;detail.body+=next.body;const holder=document.createElement('dl');field(holder,'body',detail.body);const existing=dl.querySelector('[data-field=body]');if(existing)existing.replaceWith(holder.firstElementChild);else dl.append(holder.firstElementChild);offset=next.next_offset;more.hidden=!next.body_more;}catch(error){disconnected(error);}finally{more.disabled=false;}});body.append(more);
  }
  for(const ref of detail.evidence||[])reference(refs,ref.source_id,ref.reason+(ref.status?' · '+labels(ref.status):''));
  for(const ref of detail.links||[])reference(refs,ref.event_id,ref.reason);
@@ -131,7 +383,8 @@ async function open(id,refresh=false){
   const load=async()=>{more.disabled=true;try{const result=await api('records',{related:id,offset,limit:25});if(selectedId!==id)return;for(const related of result.records){byId.set(related.id,related);reference(refs,related.id,labels(related.status));}offset+=result.records.length;more.hidden=!result.more;more.textContent='Show more related records';}catch(error){disconnected(error);}finally{more.disabled=false;}};more.addEventListener('click',load);
  }
  if(r.kind==='episode'){const button=document.createElement('button');button.textContent='Show episode events';button.addEventListener('click',()=>{if(![...el('episode').options].some(o=>o.value===id))option('episode',id,r.title);el('episode').value=id;selectedId=null;el('detail').close();setView('events');});body.append(button);}
- if(!el('detail').open)el('detail').showModal();el('detail').scrollTop=refresh?scroll:0;
+ const technical=document.createElement('details');technical.className='technical';const summary=document.createElement('summary');summary.textContent='Record details';technical.append(summary);const properties=document.createElement('dl');technical.append(properties);field(properties,'id',r.id);if(documentSummary)field(properties,'summary',payload.summary);for(const key of technicalKeys.filter(k=>k!=='id'))if(key in detail||key in payload)field(properties,key,payload[key]??detail[key]);body.append(technical);
+ showDetail(refresh,scroll);
 }
 
 async function api(endpoint,params={},conditional=false){
@@ -142,7 +395,8 @@ async function api(endpoint,params={},conditional=false){
  if(conditional)healthTag=response.headers.get('ETag');return value;
 }
 function disconnected(error){
- el('connection').hidden=false;el('connection').textContent='Updates are unavailable. '+error.message+'. The last successful check was '+(lastSuccess||'not completed')+'. Run project-memory view to reconnect.';el('detail-connection').hidden=false;el('detail-connection').textContent=el('connection').textContent;
+ el('live-status').textContent='Disconnected';el('live-status').dataset.state='error';
+ el('connection').hidden=false;el('connection').textContent='Updates are unavailable. '+error.message+'. Run project-memory view to reconnect.';el('connection').title='Last successful check: '+(lastSuccess||'none');el('detail-connection').hidden=false;el('detail-connection').textContent=el('connection').textContent;
 }
 async function loadPage(){
  if(view==='board')return renderBoard();
@@ -154,7 +408,30 @@ async function loadPage(){
  data.records=result.records;pending.clear();for(const item of result.pending||[])pending.set(item.id,item);
  for(const record of result.records)byId.set(record.id,record);if(selected)byId.set(selectedId,selected);livePage=result;draw(result.records,result.total,pages,size);
 }
+let coverageSession=null;
+async function showCoverage(session,refresh=false){
+ const scroll=el('detail').scrollTop;coverageSession=session;
+ try{
+  const result=await api('coverage',{session_id:session});if(coverageSession!==session)return;
+  selectedId=null;workDetail=false;el('detail-title').textContent='Recording checks';el('detail-kind').textContent='Host session';
+  const body=el('detail-body');body.replaceChildren();const dl=document.createElement('dl');body.append(dl);
+  field(dl,'Recording state',result.issues.length?'Some records remain unresolved.':'The observed activity has an explicit assessment.');
+  for(const issue of result.issues)field(dl,labels(issue.type),issue.reason);
+  field(dl,'Assessment',result.meaning);
+  const refs=document.createElement('div');refs.className='references';body.append(refs);
+  const append=value=>{for(const prompt of value.pending_prompts)reference(refs,prompt.id,'Inspect the unassessed request receipt');for(const gap of value.capture_gaps)reference(refs,gap,'Inspect the capture gap');for(const item of value.unconfirmed)reference(refs,item.id,'Inspect the uncertain tool result');for(const item of value.open_decisions)reference(refs,item.decision_id,'Inspect the decision without an outcome');};append(result);
+  if(result.more){const more=document.createElement('button');more.textContent='Show more records';let offset=result.next_offset;body.append(more);more.addEventListener('click',async()=>{more.disabled=true;try{const page=await api('coverage',{session_id:session,offset});if(coverageSession!==session)return;append(page);offset=page.next_offset;more.hidden=!page.more;}catch(error){disconnected(error);}finally{more.disabled=false;}});}
+  showDetail(refresh,scroll);
+ }catch(error){disconnected(error);}
+}
 function updateHealth(value){
+ csrf=value.csrf;reviewHost=value.review_host;el('workspace-actions').hidden=!value.interactive;
+ const recording=el('recording-status');recording.replaceChildren();
+ const checks=(value.recording_checks?.sessions||[]).filter(s=>s.status==='needs_attention');
+ recording.hidden=!checks.length&&!value.capture?.failure;
+ if(value.capture?.failure)recording.append(document.createTextNode('Host capture failed. Some activity may be missing. '));
+ for(const session of checks){const button=document.createElement('button');button.textContent='Recording checks: '+session.issues.map(i=>labels(i.type)).join(', ');button.addEventListener('click',()=>showCoverage(session.session_id));recording.append(button);}
+ if(value.recording_checks?.more){recording.hidden=false;const more=document.createElement('button');more.textContent='More recording checks';more.addEventListener('click',async()=>{try{const page=await api('coverage',{offset:value.recording_checks.next_offset});updateHealth({...value,recording_checks:page});}catch(error){disconnected(error);}});recording.append(more);}
  el('project').textContent=value.project;el('scope').textContent='Project baseline: '+labels(value.baseline.status)+'. Product coverage has not been assessed.';
  el('requirements').replaceChildren();for(const rule of value.requirements){const li=document.createElement('li');li.textContent=rule;el('requirements').append(li);}
  const chosen=el('episode').value;el('episode').replaceChildren();option('episode','','All episodes');
@@ -167,27 +444,38 @@ async function poll(){
  if(polling||document.hidden)return;polling=true;
  try{
   const value=await api('health',{},true);
-  if(value){updateHealth(value);if(view==='board')await loadSprints(true);await loadPage();if(selectedId&&el('detail').open){if(workDetail)await openWork(selectedId,true);else await open(selectedId,true);}}
-  lastSuccess=new Date().toLocaleTimeString();el('detail-connection').hidden=true;el('connection').hidden=false;el('connection').textContent='Live updates are connected. Last checked '+lastSuccess+'.';
+  if(value){updateHealth(value);if(coverageSession&&el('detail').open)await showCoverage(coverageSession,true);if(view==='board')await loadSprints(true);await loadPage();if(selectedId&&el('detail').open&&!el('editor').open){if(workDetail)await openWork(selectedId,true);else await open(selectedId,true);}}
+  lastSuccess=new Date().toLocaleTimeString();el('detail-connection').hidden=true;el('connection').hidden=true;el('live-status').textContent='Live';el('live-status').dataset.state='connected';el('live-status').title='Last checked '+lastSuccess;
  }catch(error){healthTag=null;disconnected(error);}finally{polling=false;}
 }
 function startLive(){
- el('snapshot').textContent='Live, read-only view. The browser loads records in pages and source text on demand.';
- document.querySelector('footer').textContent='This local view checks for committed changes every two seconds while visible. Selected Markdown files sync at session start and stop; file changes remain visible before capture. Capture does not approve requirements or lessons. Use project-memory view after the service stops.';
+ el('live-status').textContent='Connecting';el('live-status').dataset.state='snapshot';
+ el('snapshot').textContent='Live workspace · Plans, decisions and evidence stay in this project.';
+ el('workspace-help').textContent='This workspace updates automatically while open. Plan actions and sprints here or ask your assistant to record them. To reopen it, ask your assistant to open Project Memory or run project-memory view in your project folder.';
+ document.querySelector('footer').textContent='This workspace refreshes every two seconds while visible. Capture does not approve requirements or lessons. Run project-memory view to reconnect after the service stops.';
  for(const subject of ['code','writing','research','general'])option('subject',subject,labels(subject));
  for(const status of ['active','reopened','settled','abandoned','recorded','proposed','accepted','rejected','retired','replaced','historical','current','current_copy','needs_review','review_due','superseded','file_changed','file_missing','file_unreadable','execution_unconfirmed','not_started','consequence_pending','consequence_unknown','observed'])option('status',status,labels(status));
  for(const key of ['subject','episode'])if(initialFilters.has(key)){if(key==='episode')option(key,initialFilters.get(key),initialFilters.get(key));el(key).value=initialFilters.get(key);}
+ view=initialFilters.has('episode')?'events':'board';setBoardVisibility();for(const b of document.querySelectorAll('[data-view]'))b.setAttribute('aria-pressed',String(b.dataset.view===view));
  poll();setInterval(poll,2000);document.addEventListener('visibilitychange',()=>{if(!document.hidden)poll();});
 }
 
-function setView(value){view=value;page=1;el('status').value='';setBoardVisibility();for(const b of document.querySelectorAll('[data-view]'))b.setAttribute('aria-pressed',String(b.dataset.view===view));render();}
+function setView(value){view=value;page=1;el('status').value='';setBoardVisibility();for(const b of document.querySelectorAll('[data-view]'))b.setAttribute('aria-pressed',String(b.dataset.view===view));document.body.classList.remove('nav-open');el('menu-toggle').setAttribute('aria-expanded','false');render();}
 for(const b of document.querySelectorAll('[data-view]'))b.addEventListener('click',()=>setView(b.dataset.view));
 for(const id of ['query','subject','status','episode','from','to','order','page-size'])el(id).addEventListener('input',()=>{page=1;render();});
 el('clear').addEventListener('click',()=>{for(const id of ['query','subject','status','episode','from','to','sprint'])el(id).value='';page=1;render();});
-el('previous').addEventListener('click',()=>{page--;render();});el('next').addEventListener('click',()=>{page++;render();});el('close').addEventListener('click',()=>el('detail').close());el('detail').addEventListener('close',()=>{selectedId=null;workDetail=false;});
+el('previous').addEventListener('click',()=>{page--;render();});el('next').addEventListener('click',()=>{page++;render();});el('close').addEventListener('click',()=>el('detail').close());el('detail').addEventListener('close',()=>{selectedId=null;workDetail=false;coverageSession=null;detailHistory.length=0;document.body.classList.remove('inspector-open');if(detailTrigger?.isConnected)detailTrigger.focus();else{const current=[...document.querySelectorAll('button[aria-label]')].find(b=>b.getAttribute('aria-label')===detailTriggerLabel);(current||document.querySelector('[data-view="'+view+'"]'))?.focus();}});
+el('detail-back').addEventListener('click',async()=>{const previous=detailHistory.pop();if(!previous)return;restoringDetail=true;try{if(previous.work)await openWork(previous.id);else await open(previous.id);}finally{restoringDetail=false;el('detail-back').hidden=!detailHistory.length;}});
+document.addEventListener('keydown',event=>{if(event.key==='Escape'&&el('detail').open&&!el('editor').open&&!el('about').open){event.preventDefault();el('detail').close();}if(event.key==='Escape'){document.body.classList.remove('nav-open');el('menu-toggle').setAttribute('aria-expanded','false');}});
+el('menu-toggle').addEventListener('click',()=>{const shown=document.body.classList.toggle('nav-open');el('menu-toggle').setAttribute('aria-expanded',String(shown));});
+el('about-open').addEventListener('click',()=>el('about').showModal());el('about-close').addEventListener('click',()=>el('about').close());
+el('show-empty').addEventListener('change',()=>render());
+const icons={board:'M2 3h12v10H2z M6 3v10 M10 3v10',episodes:'M3 2h10v12H3z M5 5h6 M5 8h6 M5 11h3',pending:'M8 2v7 M5 6l3 3 3-3 M3 11v3h10v-3',decisions:'M8 2v5 M3 14v-4h10v4 M8 7v3 M5 4l3-2 3 2',documents:'M3 1h7l3 3v11H3z M10 1v4h3 M5 8h6 M5 11h4',sources:'M6 5H4a3 3 0 0 0 0 6h3 M10 5h2a3 3 0 0 1 0 6H9 M5 8h6',direction:'M3 14V2 M3 2h10l-2 3 2 3H3',research:'M10.5 10.5L14 14 M11 6a5 5 0 1 1-10 0a5 5 0 1 1 10 0',corrections:'M3 3h10 M8 3v10 M5 13h6',lessons:'M2 3l6 2 6-2v10l-6 2-6-2z M8 5v10',patterns:'M2 3h3v3H2z M11 3h3v3h-3z M6.5 11h3v3h-3z M3.5 6v2h9V6 M8 8v3',drift:'M1 9h3l2-5 4 9 2-5h3',events:'M3 3h11 M3 8h11 M3 13h11',captures:'M5 3L1 8l4 5 M11 3l4 5-4 5'};
+for(const button of document.querySelectorAll('[data-view]')){const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');svg.setAttribute('viewBox','0 0 16 16');svg.setAttribute('class','nav-icon');svg.setAttribute('aria-hidden','true');const path=document.createElementNS(svg.namespaceURI,'path');path.setAttribute('d',icons[button.dataset.view]);svg.append(path);button.prepend(svg);}
 
 function setBoardVisibility(){
  const board=view==='board';el('board').hidden=!board;el('board-controls').hidden=!board;document.querySelector('.table-wrap').hidden=board;
+ el('board-options').hidden=!board;const title=document.querySelector('[data-view="'+view+'"]')?.textContent||labels(view);el('view-title').textContent=title;el('page-title').textContent=title;
  for(const id of ['episode','from','to','order'])el(id).parentElement.hidden=board;
  el('status').replaceChildren();option('status','','All statuses');
  const statuses=board?workStates:[...new Set([...data.records.map(r=>r.status),...pending.values()].map(r=>typeof r==='string'?r:r.state))];
@@ -200,6 +488,7 @@ async function loadSprints(reset=false){
  el('sprint').replaceChildren();option('sprint','','All sprints');option('sprint','unassigned','Unassigned work');
  for(const sprint of sprintRows)option('sprint',sprint.id,sprint.title+(sprint.schedule?' · '+labels(sprint.schedule.status):''));
  if(chosen&&![...el('sprint').options].some(o=>o.value===chosen))option('sprint',chosen,'Selected sprint');el('sprint').value=chosen;
+ el('edit-sprint').disabled=!sprintRows.some(s=>s.id===chosen);
 }
 async function renderBoard(){
  const request=++renderVersion,size=Number(el('page-size').value),filter={limit:size,offset:(page-1)*size,sprint_id:el('sprint').value,subject:el('subject').value,query:el('query').value,state:el('status').value};
@@ -215,19 +504,20 @@ async function renderBoard(){
  el('board-grid').replaceChildren();
  for(const state of workStates){
   if(filter.state&&filter.state!==state)continue;
-  const column=document.createElement('section');column.className='work-column';column.setAttribute('aria-label',labels(state));
+  if(!filter.state&&!el('show-empty').checked&&!result.counts[state]&&(result.total||state!=='backlog'))continue;
+  const column=document.createElement('section');column.className='work-column';column.dataset.state=state;column.setAttribute('aria-label',labels(state));
   const h=document.createElement('h2');h.textContent=labels(state);const count=document.createElement('span');count.textContent=result.counts[state]||0;h.append(count);column.append(h);
   const cards=result.cards.filter(r=>r.state===state);
   for(const card of cards){
    const button=document.createElement('button');button.className='work-card';button.dataset.state=card.state;button.setAttribute('aria-label','Open work '+card.title);
    const meta=document.createElement('span');meta.className='work-meta';meta.textContent=labels(card.subject)+' · '+labels(card.plan?(card.plan.owner||'agent'):'Unassigned')+(card.plan?.priority==='high'?' · High priority':'');
    const title=document.createElement('strong');title.textContent=card.title;button.append(meta,title);
-   const next=document.createElement('p');next.textContent=card.plan?.next_action||'No next action is recorded.';button.append(next);
-   if(card.issues.length){const issue=document.createElement('p');issue.className='issue';issue.textContent=card.issues[0].reason;button.append(issue);}
-   const lineage=document.createElement('span');lineage.className='lineage-label';lineage.textContent=card.decision_id?'Intent → decision → outcome':'Intent and plan';button.append(lineage);
+   if(card.plan?.next_action){const next=document.createElement('p');next.textContent=card.plan.next_action;button.append(next);}
+   const foot=document.createElement('div');foot.className='card-foot';if(card.issues.length){const issue=document.createElement('span');issue.className='badge';issue.dataset.state='needs_review';issue.textContent=card.plan?card.issues.length+' '+(card.issues.length===1?'issue':'issues'):'Needs a plan';issue.title=card.issues.map(i=>i.reason).join('\n');foot.append(issue);}
+   const lineage=document.createElement('span');lineage.className='lineage-label';lineage.textContent=card.decision_id?'Decision history':'View action';foot.append(lineage);button.append(foot);
    button.addEventListener('click',()=>openWork(card.id));column.append(button);
   }
-  if(!cards.length){const empty=document.createElement('p');empty.className='column-empty';empty.textContent=result.counts[state]?'No cards on this page.':'No work in this state.';column.append(empty);}
+  if(!cards.length){const empty=document.createElement('p');empty.className='column-empty';empty.textContent=result.counts[state]?'No cards on this page.':result.total?'No actions.':data.live?'Create an action to start planning.':'No actions in this snapshot.';column.append(empty);}
   el('board-grid').append(column);
  }
  const sprint=sprintRows.find(r=>r.id===filter.sprint_id);el('sprint-summary').replaceChildren();
@@ -236,15 +526,18 @@ async function renderBoard(){
  el('page').textContent=`Page ${page} of ${pages}`;el('previous').disabled=page===1;el('next').disabled=page===pages;el('pending-note').hidden=true;
 }
 async function openWork(id,refresh=false){
- selectedId=id;workDetail=true;const scroll=el('detail').scrollTop;
+ selectDetail(id,refresh);
+ coverageSession=null;selectedId=id;workDetail=true;const scroll=el('detail').scrollTop;
  try{
   if(data.live){const result=await api('board',{episode:id,limit:1});if(selectedId!==id)return;if(result.cards[0])workById.set(id,result.cards[0]);}
-  const work=workById.get(id);if(!work)return;el('detail-title').textContent=work.title;const body=el('detail-body');body.replaceChildren();
+  const work=workById.get(id);if(!work)return;el('detail-title').textContent=work.title;const body=el('detail-body');body.replaceChildren();metadata(body,{...work,kind:'Work item'});
+  if(data.live){const actions=document.createElement('div');actions.className='work-actions';for(const [label,fn] of [['Edit plan',()=>editWork('plan',work)],['Add comment',()=>editWork('comment',work)]]){const button=document.createElement('button');button.textContent=label;button.addEventListener('click',fn);actions.append(button);}body.append(actions);}
   const intent=document.createElement('section');intent.className='intent-panel';const h=document.createElement('h3');h.textContent='Intended result';const p=document.createElement('p');p.textContent=work.intent;intent.append(h,p);body.append(intent);
   const dl=document.createElement('dl');body.append(dl);field(dl,'done_when',work.done_when);field(dl,'status',labels(work.state));
   if(work.recorded_state!==work.state)field(dl,'Recorded state',labels(work.recorded_state));
   if(work.plan){for(const key of ['scope','autonomy','next_action','owner','reason'])if(work.plan[key])field(dl,key==='scope'?'Work scope':key,work.plan[key]);const planButton=document.createElement('button');planButton.textContent='Read work plan and evidence';planButton.addEventListener('click',()=>open(work.plan.id));body.append(planButton);}
   if(work.issues.length)field(dl,'What needs attention',work.issues);
+  if(data.live)await showChecks(body,work);
   for(const ref of work.plan?.depends_on||[]){const button=document.createElement('button');button.textContent='Inspect dependency';button.addEventListener('click',()=>openWork(ref.episode_id));const p=document.createElement('p');p.append(button,document.createTextNode(' '+ref.reason));body.append(p);}
   const section=document.createElement('section');section.className='lineage';const heading=document.createElement('h3');heading.textContent='Decision history';section.append(heading);const list=document.createElement('ol');list.className='timeline';section.append(list);body.append(section);
   const more=document.createElement('button');more.textContent='Load more history';section.append(more);let offset=0;
@@ -254,13 +547,91 @@ async function openWork(id,refresh=false){
   if(data.live){do{await load();}while(hasMore&&offset<target&&selectedId===id&&workDetail);}else{for(const record of data.records.filter(r=>r.episode_id===id&&r.kind!=='episode').sort((a,b)=>(a.detail.seq||0)-(b.detail.seq||0)))add(record);more.hidden=true;}
   more.addEventListener('click',load);
   if(selectedId!==id||!workDetail)return;
-  if(!el('detail').open)el('detail').showModal();el('detail').scrollTop=refresh?scroll:0;
+  showDetail(refresh,scroll);
  }catch(error){disconnected(error);}
 }
-el('sprint').addEventListener('input',()=>{page=1;render();});
+el('sprint').addEventListener('input',()=>{page=1;el('edit-sprint').disabled=!sprintRows.some(s=>s.id===el('sprint').value);render();});
 el('more-sprints').addEventListener('click',()=>loadSprints().catch(disconnected));
 for(const button of document.querySelectorAll('[data-view=board]'))button.addEventListener('click',()=>loadSprints(true).then(()=>render()).catch(disconnected));
 loadSprints().catch(disconnected);
 
-if(data.live)startLive();else render();
+async function post(endpoint,payload){
+ const response=await fetch('api/'+endpoint,{method:'POST',headers:{'Content-Type':'application/json','X-Project-Memory':csrf},body:JSON.stringify(payload),signal:AbortSignal.timeout(15000)});
+ const value=await response.json();if(!response.ok){const error=new Error(value.message||'The change could not be saved.');error.status=response.status;throw error;}return value;
+}
+function editField(name,label,value='',choices=null,wide=false){
+ const wrap=document.createElement('label');wrap.textContent=label;if(wide)wrap.className='wide';
+ let input;if(choices){input=document.createElement('select');for(const [id,title] of choices){const option=document.createElement('option');option.value=id;option.textContent=title;input.append(option);}}
+ else if(['objective','criterion','scope','next_action','reason','text'].includes(name))input=document.createElement('textarea');
+ else{input=document.createElement('input');input.type=name.endsWith('_on')?'date':'text';}
+ input.id='edit-'+name;input.name=name;input.value=value??'';input.required=!['sprint_id'].includes(name);if(!choices)input.maxLength=2000;
+ wrap.append(input);el('editor-fields').append(wrap);return input;
+}
+async function editWork(kind,work=null){
+ editorState={kind,work,key:crypto.randomUUID(),dependencies:[]};el('editor-fields').replaceChildren();el('editor-error').hidden=true;el('editor-reload').hidden=true;
+ el('editor-title').textContent=kind==='comment'?'Add comment':kind==='sprint'?(work?'Edit sprint':'New sprint'):(work?'Edit plan':'New action');
+ el('editor-save').textContent=kind==='comment'?'Add comment':work?'Save changes':'Create '+(kind==='sprint'?'sprint':'action');
+ const pick=items=>items.map(s=>[s,labels(s)]);
+ if(kind==='comment')editField('text','Comment','',null,true);
+ else{
+  if(!work){editField('title','Title','',null,true);editField('objective','Intended result','',null,true);editField('criterion','Completion criterion','',null,true);if(kind==='plan')editField('subject','Subject','code',pick(['code','writing','research','general']));}
+  if(kind==='sprint'){
+   const schedule=work?.schedule||{},today=new Date().toISOString().slice(0,10);editField('starts_on','Starts on',schedule.starts_on||today);editField('ends_on','Ends on',schedule.ends_on||today);editField('sprint_status','Status',schedule.status||'planned',pick(['planned','active','closed']));editField('reason','Reason for this plan',schedule.reason||'',null,true);
+  }else{
+   const plan=work?.plan||{};editField('owner','Responsible',plan.owner||'agent',pick(['agent','human']));editField('state','Status',plan.state||'backlog',pick(workStates));editField('priority','Priority',plan.priority||'normal',pick(['high','normal','low']));
+   editField('autonomy','Agent scope',plan.autonomy||'suggest',[['suggest','Prepare a proposal'],['act','Act within the recorded scope']]);
+   editField('scope','Scope and exceptions',plan.scope||'',null,true);editField('next_action','Next action',plan.next_action||'',null,true);
+   editField('sprint_id','Sprint',plan.sprint_id||'',[['','No sprint'],...sprintRows.filter(s=>s.schedule?.status!=='closed'||s.id===plan.sprint_id).map(s=>[s.id,s.title])],true);
+   const group=document.createElement('section');group.className='wide';const heading=document.createElement('h3');heading.textContent='Dependencies';group.append(heading);const rows=document.createElement('div');rows.id='dependency-rows';group.append(rows);const add=document.createElement('button');add.type='button';add.textContent='Add dependency';add.addEventListener('click',()=>addDependency());group.append(add);el('editor-fields').append(group);
+   editorState.dependencies=plan.depends_on||[];for(const ref of editorState.dependencies)await addDependency(ref);
+   editField('reason','Reason for this plan',plan.reason||'',null,true);
+   const ownership=()=>{const inProgress=[...el('edit-state').options].find(o=>o.value==='in_progress');inProgress.disabled=el('edit-owner').value==='agent'&&plan.state!=='in_progress';};el('edit-owner').addEventListener('input',ownership);ownership();
+  }
+ }
+ if(!el('editor').open)el('editor').showModal();el('editor').querySelector('input,textarea,select')?.focus();
+}
+async function addDependency(ref=null){
+ const row=document.createElement('div');row.className='dependency-row';
+ const label=document.createElement('label');label.textContent='Depends on';const select=document.createElement('select');select.required=true;const empty=document.createElement('option');empty.value='';empty.textContent='Select an action';select.append(empty);label.append(select);
+ let offset=0;const more=document.createElement('button');more.type='button';more.textContent='Load more actions';
+ const load=async()=>{const page=await api('board',{limit:100,offset});for(const item of page.cards){if(item.id===editorState.work?.id)continue;const option=document.createElement('option');option.value=item.id;option.textContent=item.title;select.append(option);}offset+=page.cards.length;more.hidden=!page.more;};
+ more.addEventListener('click',()=>load().catch(error=>{el('editor-error').hidden=false;el('editor-error').textContent=error.message;}));label.append(more);
+ const why=document.createElement('label');why.textContent='Dependency reason';const text=document.createElement('input');text.required=true;text.maxLength=2000;text.value=ref?.reason||'';why.append(text);const remove=document.createElement('button');remove.type='button';remove.textContent='Remove';remove.addEventListener('click',()=>row.remove());row.append(label,why,remove);el('dependency-rows').append(row);
+ await load();if(ref){if(![...select.options].some(o=>o.value===ref.episode_id)){const page=await api('board',{episode:ref.episode_id,limit:1});for(const item of page.cards){const option=document.createElement('option');option.value=item.id;option.textContent=item.title;select.append(option);}}select.value=ref.episode_id;}
+}
+el('work-form').addEventListener('submit',async event=>{
+ event.preventDefault();const {kind,work,key}=editorState,values=Object.fromEntries(new FormData(event.target));let content={};
+ if(work)content={episode_id:work.id,expected_version:work.version};else content={title:values.title,objective:values.objective,criterion:values.criterion,subject:values.subject||'general'};
+ if(kind==='comment')content.text=values.text;
+ else if(kind==='sprint')content.payload={starts_on:values.starts_on,ends_on:values.ends_on,status:values.sprint_status,reason:values.reason};
+ else{content.payload=Object.fromEntries(['state','next_action','scope','autonomy','reason','owner','priority'].map(k=>[k,values[k]]));content.payload.sprint_id=values.sprint_id||null;content.payload.depends_on=[...el('dependency-rows').children].map(row=>({episode_id:row.querySelector('select').value,reason:row.querySelector('input').value}));if(work?.plan?.session_id&&values.state==='in_progress')content.payload.session_id=work.plan.session_id;}
+ el('editor-save').disabled=true;el('editor-error').hidden=true;
+ try{await post('actions',{operation:kind,data:content,request_key:key});el('editor').close();el('workspace-message').textContent=kind==='comment'?'The comment was added.':'The '+(kind==='sprint'?'sprint':'plan')+' was saved.';healthTag=null;await poll();}
+ catch(error){el('editor-error').hidden=false;el('editor-error').textContent=error.message;el('editor-reload').hidden=error.status!==409;}
+ finally{el('editor-save').disabled=false;}
+});
+el('editor-cancel').addEventListener('click',()=>el('editor').close());
+el('editor-reload').addEventListener('click',async()=>{const {kind,work}=editorState;const result=await api(kind==='sprint'?'sprints':'board',{episode:work.id,limit:1});await editWork(kind,(result.cards||result.sprints)[0]);});
+el('new-work').addEventListener('click',()=>editWork('plan'));
+el('new-sprint').addEventListener('click',()=>editWork('sprint'));
+el('edit-sprint').addEventListener('click',()=>editWork('sprint',sprintRows.find(s=>s.id===el('sprint').value)));
+async function showChecks(parent,work){
+ const section=document.createElement('details');section.className='agent-checks';section.open=expandedCheckPanels.has(work.id);section.addEventListener('toggle',()=>{if(section.open)expandedCheckPanels.add(work.id);else expandedCheckPanels.delete(work.id);});const h=document.createElement('summary');h.textContent='Agent checks';section.append(h);parent.append(section);
+ if(!reviewHost){const p=document.createElement('p');p.textContent='Agent checks are not configured. Connect Codex or Claude through project setup.';section.append(p);return;}
+ const controls=document.createElement('div');controls.className='editor-actions';const role=document.createElement('select');role.setAttribute('aria-label','Check type');for(const [value,title] of [['outcome','Check the result'],['intent','Check intent and scope'],['recovery','Inspect recovery evidence']]){const o=document.createElement('option');o.value=value;o.textContent=title;role.append(o);}const start=document.createElement('button');start.textContent='Run check';const timeLimit=document.createElement('select');timeLimit.setAttribute('aria-label','Review time limit');for(const [seconds,label] of [[300,'Up to 5 minutes'],[900,'Up to 15 minutes']]){const option=document.createElement('option');option.value=seconds;option.textContent=label;timeLimit.append(option);}controls.append(role,timeLimit,start);section.append(controls);
+ let requestKey=crypto.randomUUID();start.addEventListener('click',async()=>{start.disabled=true;try{await post('reviews',{episode_id:work.id,role:role.value,max_seconds:Number(timeLimit.value),request_key:requestKey,retry:true});healthTag=null;await poll();}catch(error){const p=document.createElement('p');p.className='form-error';p.textContent=error.message;section.append(p);}finally{start.disabled=false;}});
+ const result=await api('reviews',{episode:work.id,limit:10});h.textContent='Agent checks · '+(result.current?labels(result.current.state):result.runs.length?labels(result.runs[0].state):'Not run');if(!result.runs.length){const p=document.createElement('p');p.textContent='No agent check has run for this action.';section.append(p);}
+ const renderRuns=result=>{for(const run of result.runs){
+  const article=document.createElement('article');article.className='check-result';article.dataset.state=run.state;const status=document.createElement('span');status.className='check-status';status.textContent=labels(run.role)+' · '+labels(result.current?.id===run.id?result.current.state:run.state)+' · '+run.host;article.append(status);
+  const p=document.createElement('p');p.textContent=run.report?.summary||run.error||'The agent is checking the recorded evidence.';article.append(p);
+  if(['queued','running','cancelling'].includes(run.state)){start.disabled=true;const cancel=document.createElement('button');cancel.textContent='Cancel check';cancel.disabled=run.state==='cancelling';cancel.addEventListener('click',async()=>{cancel.disabled=true;try{await post('reviews',{cancel:run.id});healthTag=null;await poll();}catch(error){p.textContent=error.message;cancel.disabled=false;}});article.append(cancel);}
+  if(run.report){const details=document.createElement('details');details.open=expandedChecks.has(run.id);details.addEventListener('toggle',()=>{if(details.open)expandedChecks.add(run.id);else expandedChecks.delete(run.id);});const summary=document.createElement('summary');summary.textContent='Checks and evidence';details.append(summary);const list=document.createElement('ol');for(const check of run.report.checks){const li=document.createElement('li');li.textContent=check.criterion+' — '+check.result+'. '+check.evidence;list.append(li);}details.append(list);for(const finding of run.report.findings){const p=document.createElement('p');p.textContent=finding;details.append(p);}for(const proposal of run.report.lesson_proposals){const p=document.createElement('p');p.textContent='Proposed lesson: '+proposal.proposal+' Basis: '+proposal.basis+' Conditions: '+proposal.conditions+' Exceptions: '+proposal.exceptions;details.append(p);}article.append(details);}
+  if(run.metrics){const metrics=document.createElement('p');metrics.className='check-metrics';metrics.textContent=(run.metrics.duration_ms/1000).toFixed(1)+' seconds · '+run.metrics.input_characters+' input characters · Provider usage '+(run.metrics.provider_usage?'recorded':'unavailable');article.append(metrics);}
+  section.append(article);
+ }
+ };renderRuns(result);
+ if(result.more){let offset=result.next_offset;const more=document.createElement('button');more.textContent='Load earlier checks';section.append(more);more.addEventListener('click',async()=>{more.disabled=true;try{const page=await api('reviews',{episode:work.id,limit:10,offset});renderRuns(page);offset=page.next_offset;more.hidden=!page.more;section.append(more);}catch(error){const p=document.createElement('p');p.textContent=error.message;section.append(p);}finally{more.disabled=false;}});}
+}
+
+if(data.live){startLive();}else{setBoardVisibility();render();}
 </script></body></html>

@@ -2,6 +2,8 @@
 
 Run commands inside the intended project or pass `--project /absolute/path`. A missing database is created only by `setup`; `serve`, `doctor` and `view` refuse a missing database rather than silently create an empty project.
 
+For everyday use, start with the [user guide](user-guide.md). Setup includes the viewer. Open it through the command or your assistant; `memory_module/viewer.html` is an internal template, not the workspace. No separate frontend installation or rebuild is required.
+
 ## Select existing documents
 
 ```sh
@@ -70,8 +72,8 @@ The destination must be new. SQLite's backup API provides a consistent database 
 Upgrade by running the current version's setup command inside the intended project:
 
 ```sh
-uvx project-memory-mcp@0.5.0b4 setup --client codex --trust
-uvx project-memory-mcp@0.5.0b4 doctor
+uvx project-memory-mcp@0.5.0b5 setup --client codex --trust
+uvx project-memory-mcp@0.5.0b5 doctor
 ```
 
 Use `--client claude --trust` for Claude Code, or `--client mcp` for another local MCP client. The recorded launcher is versioned; setup updates its configuration and verifies new Codex host hashes. Start a new task after an upgrade. A configuration edit within the managed block produces a conflict rather than overwriting it. If you use the optional plugin, update it through the host's plugin manager as well; an already running task retains its loaded tool schemas.
@@ -115,7 +117,7 @@ When mandatory context exceeds a requested budget, the error reports the minimum
 
 ## Live viewer and offline exports
 
-The live viewer binds only to `127.0.0.1`, uses a random capability in its URL, validates the request host and origin, and opens SQLite read-only. The address and credential remain in private `.memory/viewer.json`; do not share that URL. No cloud service, browser SQLite engine or additional runtime package is needed.
+The live viewer binds only to `127.0.0.1`, uses a random capability in its URL, validates the request host and origin, and uses read-only connections for retrieval. The development workspace opens a separate write connection only for validated plan, sprint, comment and review requests. Writes also require a same-origin JSON request and a session CSRF token. The address and credential remain in private `.memory/viewer.json`; do not share that URL. No cloud service, browser SQLite engine or additional runtime package is needed.
 
 The browser reads pages of records and loads source text on demand. It checks committed SQLite changes and selected-file state every two seconds while visible. Unchanged checks receive an HTTP 304 response. Filters, page selection, the open record and its scroll position survive refresh. Related evidence remains available outside the current page. The viewer identifies stale evidence and gives concrete reasons for dependent decisions that need review. Unreported costs appear as not measured.
 
@@ -130,4 +132,8 @@ project-memory view --output review.html --include-bodies --replace --no-open
 
 An explicit output path creates a static snapshot. Existing files are protected unless `--replace` is supplied; replacement uses a temporary file and atomic rename. Offline files state that they need regeneration. Source bodies remain optional. Avoid sharing an export containing private project evidence.
 
-When upgrading, setup checks the version of a running viewer. If it belongs to an older release, setup opens the current viewer at a new local address. Close the old tab; its read-only service exits after ten minutes without requests. Same-version restarts retain the existing address.
+When upgrading, setup checks the version of a running viewer. If it belongs to an older release, setup opens the current viewer at a new local address. Close the old tab; its service exits after ten minutes without requests. Same-version restarts retain the existing address.
+
+## Interactive workspace and agents
+
+Version `0.5.0b5` adds the interactive workspace and agent checks. The commands above install it. See [workspace and agents](workspace-agents.md) for controls and limits. Connecting Codex or Claude in beta 5 enables conditional model reviews through that installed host and account. These reviews consume provider usage. Generic MCP setup does not enable a reviewer.

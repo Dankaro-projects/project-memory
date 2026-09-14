@@ -1,9 +1,7 @@
 name: Verify
 on:
-  push:
-    branches: [main]
-  pull_request:
   workflow_dispatch:
+  workflow_call:
 permissions:
   contents: read
 jobs:
@@ -45,3 +43,4 @@ jobs:
       - run: npx playwright install --with-deps chromium
       - run: python -m examples.host_example --output results/host-example
       - run: node tests/browser_check.cjs
+      - run: node tests/workspace_browser.cjs

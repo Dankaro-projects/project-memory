@@ -13,6 +13,10 @@ def inspect(memory):
     direction = memory.direction()
     installed = codex_host.exists(memory)
     last = memory.db.execute('SELECT created_at FROM host_receipts ORDER BY rowid DESC LIMIT 1').fetchone() if installed else None
+    failure_path = memory.path.with_suffix('.capture-error.json')
+    failure = json.loads(failure_path.read_text()) if failure_path.exists() else None
+    from .coverage import sessions
+    coverage = sessions(memory,limit=5) if installed else {'sessions':[],'more':False}
     counts = {r[0]: r[1] for r in memory.db.execute('SELECT event_name,count(*) FROM host_receipts GROUP BY event_name')} if installed else {}
     groups=memory.metrics()['groups']
     costs={key: {'total':sum(g['reported_costs'][key]['total'] for g in groups),
@@ -26,7 +30,8 @@ def inspect(memory):
                          'coverage': 'unassessed',
                          'note': 'Captured files and a populated list do not prove that the product requirements are complete.'},
             'capture': {'observed_hooks': counts, 'last_receipt_at': last[0] if last else None,
-                        'status': 'observed' if last else 'not_observed'},
+                        'failure':failure, 'status':'failed' if failure else 'observed' if last else 'not_observed'},
+            'recording_checks':coverage,
             'native_tools_in_current_task': 'unverified',
             'next_step': 'Confirm that this task can call memory_get. Use doctor for current host discovery; historical receipts alone do not establish activation.'}
 

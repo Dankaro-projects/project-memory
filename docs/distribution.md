@@ -1,5 +1,7 @@
 # Distribution and compatibility
 
+Release `0.5.0b5` adds the interactive workspace, conditional reviewer agents and recording completeness checks. The channel observations below retain their explicitly tested versions until post-release verification records the newer artifacts.
+
 GitHub, PyPI and the official registry were verified on 14 September 2026 for `0.5.0b4`. Smithery remains verified at `0.5.0b1`; Glama and PulseMCP were last checked separately on 14 September 2026. A new package release does not establish that those directories have updated.
 
 | Channel | Verified result |
