@@ -1,6 +1,6 @@
 # Record fields
 
-All event payloads reject unknown fields. Text must be nonempty; lists and costs have type and size checks. Dates require an explicit time zone and are normalized to UTC.
+All event payloads reject unknown fields. Text must be nonempty; lists and costs have type and size checks. Timestamps require an explicit time zone and are normalized to UTC; sprint calendar dates use YYYY-MM-DD.
 
 | Kind | Required payload | Optional payload |
 |---|---|---|
@@ -16,8 +16,12 @@ All event payloads reject unknown fields. Text must be nonempty; lists and costs
 | follow_up | review_after, owner, reason | None |
 | episode_status | status, reason | None |
 | note | text | None |
+| work_plan | state, next_action, scope, autonomy, reason | sprint_id, depends_on, owner, priority, session_id |
+| sprint | starts_on, ends_on, status, reason | None |
 
 `assumptions`, `alternatives` and `queries` are lists of strings. Review `findings` is a list of objects with exactly `location`, `issue` and `severity`. An empty findings list represents a completed review without findings, not proof that the code is correct. Record the exact code revision in `revision` and attach the captured code or review output as evidence.
+
+Use the atomic `plan` and `sprint` write operations for planning records; they preserve the earlier version using the supplied episode version. Work dependencies are `[{episode_id, reason}]`. The [work board guide](work-board.md) defines states and continuation rules. Decisions automatically retain their current project revision and, when present, `work_plan_id`. These references do not grant permission or accept the plan's interpretation as fact.
 
 Outcome assessments are `pending`, `unknown`, `good`, `bad`. Severity is `none`, `minor`, `major`, `unknown`; review finding severity excludes `none`. Execution status is `completed`, `failed`, `unknown`. Lesson review status is `accepted`, `rejected`, `retired`. Episode status transitions are active/reopened to settled/abandoned, and settled/abandoned to reopened.
 

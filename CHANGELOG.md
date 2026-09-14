@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.5.0b4 — 14 September 2026
+
+Work intent now connects to an explicit next action, scope, dependencies and sprint. The live and offline viewers add a read-only Kanban board with direct access to decisions, evidence, failures and recovery history.
+
+- Atomic plan and sprint operations reuse existing episodes and append-only events. Version checks preserve concurrent edits and earlier plans.
+- Bounded continuation distinguishes ready work, human proposals, dependency and evidence review, uncertain execution, another session's work, and completion that only needs its plan finalised.
+- Decisions retain the work plan used at the time. Scope and prerequisite changes trigger review; routine progress changes do not.
+- Startup and continuation hooks point to the planned work without starting another objective or claiming tool permissions.
+- Existing records remain intact. The first plan write extends the existing event validation trigger transactionally; no dependency, task database or agent scheduler is added.
+
+See [work board and continuation](docs/work-board.md) for usage and boundaries, and the [iteration evidence](docs/autonomy-2026-09-14.md) for measured failures and recovery.
+
 ## 0.5.0b3 — 14 September 2026
 
 First-beta feedback exposed configured but inactive hooks, duplicate cross-host discovery, manual document refresh, an unclear requirements baseline and a static viewer.

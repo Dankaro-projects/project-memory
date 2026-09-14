@@ -29,7 +29,7 @@ CREATE TRIGGER checked_event BEFORE INSERT ON events BEGIN
   OR NOT json_valid(NEW.payload) THEN RAISE(ABORT, 'Invalid event ID or JSON.') END;
  SELECT CASE WHEN NEW.kind NOT IN
  ('decision','action','outcome','research','lesson','note','review','correction',
- 'action_result','follow_up','episode_status','lesson_review')
+ 'action_result','follow_up','episode_status','lesson_review','work_plan','sprint')
  THEN RAISE(ABORT, 'Unknown event kind.') END;
  SELECT CASE WHEN NEW.subject != (SELECT subject FROM episodes WHERE id=NEW.episode_id)
  THEN RAISE(ABORT, 'Event subject must match its episode.') END;
@@ -43,6 +43,22 @@ CREATE TRIGGER fixed_subject BEFORE UPDATE OF subject ON episodes BEGIN
 CREATE TRIGGER checked_episode BEFORE INSERT ON episodes WHEN NEW.id IS NULL BEGIN
  SELECT RAISE(ABORT, 'Invalid episode ID.'); END;
 """
+
+
+def enable_plans(memory):
+    """Extend the existing type check inside the caller's write transaction."""
+    from .core import InvalidRecord
+    row = memory.db.execute("SELECT sql FROM sqlite_master WHERE type='trigger' AND name='checked_event'").fetchone()
+    if row is None:
+        raise InvalidRecord('The database is missing its event validation trigger.')
+    if "'work_plan','sprint'" in row[0]:
+        return
+    marker = "'episode_status','lesson_review')"
+    if marker not in row[0]:
+        raise InvalidRecord('The event validation trigger differs from the supported schema; inspect it before upgrading.')
+    updated = row[0].replace(marker, "'episode_status','lesson_review','work_plan','sprint')")
+    memory.db.execute('DROP TRIGGER checked_event')
+    memory.db.execute(updated)
 
 
 def migrate(source, destination):

@@ -6,13 +6,13 @@
   },
   "metadata": {
     "description": "Plugins published by Dankaro.",
-    "version": "0.5.0-beta.3"
+    "version": "0.5.0-beta.4"
   },
   "plugins": [
     {
       "name": "project-memory",
       "source": "./plugins/project-memory",
-      "version": "0.5.0-beta.3",
+      "version": "0.5.0-beta.4",
       "category": "productivity",
       "description": "Keep project decisions, evidence and outcomes in local SQLite with bounded retrieval and session receipts."
     }

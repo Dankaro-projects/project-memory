@@ -2,6 +2,8 @@
 
 Project Memory keeps a project's decisions, evidence, outcomes and reviewed lessons in a local SQLite database. An AI assistant retrieves the relevant records through three MCP tools; people inspect the same history in a self-contained HTML viewer.
 
+The [work board](docs/work-board.md) groups actions into sprints and connects each card to its intended result, scope, next action and decision history. The assistant uses the same checked state to resume work, inspect uncertain execution and recognise when human input is needed.
+
 Use it when a project repeatedly revisits research, loses the reasons behind decisions, or carries outdated requirements into new work. It preserves the original evidence and the conditions under which a decision or lesson applies.
 
 **Public beta.** The runtime uses Python 3.11+ and its standard library. There is no model service, vector database, telemetry or background maintenance process. The assistant still interprets evidence and needs explicit agreement before accepting a lesson or changing project requirements. [Evidence and limits](docs/evidence.md) describe what has actually been measured.
@@ -13,7 +15,7 @@ Use it when a project repeatedly revisits research, loses the reasons behind dec
 Install [uv](https://docs.astral.sh/uv/getting-started/installation/), then run this **inside the project you want to remember**:
 
 ```sh
-uvx project-memory-mcp@0.5.0b3 setup --client codex --trust
+uvx project-memory-mcp@0.5.0b4 setup --client codex --trust
 ```
 
 This creates `.memory/project.sqlite`, adds a project-local MCP connection and nine command hooks, and asks the installed Codex host for the exact hook hashes to enable. Existing settings and records are preserved. Setup opens the included live HTML viewer; add `--no-view` for headless use. Open a new Codex task afterwards. `--trust` explicitly enables these project hooks; omit it to review and enable them in Codex yourself.
@@ -21,7 +23,7 @@ This creates `.memory/project.sqlite`, adds a project-local MCP connection and n
 For Claude Code, run the same command with `--client claude`:
 
 ```sh
-uvx project-memory-mcp@0.5.0b3 setup --client claude --trust
+uvx project-memory-mcp@0.5.0b4 setup --client claude --trust
 ```
 
 This adds the `project_memory` server to the project's `.mcp.json` and the lifecycle hooks to `.claude/settings.local.json`, which Claude Code keeps out of version control. `--trust` pre-approves the project MCP server in that local settings file; omit it to approve the server when Claude Code asks. Start a new Claude Code session in the project afterwards. Claude Code has no interrupt hook, so eight of the nine lifecycle events are captured there; an interrupted tool call remains visible as an unconfirmed receipt. Claude Code's tool failure event closes the same receipt as a completed call, with the failure retained. After automatic compaction, the session start hook restores the memory session, the active decision and the reconciliation count.
@@ -29,7 +31,7 @@ This adds the `project_memory` server to the project's `.mcp.json` and the lifec
 For a permanent CLI installation:
 
 ```sh
-uv tool install project-memory-mcp==0.5.0b3
+uv tool install project-memory-mcp==0.5.0b4
 project-memory doctor
 project-memory view
 ```
@@ -89,3 +91,5 @@ python scripts/installed_smoke.py dist
 The public artifacts contain code, documentation and synthetic examples. They exclude project databases, host transcripts, private evaluation archives and local configuration. [Contributing](CONTRIBUTING.md), [security](SECURITY.md), [record fields](docs/record-fields.md), [release process](docs/releasing.md).
 
 The [first-beta feedback review](docs/feedback-2026-09-14.md) records the observed workflow defects, the fixes, comparable measurements and remaining limits.
+
+The [autonomy and Kanban report](docs/autonomy-2026-09-14.md) records actual continuation, interruption recovery and board checks, including the unmet full-input target.

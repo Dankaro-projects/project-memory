@@ -96,6 +96,9 @@ def session_context(memory, session, compacted=False):
     active = state['active']
     if active:
         parts.append(f'Active decision {active["decision_id"]} in episode {active["episode_id"]} (version {active["version"]}) still awaits an outcome.')
+        from .planning import latest
+        if latest(memory, active['episode_id'], 'work_plan'):
+            parts.append(f'Use memory_get next with id {active["episode_id"]} and this session_id to recover its intent, scope and next action.')
     parts.append(f'{state["unconfirmed_total"]} tool calls need reconciliation.' if state['unconfirmed_total'] else 'No tool calls need reconciliation.')
     parts.append('Use memory_context before repeating research. Record a decision when choosing or revising an approach with consequences, using this session_id, evidence, uncertainty and alternatives. Routine acknowledgement needs no decision record. '
                  'Tool receipts are observations; outcomes and lesson acceptance require explicit assessment.')
@@ -201,6 +204,13 @@ def capture(memory, event, host='codex'):
                              'omitted':packet['omitted'],'more_matches':packet['more_matches']})
             return response(prefix+dumps(packet))
         return response(text)
+    if name in {'Stop', 'PostCompact'}:
+        binding = active_binding(memory, session)
+        if binding:
+            from .planning import latest
+            if latest(memory, binding['episode_id'], 'work_plan'):
+                return {'hookSpecificOutput':{'hookEventName':host_event,'additionalContext':
+                    f'Memory work {binding["episode_id"]} remains open. On continuation, use memory_get next with this id and session_id {session}. Check the current user request before continuing; do not switch to unrelated queued work.'}}
     return {}
 
 

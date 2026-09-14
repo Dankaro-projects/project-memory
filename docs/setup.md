@@ -10,6 +10,8 @@ project-memory setup --client codex --trust --document VISION.md --document DECI
 
 The command opens the included live HTML viewer automatically. Use `--no-view` for headless setup. There is no separate HTML installation. `project-memory view` reopens the same local service and browser address.
 
+Select **Work board** to see sprint work, blockers and decision history. The [work board guide](work-board.md) explains how the assistant records intent and resumes from the same state.
+
 Repeated setup does not duplicate hooks or unchanged source versions. Source documents remain in place. If the project has no agreed requirements, setup stores an explicit statement that none have been approved. You can supply already agreed text using repeated `--requirement` arguments. Changing existing requirements requires a separate, evidenced approval, not a setup flag.
 
 The assistant can capture another selected file using `memory_write document`. It should use `memory_get direction` before an explicitly authorised `approve_requirements` operation. That operation requires complete requirement sentences, an approval reason, actor, evidence references and the current version. File capture and approval are different actions.
@@ -68,8 +70,8 @@ The destination must be new. SQLite's backup API provides a consistent database 
 Upgrade by running the current version's setup command inside the intended project:
 
 ```sh
-uvx project-memory-mcp@0.5.0b3 setup --client codex --trust
-uvx project-memory-mcp@0.5.0b3 doctor
+uvx project-memory-mcp@0.5.0b4 setup --client codex --trust
+uvx project-memory-mcp@0.5.0b4 doctor
 ```
 
 Use `--client claude --trust` for Claude Code, or `--client mcp` for another local MCP client. The recorded launcher is versioned; setup updates its configuration and verifies new Codex host hashes. Start a new task after an upgrade. A configuration edit within the managed block produces a conflict rather than overwriting it. If you use the optional plugin, update it through the host's plugin manager as well; an already running task retains its loaded tool schemas.
