@@ -1,18 +1,18 @@
 # Distribution and compatibility
 
-Release `0.5.0b5` adds the interactive workspace, conditional reviewer agents and recording completeness checks. The channel observations below retain their explicitly tested versions until post-release verification records the newer artifacts.
+Release `0.5.0b8` includes the interactive workspace, conditional reviewer agents, recording completeness checks and installed-runtime corrections. The [upgrade report](upgrade-0.5.0b8.md) and its [aggregate evidence](verification-upgrade-0.5.0b8.json) distinguish failed gates, verified publication, actual native capture and remaining limits.
 
-GitHub, PyPI and the official registry were verified on 14 September 2026 for `0.5.0b4`. Smithery remains verified at `0.5.0b1`; Glama and PulseMCP were last checked separately on 14 September 2026. A new package release does not establish that those directories have updated.
+GitHub, PyPI, the official registry, Smithery and Glama were verified on 14 September 2026 for beta 8. The host compatibility observations below retain their explicitly tested scope.
 
 | Channel | Verified result |
 |---|---|
-| [GitHub Release](https://github.com/Dankaro-projects/project-memory/releases/tag/v0.5.0b4) | Public wheel, source archive and MCPB. All four release jobs passed. |
-| [PyPI](https://pypi.org/project/project-memory-mcp/0.5.0b4/) | Published through Trusted Publisher. The wheel matches GitHub byte for byte. A fresh-cache install passed, followed by the installed MCP handshake and live HTTP viewer. The first lookup immediately after publication failed; the evidence retains that failure. |
-| [Official MCP Registry](https://registry.modelcontextprotocol.io/v0.1/servers/io.github.Dankaro-projects%2Fproject-memory/versions/0.5.0b4) | Active, versioned PyPI/stdio record. |
+| [GitHub Release](https://github.com/Dankaro-projects/project-memory/releases/tag/v0.5.0b8) | Public wheel, source archive and MCPB. All verification and publishing jobs passed. |
+| [PyPI](https://pypi.org/project/project-memory-mcp/0.5.0b8/) | Published through Trusted Publisher. The wheel matches GitHub byte for byte. Installation with a refreshed index passed, followed by diagnostics, actual native capture in both existing projects and live viewers. The first stale-index lookup after publication failed; the evidence retains that failure. |
+| [Official MCP Registry](https://registry.modelcontextprotocol.io/v0.1/servers/io.github.Dankaro-projects%2Fproject-memory/versions/0.5.0b8) | Active, versioned PyPI/stdio record. |
 | [Smithery](https://smithery.ai/servers/msuteu/project-memory) | Published local server with all three full tool schemas. Its downloaded MCPB matches the GitHub asset byte for byte. |
-| [Glama](https://glama.ai/mcp/servers/Dankaro-projects/project-memory) | The listing is public and author-verified. Container release `0.5.0-beta.1` is published from the GitHub release commit. Glama's build test passed the MCP handshake and discovered all three tool schemas. Public tool indexing and quality grading remain unverified. |
-| Codex project setup | Actual capture of all nine hooks, one interrupted side effect, recovery in a new host, and four facts retained through compaction on Codex 0.153.4/macOS. |
-| Codex plugin | Installed from the repository marketplace; a fresh host launched the published wheel and completed `memory_get direction`. Hooks require the separate project setup. |
+| [Glama](https://glama.ai/mcp/servers/Dankaro-projects/project-memory) | The listing is public and author-verified. Container release `0.5.0-beta.8` is published from the exact release commit. Glama's build test passed the MCP handshake and discovered all three tool schemas. The public listing indexes all three tools; its automated grade does not establish daily-use quality. |
+| Codex project setup | Beta 8 native capture passed in two existing projects. Interruption and new-host recovery passed on the identical beta 7 capture implementation. Earlier tests exercised all nine hooks and compaction on Codex 0.153.4/macOS; these were not all repeated in beta 8. |
+| Codex plugin | The marketplace installed plugin `0.5.0-beta.8`. Earlier native plugin exposure was verified separately; beta 8 native checks used the project-managed server. Hooks require the separate project setup. |
 | Claude Code project setup | A live Claude Code 2.1.270 CLI session used native MCP health, retrieval and document capture and produced six applicable lifecycle event types. Simulated payload tests cover the other events. Live Claude compaction and interruption remain unverified; see the dated feedback report. |
 | Other local MCP clients | The MCPB entry point and generic stdio process are tested. Installation inside each desktop client is not yet verified. |
 
@@ -42,9 +42,11 @@ Plugin hooks run in every project. They resolve the project's database from its 
 
 ## Remaining channels
 
+Glama beta 8 was published from successful build test `[historical run identifier removed]` at commit `28849b9d3c81d0c37206b03a24b8de354485f192`.
+
 Glama's account submission completed on 14 September 2026. A directory search also found an existing entry whose update timestamp preceded that submission. The maintainer claimed that entry through GitHub using `glama.json`, corrected its imported display name and published a tested container release. The [Glama evidence](verification-glama-2026-09-14.json) records the original launch failure, correction, successful test and release. Submission confirmation alone does not establish review approval; the public listing, author verification and published release were checked separately.
 
-Glama's container starts with an empty database under `/app/.memory`. It has no access to a person's local project and does not capture Codex hooks. Container persistence across restarts is not verified. Use the local installation for actual project memory. The public Schema page still showed no indexed tools when checked after publication, although the build log contained all three schemas. Glama's automated grading is not evidence of daily-use quality.
+Glama's container starts with an empty database under `/app/.memory`. It has no access to a person's local project and does not capture Codex hooks. Container persistence across restarts is not verified. Use the local installation for actual project memory. The public listing now indexes all three tools. The original beta 1 observation, when indexing was absent, remains in its dated evidence. Glama's automated grading is not evidence of daily-use quality.
 
 [PulseMCP](https://www.pulsemcp.com/servers) still reports that new submissions and listing changes are paused. An entry in the official registry does not prove that another directory has imported or approved it.
 
