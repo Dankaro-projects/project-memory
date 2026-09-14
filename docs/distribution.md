@@ -1,5 +1,7 @@
 # Distribution and compatibility
 
+The working tree is preparing `0.5.0b5`; its interactive workspace and reviewer agents have not been published to the channels below. The verified public package remains beta 4.
+
 GitHub, PyPI and the official registry were verified on 14 September 2026 for `0.5.0b4`. Smithery remains verified at `0.5.0b1`; Glama and PulseMCP were last checked separately on 14 September 2026. A new package release does not establish that those directories have updated.
 
 | Channel | Verified result |

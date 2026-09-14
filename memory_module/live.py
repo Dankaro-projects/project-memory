@@ -146,6 +146,7 @@ class Viewer(HTTPServer):
     allow_reuse_address=True
     def __init__(self, path, token, port=0):
         self.memory=Memory(path,read_only=True);self.token=token;self.boot=uuid.uuid4().hex
+        self.csrf=secrets.token_urlsafe(24)
         self.last_access=time.monotonic();self.version=None;self.paths=[];self.next_review=None;self.due_count=0;self.db_identity=Path(path).stat().st_ino
         super().__init__(('127.0.0.1',port),Handler)
     def server_bind(self):
@@ -166,6 +167,16 @@ class Viewer(HTTPServer):
         for p in self.paths:
             try:st=p.stat();stats.append((str(p),st.st_mtime_ns,st.st_size,st.st_ino))
             except OSError:stats.append((str(p),None))
+        from .reviews import configured, exists, tree_signature
+        config=configured(self.memory)
+        if config and exists(self.memory) and self.memory.db.execute('SELECT 1 FROM review_runs LIMIT 1').fetchone():
+            # Unregistered project files and expired workers can invalidate a result without a database write.
+            try:stats.append(('review_project',tree_signature(config['project'])))
+            except (OSError,subprocess.SubprocessError) as exc:stats.append(('review_project_unavailable',str(exc)))
+            from datetime import datetime, timezone
+            expired=[r['id'] for r in self.memory.db.execute("SELECT id,updated_at FROM review_runs WHERE state IN ('queued','running','cancelling')")
+                     if (datetime.now(timezone.utc)-datetime.fromisoformat(r['updated_at'])).total_seconds()>30]
+            stats.append(('expired_checks',expired))
         return self.boot+':'+str(version)+':'+str(self.due_count)+':'+hashlib.sha256(dumps(stats).encode()).hexdigest()[:16]
     def server_close(self):
         super().server_close();self.memory.close()
@@ -175,6 +186,43 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, *args):pass
     def setup(self):
         super().setup();self.connection.settimeout(5)
+    def do_POST(self):
+        origin=f'http://127.0.0.1:{self.server.server_port}'
+        prefix='/'+self.server.token+'/api/'
+        path=urlsplit(self.path).path
+        if (self.headers.get('Host')!=origin[7:] or self.headers.get('Origin')!=origin
+            or self.headers.get('X-Project-Memory')!=self.server.csrf or not path.startswith(prefix)
+            or self.headers.get('Content-Type')!='application/json'):
+            self.send_error(403);return
+        try:
+            size=int(self.headers.get('Content-Length','0'))
+            if not 0<size<=100000:raise InvalidRecord('Workspace actions must be JSON smaller than 100 KB.')
+            data=json.loads(self.rfile.read(size))
+            if not isinstance(data,dict):raise InvalidRecord('The action must be an object.')
+            endpoint=path[len(prefix):]
+            self.server.last_access=time.monotonic()
+            with Memory(self.server.memory.path) as memory:
+                if endpoint=='actions':
+                    from .workspace import action
+                    value=action(memory,**data)
+                elif endpoint=='reviews':
+                    from .reviews import request, launch, cancel
+                    if set(data)=={'cancel'}:value=cancel(memory,data['cancel'])
+                    else:
+                        value=request(memory,**data);launch(memory,value)
+                    value={k:v for k,v in value.items() if k!='snapshot'}
+                else:self.send_error(404);return
+            status=200
+        except (MemoryError,ValueError,TypeError,KeyError,sqlite3.Error,OSError) as exc:
+            from .core import Conflict
+            status=409 if isinstance(exc,Conflict) else 400
+            value={'error':type(exc).__name__,'message':str(exc)}
+        body=dumps(value).encode();self.send_response(status)
+        self.send_header('Content-Type','application/json; charset=utf-8');self.send_header('Content-Length',str(len(body)))
+        self.send_header('Cache-Control','no-store');self.send_header('Referrer-Policy','no-referrer');self.send_header('X-Content-Type-Options','nosniff')
+        self.end_headers()
+        try:self.wfile.write(body)
+        except (BrokenPipeError,ConnectionResetError):pass
     def do_GET(self):
         origin=f'http://127.0.0.1:{self.server.server_port}'
         prefix='/'+self.server.token+'/'
@@ -188,15 +236,21 @@ class Handler(BaseHTTPRequestHandler):
         endpoint=target.path[len(prefix):]
         try:
             if endpoint=='':body=html();mime='text/html; charset=utf-8';etag=None
-            elif endpoint in {'api/health','api/records','api/record','api/board','api/sprints'}:
+            elif endpoint in {'api/health','api/records','api/record','api/board','api/sprints','api/reviews'}:
                 revision=self.server.revision();etag='"'+hashlib.sha256((revision+target.path+target.query).encode()).hexdigest()+'"'
                 if self.headers.get('If-None-Match')==etag:
                     self.send_response(304);self.send_header('ETag',etag);self.end_headers();return
                 memory=self.server.memory
                 if endpoint=='api/health':
-                    value={'revision':revision,**inspect(memory),'requirements':memory.requirements,
+                    from .reviews import configured
+                    value={'revision':revision,**inspect(memory),'requirements':memory.requirements,'csrf':self.server.csrf,
+                           'review_host':configured(memory),'interactive':True,
                            'episodes':[dict(r) for r in memory.db.execute('SELECT id,title FROM episodes ORDER BY created_at DESC LIMIT 1000')],
                            'episodes_more':memory.db.execute('SELECT count(*) FROM episodes').fetchone()[0]>1000}
+                elif endpoint=='api/reviews':
+                    from .reviews import listing, current
+                    value=listing(memory,params.get('episode'),int(params.get('limit','10')),int(params.get('offset','0')))
+                    value['current']=current(memory,params.get('episode'))
                 elif endpoint in {'api/board','api/sprints'}:
                     from .planning import board, sprints
                     limit,offset=int(params.get('limit','25')),int(params.get('offset','0'))
