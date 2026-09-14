@@ -1,12 +1,12 @@
 # Distribution and compatibility
 
-Release and client status was verified on 13 September 2026 for `0.5.0b1`. Glama and PulseMCP status was checked on 14 September 2026.
+GitHub, PyPI and the official registry were verified on 14 September 2026 for `0.5.0b3`. Smithery remains verified at `0.5.0b1`; Glama and PulseMCP were last checked separately on 14 September 2026. A new package release does not establish that those directories have updated.
 
 | Channel | Verified result |
 |---|---|
-| [GitHub Release](https://github.com/Dankaro-projects/project-memory/releases/tag/v0.5.0b1) | Public wheel, source archive and MCPB. Release checks passed. |
-| [PyPI](https://pypi.org/project/project-memory-mcp/0.5.0b1/) | Published through Trusted Publisher. The wheel matches GitHub byte for byte. The documented one-line command installed from a fresh uv cache. |
-| [Official MCP Registry](https://registry.modelcontextprotocol.io/v0.1/servers/io.github.Dankaro-projects%2Fproject-memory/versions/0.5.0b1) | Active, versioned PyPI/stdio record. |
+| [GitHub Release](https://github.com/Dankaro-projects/project-memory/releases/tag/v0.5.0b3) | Public wheel, source archive and MCPB. All four release jobs passed. |
+| [PyPI](https://pypi.org/project/project-memory-mcp/0.5.0b3/) | Published through Trusted Publisher. The wheel matches GitHub byte for byte. A fresh-cache install passed, followed by the installed MCP handshake and live HTTP viewer. The first lookup immediately after publication failed; the evidence retains that failure. |
+| [Official MCP Registry](https://registry.modelcontextprotocol.io/v0.1/servers/io.github.Dankaro-projects%2Fproject-memory/versions/0.5.0b3) | Active, versioned PyPI/stdio record. |
 | [Smithery](https://smithery.ai/servers/msuteu/project-memory) | Published local server with all three full tool schemas. Its downloaded MCPB matches the GitHub asset byte for byte. |
 | [Glama](https://glama.ai/mcp/servers/Dankaro-projects/project-memory) | The listing is public and author-verified. Container release `0.5.0-beta.1` is published from the GitHub release commit. Glama's build test passed the MCP handshake and discovered all three tool schemas. Public tool indexing and quality grading remain unverified. |
 | Codex project setup | Actual capture of all nine hooks, one interrupted side effect, recovery in a new host, and four facts retained through compaction on Codex 0.153.4/macOS. |
@@ -48,4 +48,4 @@ Glama's container starts with an empty database under `/app/.memory`. It has no 
 
 Smithery identifies this as a local server. It does not provide a cloud service with access to a person's local database. Browser-only or cloud-only clients need a separate supported local execution path.
 
-The [reviewed report](verification-0.5.0b1.json) includes published artifact hashes and measured host results. The [evidence notes](evidence.md) retain failures, token regressions and unmeasured daily-use outcomes.
+The [beta 3 feedback report](feedback-2026-09-14.md) and its [aggregate evidence](verification-feedback-2026-09-14.json) record current corrections, public installation and live host results. The [earlier report](verification-0.5.0b1.json) retains the original distribution checks. The [evidence notes](evidence.md) retain failures, token regressions and unmeasured daily-use outcomes.

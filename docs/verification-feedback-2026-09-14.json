@@ -493,5 +493,49 @@
       "Linux Python 3.11",
       "Linux Python 3.14"
     ]
+  },
+  "publication": {
+    "version": "0.5.0b3",
+    "release": "https://github.com/Dankaro-projects/project-memory/releases/tag/v0.5.0b3",
+    "workflow": "https://github.com/Dankaro-projects/project-memory/actions/runs/34830455110",
+    "workflow_jobs": {
+      "build": "success",
+      "github": "success",
+      "pypi": "success",
+      "registry": "success"
+    },
+    "initial_install": "The first fresh-cache lookup could not find 0.5.0b3 immediately after publication. Refreshing the index succeeded; the exact cache or propagation cause was not established.",
+    "fresh_cache_confirmation": {
+      "default_command_succeeded": true,
+      "explicit_refresh_required": false,
+      "client": "mcp",
+      "headless": true,
+      "selected_document_count_after_repeated_setup": 1
+    },
+    "doctor": {
+      "version": "0.5.0b3",
+      "integrity": "ok",
+      "mcp_process_verified": true,
+      "native_tools_in_existing_task": "unverified"
+    },
+    "viewer": {
+      "separate_published_process": true,
+      "html_http": 200,
+      "health_http": 200,
+      "source_page_http": 200,
+      "browser_was_opened_in_this_check": false
+    },
+    "wheel": {
+      "filename": "project_memory_mcp-0.5.0b3-py3-none-any.whl",
+      "size": 75726,
+      "sha256": "d95479c6b6fdd83175e58673ab9776dbbc00665607a2df68aa26ae746af7e223",
+      "pypi_matches_github": true,
+      "runtime_members_match_tested_checkout": 17
+    },
+    "registry": {
+      "status": "active",
+      "version": "0.5.0b3",
+      "url": "https://registry.modelcontextprotocol.io/v0.1/servers/io.github.Dankaro-projects%2Fproject-memory/versions/0.5.0b3"
+    }
   }
 }
