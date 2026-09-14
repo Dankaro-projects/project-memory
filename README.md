@@ -15,7 +15,7 @@ Use it when a project repeatedly revisits research, loses the reasons behind dec
 Install [uv](https://docs.astral.sh/uv/getting-started/installation/), then run this **inside the project you want to remember**:
 
 ```sh
-uvx project-memory-mcp@0.5.0b5 setup --client codex --trust
+uvx project-memory-mcp@0.5.0b6 setup --client codex --trust
 ```
 
 This creates `.memory/project.sqlite`, adds a project-local MCP connection and nine command hooks, and asks the installed Codex host for the exact hook hashes to enable. Existing settings and records are preserved. Setup opens the included live HTML viewer; add `--no-view` for headless use. Open a new Codex task afterwards. `--trust` explicitly enables these project hooks; omit it to review and enable them in Codex yourself.
@@ -23,7 +23,7 @@ This creates `.memory/project.sqlite`, adds a project-local MCP connection and n
 For Claude Code, run the same command with `--client claude`:
 
 ```sh
-uvx project-memory-mcp@0.5.0b5 setup --client claude --trust
+uvx project-memory-mcp@0.5.0b6 setup --client claude --trust
 ```
 
 This adds the `project_memory` server to the project's `.mcp.json` and the lifecycle hooks to `.claude/settings.local.json`, which Claude Code keeps out of version control. `--trust` pre-approves the project MCP server in that local settings file; omit it to approve the server when Claude Code asks. Start a new Claude Code session in the project afterwards. Claude Code has no interrupt hook, so eight of the nine lifecycle events are captured there; an interrupted tool call remains visible as an unconfirmed receipt. Claude Code's tool failure event closes the same receipt as a completed call, with the failure retained. After automatic compaction, the session start hook restores the memory session, the active decision and the reconciliation count.
@@ -31,7 +31,7 @@ This adds the `project_memory` server to the project's `.mcp.json` and the lifec
 For a permanent CLI installation:
 
 ```sh
-uv tool install project-memory-mcp==0.5.0b5
+uv tool install project-memory-mcp==0.5.0b6
 project-memory doctor
 project-memory view
 ```
@@ -49,7 +49,7 @@ Claude plugin hooks skip capture when managed project hooks are present. Keep on
 
 The same versioned wheel is available from [GitHub Releases](https://github.com/Dankaro-projects/project-memory/releases). The MCPB asset supports directory selection in compatible desktop clients.
 
-Published on [PyPI](https://pypi.org/project/project-memory-mcp/0.5.0b5/), the [official MCP Registry](https://registry.modelcontextprotocol.io/v0.1/servers/io.github.Dankaro-projects%2Fproject-memory/versions/0.5.0b5), and [Smithery](https://smithery.ai/servers/msuteu/project-memory). The [Glama listing](https://glama.ai/mcp/servers/Dankaro-projects/project-memory) is also claimed and has a tested beta container release. See [distribution and compatibility](docs/distribution.md) for verified launch paths and remaining limits.
+Published on [PyPI](https://pypi.org/project/project-memory-mcp/0.5.0b6/), the [official MCP Registry](https://registry.modelcontextprotocol.io/v0.1/servers/io.github.Dankaro-projects%2Fproject-memory/versions/0.5.0b6), and [Smithery](https://smithery.ai/servers/msuteu/project-memory). The [Glama listing](https://glama.ai/mcp/servers/Dankaro-projects/project-memory) is also claimed and has a tested beta container release. See [distribution and compatibility](docs/distribution.md) for verified launch paths and remaining limits.
 
 ![The workspace shows synthetic sprint actions, priorities and checked progress.](docs/images/viewer.png)
 

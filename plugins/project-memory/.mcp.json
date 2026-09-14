@@ -4,7 +4,7 @@
       "command": "uvx",
       "args": [
         "--from",
-        "https://github.com/Dankaro-projects/project-memory/releases/download/v0.5.0b5/project_memory_mcp-0.5.0b5-py3-none-any.whl",
+        "https://github.com/Dankaro-projects/project-memory/releases/download/v0.5.0b6/project_memory_mcp-0.5.0b6-py3-none-any.whl",
         "project-memory",
         "serve"
       ]

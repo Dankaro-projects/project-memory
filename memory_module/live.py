@@ -10,7 +10,6 @@ from pathlib import Path
 import secrets
 import sqlite3
 import subprocess
-import sys
 import time
 from urllib.parse import parse_qs, urlsplit
 from urllib.request import build_opener, ProxyHandler
@@ -331,7 +330,8 @@ def _start(path,state):
     atomic(state,dumps(info));state.chmod(0o600)
     log=state.with_suffix('.log')
     with log.open('w') as out:
-        process=subprocess.Popen([sys.executable,'-m','memory_module.live','--db',str(path),'--state',str(state)],
+        from .install import python_args
+        process=subprocess.Popen(python_args('memory_module.live')+['--db',str(path),'--state',str(state)],
             stdin=subprocess.DEVNULL,stdout=out,stderr=out,start_new_session=os.name!='nt')
     deadline=time.monotonic()+5
     while time.monotonic()<deadline:

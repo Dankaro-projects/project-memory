@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.0b6 — 14 September 2026
+
+Installed launchers, diagnostics, live viewers and review workers now load the selected runtime even when a project contains an older `memory_module` package. An upgrade of the original prototype exposed this conflict after beta 5 publication. The installed-wheel check now includes a conflicting project package. Existing data and project files remain unchanged.
+
 ## 0.5.0b5 — 14 September 2026
 
 Opening the internal HTML template now shows the workspace launch command instead of unstyled controls. Project information explains live updates and offline exports, and the [user guide](docs/user-guide.md) covers everyday use and recovery.

@@ -1,4 +1,5 @@
 import json
+from contextlib import chdir
 from pathlib import Path
 import sqlite3
 import sys
@@ -24,6 +25,12 @@ class ProductTests(unittest.TestCase):
         self.assertTrue(report['mcp_process_verified']);self.assertEqual(report['observed_hooks'],{})
         install.uninstall(self.project)
         with Memory(first['database']) as memory:self.assertEqual(memory.requirements,['Keep data locally.'])
+    def test_doctor_children_ignore_a_project_package_with_the_same_name(self):
+        info=self.setup()
+        shadow=self.project/'memory_module';shadow.mkdir()
+        (shadow/'__init__.py').write_text('raise RuntimeError("The project package was imported.")\n')
+        with chdir(self.project):
+            self.assertTrue(doctor(Path(info['database']))['mcp_process_verified'])
     def test_codex_setup_preserves_other_settings_and_repeats_without_duplicates(self):
         local=self.project/'.codex';local.mkdir()
         (local/'config.toml').write_text('model = "other"\n')

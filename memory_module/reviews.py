@@ -9,7 +9,6 @@ from pathlib import Path
 import re
 import signal
 import subprocess
-import sys
 import time
 import uuid
 
@@ -230,7 +229,8 @@ def launch(memory, run):
         return
     folder = memory.path.parent/'agent-runs'/run['id']; folder.mkdir(parents=True, exist_ok=True)
     with (folder/'worker.log').open('a') as log:
-        process = subprocess.Popen([sys.executable, '-m', 'memory_module.reviews', '--db', str(memory.path), '--run', run['id']],
+        from .install import python_args
+        process = subprocess.Popen(python_args('memory_module.reviews')+['--db', str(memory.path), '--run', run['id']],
                                    stdin=subprocess.DEVNULL, stdout=log, stderr=log, start_new_session=os.name!='nt')
     import threading
     threading.Thread(target=process.wait, daemon=True).start()

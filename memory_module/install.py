@@ -21,6 +21,14 @@ SERVER = 'project_memory'
 SOURCE_ROOT = Path(__file__).resolve().parent.parent
 
 
+def python_args(module):
+    # Project files must not shadow the runtime in installed or source-launched children.
+    if (SOURCE_ROOT/'pyproject.toml').is_file():
+        bootstrap='import runpy,sys; sys.path.insert(0,sys.argv.pop(1)); runpy.run_module(sys.argv.pop(1),run_name="__main__")'
+        return [sys.executable,'-c',bootstrap,str(SOURCE_ROOT),module]
+    return [sys.executable,'-I','-m',module]
+
+
 def atomic(path, content):
     path=Path(path);path.parent.mkdir(parents=True,exist_ok=True)
     fd,temp=tempfile.mkstemp(prefix='.'+path.name+'.',dir=path.parent)
@@ -39,7 +47,7 @@ def launcher():
         return [uv,'run','--project',str(SOURCE_ROOT),'project-memory']
     if not any(part.startswith('archive-v') for part in Path(sys.executable).parts):
         # Persistent installations must run their installed code, including unreleased wheels.
-        return [sys.executable,'-m','memory_module.cli']
+        return python_args('memory_module.cli')
     if uv:
         # The host retains a stable launcher, never an interpreter in uvx's cache.
         return [uv,'tool','run','--from',RELEASE_SOURCE,'project-memory']
