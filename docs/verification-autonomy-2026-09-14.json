@@ -316,5 +316,30 @@
     "run": 34843292039,
     "failed": "Windows Python 3.14: existing live-process teardown deleted the SQLite file before the terminated viewer exited.",
     "correction": "Retain actual child-process handles and wait for exit before deleting temporary files."
+  },
+  "publication": {
+    "version": "0.5.0b4",
+    "fresh_cache_install": true,
+    "doctor_integrity": "ok",
+    "mcp_process_verified": true,
+    "tool_count": 3,
+    "public_mcp_checks": [
+      "source capture",
+      "atomic sprint creation",
+      "atomic plan creation",
+      "named continuation retains exact scope",
+      "sprint-filtered board"
+    ],
+    "live_viewer": true,
+    "pypi_github_wheel_sha256": "af4f843140a4f7eee709107d79c979089034174ab22f4027644b3221f9db7922",
+    "limitations": "This public-package check uses generic MCP. Actual Codex capture and recovery are established separately by the recorded host trials.",
+    "release_commit": "30d3c361664a76739f910107a0d9de0cbd88c685",
+    "ci_run": 34843842993,
+    "ci_jobs_passed": 7,
+    "release_run": 34844157669,
+    "release_jobs_passed": 4,
+    "registry_status": "active",
+    "installed_codex_plugin": "0.5.0-beta.4",
+    "initial_lookup": "The first fresh-cache lookup immediately after publication could not resolve version 0.5.0b4. PyPI subsequently returned the version and a second independent fresh cache installed it normally. The exact propagation or index cause was not established."
   }
 }
