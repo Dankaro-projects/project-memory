@@ -13,7 +13,7 @@ import subprocess
 import sys
 import time
 from urllib.parse import parse_qs, urlsplit
-from urllib.request import urlopen
+from urllib.request import build_opener, ProxyHandler
 import uuid
 from . import Memory
 from .core import MemoryError, InvalidRecord, dumps
@@ -241,7 +241,7 @@ def _start(path,state):
     expected=f'http://127.0.0.1:{port}/{token}/' if valid else None
     if previous.get('database')==str(path) and previous.get('url')==expected and expected:
         try:
-            with urlopen(previous['url']+'api/health',timeout=1) as response:
+            with build_opener(ProxyHandler({})).open(previous['url']+'api/health',timeout=1) as response:
                 if json.load(response).get('database')==str(path):return {**{k:v for k,v in previous.items() if k!='token'},'reused':True}
         except (OSError,ValueError):pass
     # The credential stays in a private state file, not the process arguments.

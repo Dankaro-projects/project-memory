@@ -205,7 +205,9 @@ class LiveProcessTests(unittest.TestCase):
 
     def test_restart_reuses_the_url_and_concurrent_launches_share_one_process(self):
         first=self.server
-        self.assertEqual(start(self.m.path)['pid'],first['pid'])
+        from unittest.mock import patch
+        with patch.dict(os.environ,{'http_proxy':'http://127.0.0.1:1','HTTP_PROXY':'http://127.0.0.1:1','no_proxy':'','NO_PROXY':''}):
+            self.assertEqual(start(self.m.path)['pid'],first['pid'])
         commands=[[sys.executable,'-m','memory_module.cli','view','--db',str(self.m.path),'--no-open'] for _ in range(2)]
         processes=[subprocess.Popen(cmd,stdout=subprocess.PIPE,text=True) for cmd in commands]
         self.assertEqual({json.loads(p.communicate(timeout=5)[0])['pid'] for p in processes},{first['pid']})
