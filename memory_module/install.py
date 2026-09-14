@@ -25,8 +25,8 @@ def python_args(module):
     # Project files must not shadow the runtime in installed or source-launched children.
     if (SOURCE_ROOT/'pyproject.toml').is_file():
         bootstrap='import runpy,sys; sys.path.insert(0,sys.argv.pop(1)); runpy.run_module(sys.argv.pop(1),run_name="__main__")'
-        return [sys.executable,'-c',bootstrap,str(SOURCE_ROOT),module]
-    return [sys.executable,'-I','-m',module]
+        return [sys.executable,'-X','utf8','-c',bootstrap,str(SOURCE_ROOT),module]
+    return [sys.executable,'-I','-X','utf8','-m',module]
 
 
 def atomic(path, content):

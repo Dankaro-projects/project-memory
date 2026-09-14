@@ -36,7 +36,7 @@ def doctor(path, client=None, project=None):
     requests=[{'jsonrpc':'2.0','id':1,'method':'initialize','params':{'protocolVersion':'2025-11-25','capabilities':{},'clientInfo':{'name':'project-memory-doctor','version':__version__}}},
               {'jsonrpc':'2.0','id':2,'method':'tools/list','params':{}},
               {'jsonrpc':'2.0','id':3,'method':'tools/call','params':{'name':'memory_get','arguments':{'view':'schema','id':'decision','max_chars':6000}}}]
-    run=subprocess.run(python_args('memory_module.cli')+['serve','--db',str(path)],input=''.join(json.dumps(r)+'\n' for r in requests),text=True,capture_output=True,timeout=20)
+    run=subprocess.run(python_args('memory_module.cli')+['serve','--db',str(path)],input=''.join(json.dumps(r)+'\n' for r in requests),text=True,encoding='utf-8',capture_output=True,timeout=20)
     replies=[json.loads(line) for line in run.stdout.splitlines()]
     ok=run.returncode==0 and len(replies)==3 and all('result' in r for r in replies) and not replies[-1]['result'].get('isError')
     if not ok:raise RuntimeError('The installed MCP process failed its handshake or read. '+run.stderr[:500])

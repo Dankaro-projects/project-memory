@@ -1,6 +1,8 @@
 # Changelog
 
-## 0.5.0b6 — 14 September 2026
+## 0.5.0b7 — 14 September 2026
+
+Runtime subprocesses use UTF-8 explicitly, including on Windows where isolated Python ignores the parent UTF-8 environment setting. Beta 6 was withheld after the Windows installed-wheel gate failed. This release includes its import-isolation correction.
 
 Installed launchers, diagnostics, live viewers and review workers now load the selected runtime even when a project contains an older `memory_module` package. An upgrade of the original prototype exposed this conflict after beta 5 publication. The installed-wheel check now includes a conflicting project package. Existing data and project files remain unchanged.
 

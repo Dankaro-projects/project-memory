@@ -16,7 +16,8 @@ with tempfile.TemporaryDirectory(prefix='project-memory-installed-') as director
     env['PYTHONUTF8']='1'
     subprocess.run([str(python),'-m','pip','install','--no-deps',str(wheel)],check=True,capture_output=True,cwd=project,env=env)
     def run(*args):
-        result=subprocess.run([str(cli),*args],check=True,capture_output=True,text=True,cwd=project,env=env,timeout=30)
+        result=subprocess.run([str(cli),*args],capture_output=True,text=True,cwd=project,env=env,timeout=30)
+        if result.returncode:raise RuntimeError(f'{args}: {result.stderr}')
         return json.loads(result.stdout)
     shadow=project/'memory_module';shadow.mkdir()
     (shadow/'__init__.py').write_text('raise RuntimeError("Project code shadowed the installed runtime.")\n')
@@ -27,7 +28,7 @@ with tempfile.TemporaryDirectory(prefix='project-memory-installed-') as director
     runtime=subprocess.run([str(python),'-I','-c',"from pathlib import Path; import json,memory_module; from memory_module.install import launcher; p=Path(memory_module.__file__).parent; assert all((p/'agents'/(role+'.md')).is_file() for role in ('intent','outcome','recovery')); print(json.dumps({'version':memory_module.__version__,'launcher':launcher()}))"],check=True,capture_output=True,text=True,cwd=project,env=env)
     installed=json.loads(runtime.stdout)
     assert Path(installed['launcher'][0]).samefile(python), (installed['launcher'],str(python))
-    assert installed['launcher'][1:]==['-I','-m','memory_module.cli']
+    assert installed['launcher'][1:]==['-I','-X','utf8','-m','memory_module.cli']
     child=subprocess.run(installed['launcher']+['doctor','--project',str(project)],check=True,capture_output=True,text=True,cwd=project,env=env)
     assert json.loads(child.stdout)['mcp_process_verified']
     view=run('view','--output',str(project/'view.html'),'--no-open','--include-bodies');assert Path(view['path']).is_file()

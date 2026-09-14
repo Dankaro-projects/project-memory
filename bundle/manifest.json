@@ -2,7 +2,7 @@
   "manifest_version": "0.3",
   "name": "project-memory",
   "display_name": "Project Memory",
-  "version": "0.5.0-beta.6",
+  "version": "0.5.0-beta.7",
   "description": "Keep project decisions, evidence, outcomes and reviewed lessons in local SQLite.",
   "author": {
     "name": "Dankaro"

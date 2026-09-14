@@ -37,7 +37,7 @@ project-memory view
 If you used the published one-command setup without installing the CLI permanently, use the same package version:
 
 ```sh
-uvx project-memory-mcp@0.5.0b6 view
+uvx project-memory-mcp@0.5.0b7 view
 ```
 
 For a development checkout, use the command from its [development installation instructions](workspace-agents.md#install-this-development-version). Opening `memory_module/viewer.html` directly opens an internal template, not your records.
