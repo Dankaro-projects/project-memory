@@ -97,9 +97,19 @@ def session_context(memory, session, compacted=False):
     if active:
         parts.append(f'Active decision {active["decision_id"]} in episode {active["episode_id"]} (version {active["version"]}) still awaits an outcome.')
     parts.append(f'{state["unconfirmed_total"]} tool calls need reconciliation.' if state['unconfirmed_total'] else 'No tool calls need reconciliation.')
-    parts.append('Use memory_context before repeating research. Record significant decisions with this session_id, evidence, uncertainty and alternatives. '
+    parts.append('Use memory_context before repeating research. Record a decision when choosing or revising an approach with consequences, using this session_id, evidence, uncertainty and alternatives. Routine acknowledgement needs no decision record. '
                  'Tool receipts are observations; outcomes and lesson acceptance require explicit assessment.')
     return ' '.join(parts)
+
+
+def setup_context(memory, refreshed):
+    from .health import inspect
+    health = inspect(memory)
+    text = ' Project baseline: '+health['baseline']['status']+'. Coverage remains unassessed. The live HTML viewer is available with project-memory view.'
+    if refreshed and (refreshed['created'] or refreshed['more'] or any(r['status'] not in {'current_copy','review_due'} for r in refreshed['documents'])):
+        text += f" Document sync captured {refreshed['created']} new versions. Use memory_get documents to inspect outstanding changes."
+        if refreshed['more']: text += ' More selected files remain; continue with memory_write sync at offset '+str(refreshed['next_offset'])+'.'
+    return text
 
 
 def capture(memory, event, host='codex'):
@@ -120,13 +130,21 @@ def capture(memory, event, host='codex'):
         if tool.startswith(('mcp__memory__','mcp__project_memory__')) or MEMORY_TOOL.match(tool): return {}
     compacted = name == 'SessionStart' and event.get('source') == 'compact'
     action_version = None
+    refreshed = None
+    if name in {'SessionStart', 'Stop'}:
+        from .documents import sync
+        refreshed = sync(memory)
     with memory._write():
         binding = active_binding(memory,session)
         ep, decision = (binding['episode_id'], binding['decision_id']) if binding else (None, None)
         if name == 'PostToolUse':
-            pre = memory.db.execute("SELECT episode_id,decision_id FROM host_receipts WHERE session_id=? AND tool_use_id=? AND event_name='PreToolUse'", (session, tool_id)).fetchone()
+            pre = memory.db.execute("SELECT episode_id,decision_id FROM host_receipts WHERE session_id=? AND tool_use_id=? AND event_name='PreToolUse' AND coalesce(json_extract(payload,'$.host'),'codex')=?", (session, tool_id, host)).fetchone()
             ep, decision = (pre['episode_id'], pre['decision_id']) if pre else (None, None)
         payload = {}
+        if refreshed is not None and (refreshed['created'] or refreshed['more'] or any(r['status'] not in {'current_copy','review_due'} for r in refreshed['documents'])):
+            payload['documents'] = {'created': refreshed['created'], 'more': refreshed['more'],
+                'issues': [{'id': r['id'], 'status': r['status']} for r in refreshed['documents']
+                           if r['status'] not in {'current_copy', 'review_due'}]}
         for key in ('tool_input', 'tool_response', 'prompt', 'last_assistant_message', 'error'):
             if key in event and event[key] is not None: payload[key] = summary(event[key])
         for key in ('source', 'reason', 'model', 'trigger', 'agent_id', 'agent_type'):
@@ -135,6 +153,8 @@ def capture(memory, event, host='codex'):
         if host_event != name: payload['host_event'] = host_event
         if name == 'PostToolUse' and host_event == 'PostToolUseFailure': payload['failed'] = True
         key = [session,turn,name,tool_id,payload.get('source')]
+        if host != 'codex': key.append(host)
+        if 'documents' in payload: key.append(payload['documents'])
         # Without a turn or prompt identifier, repeated lifecycle events in one session must not collide.
         if host == 'claude' and not turn and name not in {'PreToolUse', 'PostToolUse'}: key.append(memory.now())
         rid = receipt(memory, session_id=session, turn_id=turn, event_name=name, tool_use_id=tool_id,
@@ -142,20 +162,20 @@ def capture(memory, event, host='codex'):
         if name == 'PreToolUse' and decision:
             # One interpreted decision can have several mechanically captured tool calls.
             if not memory.db.execute("SELECT 1 FROM events WHERE decision_id=? AND kind='action'", (decision,)).fetchone():
-                action = memory.record(ep,'action',{'action':'Execute the recorded decision through Codex tools.', 'host_reference':rid},
-                    expected_version=memory.episode(ep)['version'], request_key=rid+':action', actor='codex-hooks', decision_id=decision)
+                action = memory.record(ep,'action',{'action':f'Execute the recorded decision through {"Claude Code" if host == "claude" else "Codex"} tools.', 'host_reference':rid},
+                    expected_version=memory.episode(ep)['version'], request_key=rid+':action', actor=host+'-hooks', decision_id=decision)
                 action_version = action['version']
     if action_version is not None:
         return {'hookSpecificOutput':{'hookEventName':host_event,'additionalContext':
             f'Memory action recorded. Episode {ep} is now version {action_version}; decision {decision}.'}}
     if name == 'SessionStart':
         # Claude Code reads this at startup, resume and after automatic compaction. Codex ignores unknown output.
-        return {'hookSpecificOutput':{'hookEventName':host_event,'additionalContext':session_context(memory, session, compacted)}}
+        return {'hookSpecificOutput':{'hookEventName':host_event,'additionalContext':session_context(memory, session, compacted)+setup_context(memory, refreshed)}}
     if name == 'UserPromptSubmit':
         state = status(memory, session_id=session, limit=3)
         text = (f'Memory session: {session}. Use memory_context before repeating research. '
                 f'{state["unconfirmed_total"]} tool calls need reconciliation. '
-                'Record significant decisions with this session_id, evidence, uncertainty and alternatives. '
+                'Record a decision when choosing or revising an approach with consequences, using this session_id, evidence, uncertainty and alternatives. Routine acknowledgement needs no decision record. '
                 'Tool receipts are observations; outcomes and lesson acceptance require explicit assessment.')
         selected = re.fullmatch(r'\[memory:(code|writing|research|general)\] (.{1,2000})',
                                 event.get('prompt','').split('\n',1)[0])
@@ -190,7 +210,7 @@ def status(memory, session_id=None, limit=10, offset=0):
     clause = ' AND p.session_id=?' if session_id else ''
     args = [session_id] if session_id else []
     base = '''FROM host_receipts p WHERE p.event_name='PreToolUse'
-      AND NOT EXISTS (SELECT 1 FROM host_receipts r WHERE r.session_id=p.session_id AND r.tool_use_id=p.tool_use_id AND r.event_name='PostToolUse')
+      AND NOT EXISTS (SELECT 1 FROM host_receipts r WHERE r.session_id=p.session_id AND r.tool_use_id=p.tool_use_id AND r.event_name='PostToolUse' AND coalesce(json_extract(r.payload,'$.host'),'codex')=coalesce(json_extract(p.payload,'$.host'),'codex'))
       AND NOT EXISTS (SELECT 1 FROM host_receipts r WHERE r.event_name='Reconciled'
          AND json_extract(r.payload,'$.receipt_id')=p.id AND json_extract(r.payload,'$.resolution')!='unknown')''' + clause
     total = memory.db.execute('SELECT count(*) '+base,args).fetchone()[0]

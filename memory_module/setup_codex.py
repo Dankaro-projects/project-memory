@@ -74,6 +74,10 @@ def trust_project_hooks(project, database, expected_command=None):
         request(2,'config/batchWrite',{'edits':[{'keyPath':'projects','value':{str(project):{'trust_level':'trusted'}},'mergeStrategy':'upsert'}], 'reloadUserConfig':True})
         hooks=request(3,'hooks/list',{'cwds':[str(project)]})['data'][0]
         if hooks['errors']:raise RuntimeError('Codex reported invalid project hooks.')
+        from .health import diagnose_hooks
+        diagnosis=diagnose_hooks(hooks)
+        if diagnosis['duplicates'] or diagnosis['wrong_host']:
+            raise RuntimeError('Codex discovered duplicate or Claude Project Memory hooks. Update the plugin before trusting this installation.')
         selected=[h for h in hooks['hooks'] if h['sourcePath']==str(project/'.codex/hooks.json') and h.get('command')==expected]
         if len(selected)!=9:raise RuntimeError('Expected exactly nine matching memory hooks. No hook trust settings were changed.')
         changes={h['key']:{'enabled':True,'trusted_hash':h['currentHash']} for h in selected}

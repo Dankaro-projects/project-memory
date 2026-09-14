@@ -2,6 +2,8 @@
 
 The public beta preserves a working private prototype and adds installation, lifecycle management and approved project revisions. Measurements below distinguish deterministic checks, real host execution and untested product hypotheses. A passing suite alone does not establish day-to-day productivity.
 
+The [14 September feedback review](feedback-2026-09-14.md) records the 0.5.0b3 fixes, 129-test suite, live host reruns and unresolved quality failures. The earlier measurements below remain dated historical evidence.
+
 ## Reproducible beta checks
 
 Run the commands in the README in a fresh checkout. Each example output directory must be new. Outputs stay under the ignored `results` directory.

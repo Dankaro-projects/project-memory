@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.5.0b3 — 14 September 2026
+
+First-beta feedback exposed configured but inactive hooks, duplicate cross-host discovery, manual document refresh, an unclear requirements baseline and a static viewer.
+
+- Setup opens an included live, read-only local viewer; offline exports remain available with explicit atomic replacement.
+- Codex excludes Claude plugin hooks. Managed Claude hooks suppress duplicate plugin capture, and host receipt/result identities remain separate.
+- Doctor checks actual Codex hook discovery and trust. Health distinguishes missing requirements, historical capture, native tool availability and unmeasured costs.
+- Session start and stop refresh previously selected Markdown, preserving immutable evidence and explicit approval.
+- Oversized context reports a recovery route; complete requirements can be paged and safely reused while unchanged. Omitted evidence stays discoverable.
+- Review records explain changed dependencies and requirement revisions. Runtime dependencies remain zero.
+
+See the dated feedback report for boundary verification and unresolved limitations.
+
 ## 0.5.0b2
 
 Adds Claude Code as a setup client. `setup --client claude` writes the project MCP server to `.mcp.json` and the lifecycle hooks to `.claude/settings.local.json`; `--trust` pre-approves the server there. Uninstall removes exactly those entries.

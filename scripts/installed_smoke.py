@@ -19,11 +19,18 @@ with tempfile.TemporaryDirectory(prefix='project-memory-installed-') as director
         result=subprocess.run([str(cli),*args],check=True,capture_output=True,text=True,cwd=project,env=env,timeout=30)
         return json.loads(result.stdout)
     (project/'VISION.md').write_text('# Vision\nKeep data local unless the customer explicitly requests an export.\n',encoding='utf-8')
-    first=run('setup','--document','VISION.md');second=run('setup','--document','VISION.md')
+    first=run('setup','--no-view','--document','VISION.md');second=run('setup','--no-view','--document','VISION.md')
     assert first['documents']==second['documents']
     report=run('doctor');assert report['mcp_process_verified'] and report['integrity']=='ok'
-    view=run('view','--no-open','--include-bodies');assert Path(view['path']).is_file()
+    view=run('view','--output',str(project/'view.html'),'--no-open','--include-bodies');assert Path(view['path']).is_file()
     assert 'Keep data local unless' in Path(view['path']).read_text(encoding='utf-8')
+    live=run('view','--no-open')
+    try:
+        from urllib.request import urlopen
+        with urlopen(live['url']+'api/health',timeout=5) as response:assert json.load(response)['database']==first['database']
+    finally:
+        import signal
+        os.kill(live['pid'],signal.SIGTERM)
     backup=project/'backup.sqlite';run('backup',str(backup));assert backup.is_file()
     run('uninstall');assert Path(first['database']).is_file()
-    print(json.dumps({'passed':True,'wheel':wheel.name,'checks':['fresh wheel installation','CLI entry point','idempotent setup and capture','separate MCP process handshake and read','packaged HTML viewer','SQLite backup','uninstall preserves data'],'runtime_dependencies':0},indent=2))
+    print(json.dumps({'passed':True,'wheel':wheel.name,'checks':['fresh wheel installation','CLI entry point','idempotent setup and capture','separate MCP process handshake and read','packaged offline HTML viewer','packaged live HTTP viewer','SQLite backup','uninstall preserves data'],'runtime_dependencies':0},indent=2))

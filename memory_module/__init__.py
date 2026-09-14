@@ -5,5 +5,5 @@ from .core import Memory, MemoryError, Conflict, InvalidRecord, BudgetTooSmall, 
 from .hooks import Hooks, CaptureFailure
 from .schema import migrate
 
-__version__ = "0.5.0b2"
+__version__ = "0.5.0b3"
 __all__ = ["Memory", "MemoryError", "Conflict", "InvalidRecord", "BudgetTooSmall", "dumps", "Hooks", "CaptureFailure", "migrate"]

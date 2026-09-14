@@ -1,0 +1,467 @@
+{
+  "date": "2026-09-14",
+  "baseline_commit": "e40c2579b6fdb35d543835bd79e4630fa61d54e8",
+  "candidate_version": "0.5.0b3",
+  "environment": {
+    "system": "Darwin",
+    "python": "3.13.13",
+    "codex": "codex-cli 0.153.4",
+    "claude": "2.1.270 (Claude Code)"
+  },
+  "regression": {
+    "baseline_passed": 112,
+    "candidate_passed": 129
+  },
+  "scripted": {
+    "before": {
+      "version": "0.5.0b2",
+      "fixture": {
+        "requirements": 24,
+        "initial_sources": 31,
+        "selected_markdown": 20
+      },
+      "checks": {
+        "small_budget_rejects_incomplete_constraints": true,
+        "budget_error_has_recovery_route": false,
+        "first_context_preserves_every_requirement": true,
+        "discovered_records_remain_readable": true,
+        "hook_captures_changed_selected_document": false,
+        "old_source_and_exception_survive": true,
+        "capture_does_not_approve_requirements": true,
+        "live_view_available": false
+      },
+      "measurements": {
+        "small_budget_ms": 1.476958,
+        "context": {
+          "samples_ms": [
+            2.012292,
+            2.046958,
+            2.083916,
+            2.029667,
+            2.314041
+          ],
+          "median_ms": 2.046958
+        },
+        "first_context_characters": 11166,
+        "repeat_context_characters": 7050,
+        "explicit_document_refresh_commands": 1,
+        "snapshot": {
+          "samples_ms": [
+            3.09025,
+            1.513292,
+            1.359,
+            1.432125,
+            1.474291
+          ],
+          "median_ms": 1.474291
+        },
+        "snapshot_bytes": 60191,
+        "live_initial_bytes": null
+      },
+      "unmeasured": [
+        "human reminders",
+        "human maintenance time",
+        "daily completion",
+        "model input tokens",
+        "competition"
+      ],
+      "limits": "Five warm local samples per timed function. Exact characters are MCP results, not full model inputs. Initial live bytes are HTML plus one source page, excluding health and later detail requests. This scripted case does not measure autonomous semantic coverage."
+    },
+    "after": {
+      "version": "0.5.0b3",
+      "fixture": {
+        "requirements": 24,
+        "initial_sources": 31,
+        "selected_markdown": 20
+      },
+      "checks": {
+        "small_budget_rejects_incomplete_constraints": true,
+        "budget_error_has_recovery_route": true,
+        "first_context_preserves_every_requirement": true,
+        "discovered_records_remain_readable": true,
+        "hook_captures_changed_selected_document": true,
+        "old_source_and_exception_survive": true,
+        "capture_does_not_approve_requirements": true,
+        "live_view_available": true,
+        "paged_view_covers_all_sources": true
+      },
+      "measurements": {
+        "small_budget_ms": 0.646666,
+        "context": {
+          "samples_ms": [
+            2.25675,
+            2.205083,
+            2.1575,
+            2.207917,
+            2.282875
+          ],
+          "median_ms": 2.207917
+        },
+        "first_context_characters": 11479,
+        "repeat_context_characters": 650,
+        "explicit_document_refresh_commands": 0,
+        "snapshot": {
+          "samples_ms": [
+            1.83175,
+            1.302875,
+            1.3465,
+            1.545375,
+            1.429
+          ],
+          "median_ms": 1.429
+        },
+        "snapshot_bytes": 68027,
+        "live_page": {
+          "samples_ms": [
+            0.833291,
+            0.709709,
+            0.667209,
+            0.619375,
+            0.686125
+          ],
+          "median_ms": 0.686125
+        },
+        "live_initial_bytes": 46599
+      },
+      "unmeasured": [
+        "human reminders",
+        "human maintenance time",
+        "daily completion",
+        "model input tokens",
+        "competition"
+      ],
+      "limits": "Five warm local samples per timed function. Exact characters are MCP results, not full model inputs. Initial live bytes are HTML plus one source page, excluding health and later detail requests. This scripted case does not measure autonomous semantic coverage."
+    }
+  },
+  "codex": {
+    "discovery": {
+      "status": "ready_for_new_session",
+      "missing_events": [],
+      "untrusted": 0,
+      "duplicates": {},
+      "wrong_host": false,
+      "errors": [],
+      "note": "Discovery verifies configuration and trust, not execution or native tool exposure in an already open task."
+    },
+    "observed_events_across_real_runs": {
+      "DecisionBound": 2,
+      "Interrupt": 1,
+      "PostCompact": 2,
+      "PostToolUse": 1,
+      "PreCompact": 2,
+      "PreToolUse": 2,
+      "Reconciled": 1,
+      "SessionEnd": 1,
+      "SessionStart": 7,
+      "Stop": 6,
+      "UserPromptSubmit": 7
+    },
+    "interrupt_recovery": {
+      "marker_lines": [
+        "once"
+      ],
+      "resume_adapter_calls": 7,
+      "resume_adapter_errors": 0,
+      "not_repeated": true,
+      "hook_counts": {
+        "DecisionBound": 1,
+        "Interrupt": 1,
+        "PostToolUse": 1,
+        "PreToolUse": 2,
+        "Reconciled": 1,
+        "SessionStart": 2,
+        "Stop": 1,
+        "UserPromptSubmit": 2
+      },
+      "unconfirmed_after_interrupt": 1,
+      "unconfirmed_after_resume": 1,
+      "resume_status": "completed",
+      "limits": "The marker confirms the side effect. Interruption is not proof of rollback or of process completion. Unknown execution remains visible.",
+      "provider_input_audit": {
+        "target_input_tokens_exclusive": 10000,
+        "measurement": "Provider last.inputTokens includes instructions, tool definitions, history, task and memory. It is not an estimate from character counts.",
+        "cases": [
+          {
+            "case": ".",
+            "log": "events.jsonl",
+            "input_tokens_per_notification": [
+              14403,
+              15029,
+              15386,
+              15542,
+              15966,
+              16258,
+              16636,
+              17091
+            ],
+            "maximum_input_tokens": 17091,
+            "unmeasured_or_reset_notifications": 0,
+            "meets_target": false
+          },
+          {
+            "case": ".",
+            "log": "resume.jsonl",
+            "input_tokens_per_notification": [
+              17658,
+              18532,
+              19409,
+              20847,
+              21245,
+              21592,
+              21937,
+              22804
+            ],
+            "maximum_input_tokens": 22804,
+            "unmeasured_or_reset_notifications": 0,
+            "meets_target": false
+          }
+        ],
+        "meets_target": false,
+        "limitations": "Notifications may repeat reports or reset counters after compaction. Zero or missing counts are unmeasured and cannot establish a pass. Hidden host requests without usage notifications are outside this audit. The adapter cannot enforce a pre-request limit on the full native Codex prompt."
+      },
+      "completed_mcp_calls": 12,
+      "writes": [
+        "start",
+        "source",
+        "record",
+        "source",
+        "reconcile",
+        "record"
+      ]
+    },
+    "continuity_before_guidance_fix": {
+      "compaction_completed": true,
+      "completion": "completed",
+      "output": {
+        "encoding": "New uploads use strict UTF-8",
+        "invalid_bytes": "Raise UnicodeDecodeError",
+        "legacy_exception": "Only the separately tagged legacy endpoint uses Latin-1",
+        "production_status": "Unmeasured"
+      },
+      "checks": {
+        "encoding": true,
+        "invalid_bytes": true,
+        "legacy_exception": true,
+        "production_unmeasured": true
+      },
+      "hook_counts": {
+        "DecisionBound": 1,
+        "PostCompact": 1,
+        "PreCompact": 1,
+        "SessionStart": 2,
+        "Stop": 2,
+        "UserPromptSubmit": 2
+      },
+      "limits": "One short continuity case checks four explicit facts. It does not establish lossless long-session compaction or a full input below 10,000 tokens.",
+      "provider_input_audit": {
+        "target_input_tokens_exclusive": 10000,
+        "measurement": "Provider last.inputTokens includes instructions, tool definitions, history, task and memory. It is not an estimate from character counts.",
+        "cases": [
+          {
+            "case": ".",
+            "log": "events.jsonl",
+            "input_tokens_per_notification": [
+              14329,
+              15482,
+              15622,
+              15983,
+              16353,
+              16648,
+              17027,
+              15661,
+              16293,
+              16745
+            ],
+            "maximum_input_tokens": 17027,
+            "unmeasured_or_reset_notifications": 1,
+            "meets_target": false
+          }
+        ],
+        "meets_target": false,
+        "limitations": "Notifications may repeat reports or reset counters after compaction. Zero or missing counts are unmeasured and cannot establish a pass. Hidden host requests without usage notifications are outside this audit. The adapter cannot enforce a pre-request limit on the full native Codex prompt."
+      },
+      "completed_mcp_calls": 6,
+      "writes": [
+        "start",
+        "source",
+        "record"
+      ]
+    },
+    "continuity_after_guidance_fix": {
+      "compaction_completed": true,
+      "completion": "completed",
+      "output": {
+        "encoding": "New uploads use strict UTF-8.",
+        "invalid_bytes": "Invalid bytes raise UnicodeDecodeError.",
+        "legacy_exception": "Only the separately tagged legacy endpoint uses Latin-1.",
+        "production_status": "The production outcome is unmeasured."
+      },
+      "checks": {
+        "encoding": true,
+        "invalid_bytes": true,
+        "legacy_exception": true,
+        "production_unmeasured": true
+      },
+      "hook_counts": {
+        "PostCompact": 1,
+        "PreCompact": 1,
+        "SessionStart": 2,
+        "Stop": 2,
+        "UserPromptSubmit": 2
+      },
+      "limits": "One short continuity case checks four explicit facts. It does not establish lossless long-session compaction or a full input below 10,000 tokens.",
+      "provider_input_audit": {
+        "target_input_tokens_exclusive": 10000,
+        "measurement": "Provider last.inputTokens includes instructions, tool definitions, history, task and memory. It is not an estimate from character counts.",
+        "cases": [
+          {
+            "case": ".",
+            "log": "events.jsonl",
+            "input_tokens_per_notification": [
+              14365,
+              14793,
+              15714,
+              16112
+            ],
+            "maximum_input_tokens": 16112,
+            "unmeasured_or_reset_notifications": 1,
+            "meets_target": false
+          }
+        ],
+        "meets_target": false,
+        "limitations": "Notifications may repeat reports or reset counters after compaction. Zero or missing counts are unmeasured and cannot establish a pass. Hidden host requests without usage notifications are outside this audit. The adapter cannot enforce a pre-request limit on the full native Codex prompt."
+      },
+      "completed_mcp_calls": 1,
+      "writes": []
+    }
+  },
+  "claude": {
+    "observed_events_across_two_cli_runs": {
+      "PostToolUse": 4,
+      "PreToolUse": 4,
+      "SessionEnd": 2,
+      "SessionStart": 2,
+      "Stop": 2,
+      "UserPromptSubmit": 2
+    },
+    "before_refresh_guidance": {
+      "is_error": false,
+      "reported_turns": 9,
+      "duration_ms": 35263,
+      "provider_usage": {
+        "input_tokens": 194,
+        "cache_creation_input_tokens": 12731,
+        "cache_read_input_tokens": 135636,
+        "output_tokens": 1925,
+        "output_tokens_details": {
+          "thinking_tokens": 537
+        },
+        "server_tool_use": {
+          "web_search_requests": 0,
+          "web_fetch_requests": 0
+        },
+        "service_tier": "standard",
+        "cache_creation": {
+          "ephemeral_1h_input_tokens": 12731,
+          "ephemeral_5m_input_tokens": 0
+        },
+        "inference_geo": "not_available",
+        "iterations": [
+          {
+            "input_tokens": 32,
+            "output_tokens": 545,
+            "cache_read_input_tokens": 22450,
+            "cache_creation_input_tokens": 407,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 407
+            },
+            "type": "message"
+          }
+        ],
+        "speed": "standard"
+      },
+      "subject_corrections_reported_by_agent": 1,
+      "strict_json_only": false,
+      "checked_facts_correct": 4,
+      "permission_denials": [],
+      "note": "Both final outputs preserve the baseline, encoding, exception and uncertainty. Both add prose around JSON. Correction counts come from the agent final account; the JSON CLI result does not expose every tool-error message."
+    },
+    "after_refresh_guidance": {
+      "is_error": false,
+      "reported_turns": 6,
+      "duration_ms": 20185,
+      "provider_usage": {
+        "input_tokens": 66,
+        "cache_creation_input_tokens": 10654,
+        "cache_read_input_tokens": 46930,
+        "output_tokens": 1266,
+        "output_tokens_details": {
+          "thinking_tokens": 241
+        },
+        "server_tool_use": {
+          "web_search_requests": 0,
+          "web_fetch_requests": 0
+        },
+        "service_tier": "standard",
+        "cache_creation": {
+          "ephemeral_1h_input_tokens": 10654,
+          "ephemeral_5m_input_tokens": 0
+        },
+        "inference_geo": "not_available",
+        "iterations": [
+          {
+            "input_tokens": 32,
+            "output_tokens": 549,
+            "cache_read_input_tokens": 19399,
+            "cache_creation_input_tokens": 1381,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 1381
+            },
+            "type": "message"
+          }
+        ],
+        "speed": "standard"
+      },
+      "subject_corrections_reported_by_agent": 0,
+      "strict_json_only": false,
+      "checked_facts_correct": 4,
+      "permission_denials": [],
+      "note": "Both final outputs preserve the baseline, encoding, exception and uncertainty. Both add prose around JSON. Correction counts come from the agent final account; the JSON CLI result does not expose every tool-error message."
+    },
+    "limitations": "Same prompt and project, separate CLI sessions. Cache and accumulated receipt state differ. No live Claude compaction or interruption test. This is not a controlled model comparison."
+  },
+  "browser": {
+    "client": "Chrome extension",
+    "observed": [
+      "External SQLite write appears without page reload",
+      "An open decision changes to Needs review after a file edit",
+      "The decision explains the changed evidence source",
+      "Stopping the service shows disconnect and last successful check",
+      "Restarting reuses the same URL and reconnects without reloading the page",
+      "Search preserves its value across pagination: 25 then 6 of 31 matching sources"
+    ],
+    "not_measured": [
+      "browser paint timing",
+      "mobile live layout",
+      "full automated DOM regression"
+    ]
+  },
+  "packaging": {
+    "fresh_installed_wheel_mcp": true,
+    "fresh_installed_wheel_live_http": true,
+    "offline_export": true,
+    "backup_and_uninstall_preserve_data": true,
+    "runtime_dependencies": 0
+  },
+  "unmeasured": [
+    "net daily productivity",
+    "human reminder rate",
+    "human maintenance time",
+    "complete product capability coverage",
+    "long-term drift",
+    "competitor performance"
+  ],
+  "privacy": "This report contains invented fixtures and reviewed aggregate results. The private session feedback, project database and raw host logs are not published."
+}
