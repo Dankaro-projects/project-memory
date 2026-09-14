@@ -2,7 +2,7 @@
 
 Project Memory keeps a project's decisions, evidence, outcomes and reviewed lessons in a local SQLite database. An AI assistant retrieves the relevant records through three MCP tools; people inspect the same history in a self-contained HTML viewer.
 
-The [work board](docs/work-board.md) groups actions into sprints and connects each card to its intended result, scope, next action and decision history. The assistant uses the same checked state to resume work, inspect uncertain execution and recognise when human input is needed. The current development version adds interactive planning and conditional agent checks; see [workspace and agents](docs/workspace-agents.md).
+The [work board](docs/work-board.md) groups actions into sprints and connects each card to its intended result, scope, next action and decision history. The assistant uses the same checked state to resume work, inspect uncertain execution and recognise when human input is needed. Start with the [user guide](docs/user-guide.md) for opening the workspace, following work and resolving missing updates. The current development version adds interactive planning and conditional agent checks; see [workspace and agents](docs/workspace-agents.md).
 
 Use it when a project repeatedly revisits research, loses the reasons behind decisions, or carries outdated requirements into new work. It preserves the original evidence and the conditions under which a decision or lesson applies.
 

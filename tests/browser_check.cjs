@@ -32,7 +32,17 @@ with Memory.create(root/'memory.sqlite','Browser fixture',['Plain English.']) as
   const errors=[],requests=[];
   page.on('pageerror',e=>errors.push(e.message));
   page.on('request',r=>{if(/^https?:/.test(r.url()))requests.push(r.url());});
+  await page.goto(pathToFileURL(path.join(root,'memory_module/viewer.html')).href);
+  assert.equal(await page.locator('#template-notice').isVisible(),true);
+  assert.match(await page.locator('#template-notice').textContent(),/project-memory view/);
+  assert.equal(await page.locator('#workspace-app').isVisible(),false);
   await page.goto(pathToFileURL(path.join(temp,'viewer.html')).href);
+  assert.equal(await page.locator('#template-notice').isVisible(),false);
+  assert.equal(await page.locator('#workspace-app').isVisible(),true);
+  await page.locator('#about-open').click();
+  await page.getByText('Using this workspace',{exact:true}).click();
+  assert.match(await page.locator('#workspace-help').textContent(),/offline snapshot.*does not update/);
+  await page.locator('#about-close').click();
   assert.equal(await page.locator('#rows tr').count(),2);
   await page.locator('[data-view=events]').click();
   assert.equal(await page.locator('#rows tr').count(),25);
