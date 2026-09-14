@@ -311,5 +311,10 @@
     ],
     "failed": "Windows Python 3.11 and 3.14: test cleanup sent a console interrupt through signal zero.",
     "correction": "Poll the owned HTTP endpoint after terminating the test server."
+  },
+  "second_ci": {
+    "run": 34843292039,
+    "failed": "Windows Python 3.14: existing live-process teardown deleted the SQLite file before the terminated viewer exited.",
+    "correction": "Retain actual child-process handles and wait for exit before deleting temporary files."
   }
 }

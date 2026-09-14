@@ -143,11 +143,18 @@ class FeedbackTests(unittest.TestCase):
 
 class LiveProcessTests(unittest.TestCase):
     def setUp(self):
+        from unittest.mock import patch
+        self.processes=[];popen=subprocess.Popen
+        def launch(*args,**kwargs):
+            process=popen(*args,**kwargs);self.processes.append(process);return process
+        launcher=patch('memory_module.live.subprocess.Popen',side_effect=launch)
+        launcher.start();self.addCleanup(launcher.stop)
         self.temp=tempfile.TemporaryDirectory();self.root=Path(self.temp.name).resolve()
         self.info=setup(self.root);self.m=Memory(self.info['database']);self.server=start(self.m.path)
     def tearDown(self):
-        try:os.kill(self.server['pid'],signal.SIGTERM)
-        except ProcessLookupError:pass
+        for process in self.processes:
+            if process.poll() is None:process.terminate()
+            process.wait(timeout=5)
         self.m.close();self.temp.cleanup()
     def get(self,route='',headers=None):
         return urlopen(Request(self.server['url']+route,headers=headers or {}),timeout=3)
