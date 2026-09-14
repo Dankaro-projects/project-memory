@@ -71,11 +71,32 @@ print('{}')`);
   await page.getByRole('button',{name:'Read more source text',exact:true}).click();
   await page.waitForFunction(()=>document.querySelector('[data-field=body] pre')?.textContent.endsWith('Preserve the exception.'));
   await page.keyboard.press('Escape');await page.locator('[data-view=board]').click();
+  run(`import sys,json
+from pathlib import Path
+from memory_module import Memory,codex_host
+with Memory(Path(sys.argv[1])/'.memory/project.sqlite') as m:
+ for event in [{'hook_event_name':'UserPromptSubmit','prompt':'Inspect the local fixture.'},{'hook_event_name':'PreToolUse','tool_name':'Read','tool_use_id':'lookup'},{'hook_event_name':'PostToolUse','tool_name':'Read','tool_use_id':'lookup','tool_response':{'exit_code':0}}]:
+  codex_host.capture(m,{'session_id':'browser-fixture','turn_id':'1',**event})
+print('{}')`);
+  const recording=page.locator('#recording-status button');await recording.waitFor();await recording.click();
+  await page.getByRole('heading',{name:'Recording checks',exact:true}).waitFor();
+  assert.match(await page.locator('#detail-body').textContent(),/not been explicitly assessed/);
+  run(`import sys,json
+from pathlib import Path
+from memory_module import Memory
+from memory_module.mcp import write
+with Memory(Path(sys.argv[1])/'.memory/project.sqlite') as m:
+ p=m.db.execute("SELECT id FROM host_receipts WHERE session_id='browser-fixture' AND event_name='UserPromptSubmit'").fetchone()[0]
+ write(m,'checkpoint','browser-assessment',{'prompt_ids':[p],'effect':'informational','reason':'The agent inspected a read-only fixture.'},session_id='browser-fixture')
+print('{}')`);
+  await page.locator('#recording-status').waitFor({state:'hidden'});
+  await page.waitForFunction(()=>document.querySelector('#detail-body').textContent.includes('The observed activity has an explicit assessment.'));
+  await page.keyboard.press('Escape');
   await page.setViewportSize({width:390,height:844});await page.locator('#new-work').click();
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
   await page.screenshot({path:path.join(output,'workspace-editor-mobile.png'),fullPage:true});
   assert.deepEqual(errors,[]);assert.deepEqual(external,[]);
-  const report={passed:true,browser:await browser.version(),initial_ready_ms:readyMs,checks:['create sprint','create action','structured sprint assignment','inspect intent and lineage','navigate while inspecting','Escape closes the inspector','restore focus to the current action','add comment','reject unsupported Done','preserve draft on concurrent edit','reload current version','save revised plan','sprint filtering','original text across source pagination','mobile form width','no external requests','no JavaScript errors']};
+  const report={passed:true,browser:await browser.version(),initial_ready_ms:readyMs,checks:['create sprint','create action','structured sprint assignment','inspect intent and lineage','navigate while inspecting','Escape closes the inspector','restore focus to the current action','add comment','reject unsupported Done','preserve draft on concurrent edit','reload current version','save revised plan','sprint filtering','original text across source pagination','mobile form width','recording gaps appear without reload','inspect recording gaps','resolved recording gaps and open inspector update without reload','no external requests','no JavaScript errors']};
   fs.writeFileSync(path.join(output,'browser-validation.json'),JSON.stringify(report,null,2)+'\n');console.log(JSON.stringify(report));
  }finally{if(browser)await browser.close();if(server)try{process.kill(server.pid);}catch(error){if(error.code!=='ESRCH')throw error;}fs.rmSync(temp,{recursive:true,force:true});}
 })().catch(error=>{console.error(error);process.exitCode=1;});

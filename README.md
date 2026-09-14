@@ -93,3 +93,5 @@ The public artifacts contain code, documentation and synthetic examples. They ex
 The [first-beta feedback review](docs/feedback-2026-09-14.md) records the observed workflow defects, the fixes, comparable measurements and remaining limits.
 
 The [autonomy and Kanban report](docs/autonomy-2026-09-14.md) records actual continuation, interruption recovery and board checks, including the unmet full-input target.
+
+The unreleased completeness changes and their measured limits are documented in the [completeness evaluation](docs/completeness-evidence-2026-09-14.md).

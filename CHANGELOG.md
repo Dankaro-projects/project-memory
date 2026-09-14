@@ -2,6 +2,8 @@
 
 ## 0.5.0b5 — Unreleased
 
+Host checks now expose unassessed requests, unassigned activity, missing outcomes and capture gaps. Intent checkpoints can accompany a plan or record write. Stop intervenes once, and an explicitly assessed unknown result remains visible without another intervention. Reviewer reports must cover every numbered criterion. The live workspace displays recording gaps and capture failures without a rebuild.
+
 The live viewer becomes an interactive project workspace. Users can create actions and sprints, select dependencies, revise plans and add comments while retaining the complete decision history. Concurrent edits preserve the draft and require a current version before saving. Offline exports remain available.
 
 Codex and Claude setup enable conditional read-only outcome, intent and recovery agents through the installed host CLI. One durable SQLite table records requests, cancellation, explicit retries and immutable results. New completion claims require a current passing outcome check; existing historical completion remains intact. No runtime dependency or separate orchestration service is added.

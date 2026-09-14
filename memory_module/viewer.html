@@ -194,6 +194,7 @@ dialog#editor,dialog#about{width:min(720px,calc(100vw - 32px));max-height:90dvh;
 <div class="filters"><label>Search<input id="query" type="search" placeholder="Search titles and record contents"></label><label>Subject<select id="subject"><option value="">All subjects</option></select></label><label>Status<select id="status"><option value="">All statuses</option></select></label><label>Episode<select id="episode"><option value="">All episodes</option></select></label><label>From<input id="from" type="date"></label><label>To<input id="to" type="date"></label><label>Order<select id="order"><option value="newest">Newest first</option><option value="oldest">Oldest first</option><option value="title">Title</option></select></label><button id="clear">Clear filters</button></div>
 <section id="board-controls" class="board-controls" hidden><label>Sprint<select id="sprint"><option value="">All sprints</option><option value="unassigned">Unassigned work</option></select></label><button id="more-sprints" hidden>Load more sprints</button><div id="workspace-actions" class="workspace-actions" hidden><button id="edit-sprint" disabled>Edit sprint</button><button id="new-sprint">New sprint</button><button id="new-work" class="primary">New action</button></div></section>
 <p id="workspace-message" role="status"></p>
+<p id="recording-status" role="status" hidden></p>
 <section id="board" hidden><div id="sprint-summary" class="sprint-summary"></div><div id="board-grid" class="board-grid"></div></section>
 <p id="pending-note" hidden>Unconfirmed execution requires a host check. Do not repeat the action automatically.</p>
 <div class="table-wrap"><table><thead><tr><th>Date (UTC)</th><th>Subject</th><th>Type</th><th>Record</th><th>Status</th><th>Details</th></tr></thead><tbody id="rows"></tbody></table><p id="empty" hidden>No records match these filters.</p></div>
@@ -208,7 +209,7 @@ dialog#editor,dialog#about{width:min(720px,calc(100vw - 32px));max-height:90dvh;
 const data=JSON.parse(document.getElementById('memory-data').textContent);
 const el=id=>document.getElementById(id);
 const words={when:'Applies when',do:'Suggested action',because:'Reason',why:'Decision basis',expected:'Expected consequence',attribution:'Attributed cause',uncertainty:'Uncertainty',anti_pattern:'Anti-pattern',needs_review:'Needs review',review_due:'Review due',current_copy:'Current stored copy',file_changed:'File changed',file_missing:'File missing',file_unreadable:'File cannot be checked',execution_unconfirmed:'Execution not confirmed',consequence_pending:'Consequence not assessed',action_result:'Execution result',host_receipt:'Host receipt',replaced:'Revised',observed:'Observed',supersedes:'Earlier choice',replaced_by:'Later revision',decision_id:'Decision',good:'Good outcome',bad:'Bad outcome'};
-Object.assign(words,{tokens:'Model tokens',context_characters:'Context characters',human_corrections:'Human corrections',maintenance_ms:'Maintenance (ms)',repeated_research:'Repeated research',alternatives:'Alternatives considered',decision:'Decision',reconsider_when:'Reconsider when',source_id:'Evidence source',not_established:'Not established',before:'Original wording',after:'Corrected wording',scope:'Scope of this correction',reason:'Reason',date:'Recorded at',recorded:'Recorded',subject:'Subject',kind:'Record type',id:'Record ID',status:'Status',project_revision:'Project revision',requirements:'Requirements',version:'Version',actor:'Recorded by'});
+Object.assign(words,{intent_unassessed:'Unassessed requests',activity_unassigned:'Unassigned activity',outcome_missing:'Missing outcomes',capture_gap:'Capture gap',plan_missing:'Missing plan',tokens:'Model tokens',context_characters:'Context characters',human_corrections:'Human corrections',maintenance_ms:'Maintenance (ms)',repeated_research:'Repeated research',alternatives:'Alternatives considered',decision:'Decision',reconsider_when:'Reconsider when',source_id:'Evidence source',not_established:'Not established',before:'Original wording',after:'Corrected wording',scope:'Scope of this correction',reason:'Reason',date:'Recorded at',recorded:'Recorded',subject:'Subject',kind:'Record type',id:'Record ID',status:'Status',project_revision:'Project revision',requirements:'Requirements',version:'Version',actor:'Recorded by'});
 const labels=s=>words[s]||String(s).replaceAll('_',' ').replace(/^./,c=>c.toUpperCase());
 Object.assign(words,{backlog:'Backlog',ready:'Ready',in_progress:'In progress',blocked:'Blocked',review:'Review',done:'Done',cancelled:'Cancelled',work_plan:'Work plan',sprint:'Sprint',autonomy:'Autonomy',suggest:'Suggest first',act:'Act within scope',agent:'Agent',human:'Human',intent:'Intended result',done_when:'Completion criterion',next_action:'Next action'});
 const workById=new Map((data.work||[]).map(r=>[r.id,r]));
@@ -332,6 +333,7 @@ function documentText(text){
 }
 function reference(parent,id,reason){const p=document.createElement('p');if(byId.has(id)||data.live){const b=document.createElement('button');b.textContent=byId.has(id)?labels(byId.get(id).kind)+': '+byId.get(id).title:id.startsWith('source_')?'Open evidence':id.startsWith('direction_')?'Project requirements':'Open linked record';b.addEventListener('click',()=>open(id));p.append(b);}else{const span=document.createElement('span');span.textContent=id+' (outside this export)';p.append(span);}if(reason){const span=document.createElement('span');span.textContent=' '+reason;p.append(span);}parent.append(p);}
 async function open(id,refresh=false){
+ coverageSession=null;
  selectDetail(id,refresh);
  workDetail=false;
  selectedId=id;
@@ -396,8 +398,30 @@ async function loadPage(){
  data.records=result.records;pending.clear();for(const item of result.pending||[])pending.set(item.id,item);
  for(const record of result.records)byId.set(record.id,record);if(selected)byId.set(selectedId,selected);livePage=result;draw(result.records,result.total,pages,size);
 }
+let coverageSession=null;
+async function showCoverage(session,refresh=false){
+ const scroll=el('detail').scrollTop;coverageSession=session;
+ try{
+  const result=await api('coverage',{session_id:session});if(coverageSession!==session)return;
+  selectedId=null;workDetail=false;el('detail-title').textContent='Recording checks';el('detail-kind').textContent='Host session';
+  const body=el('detail-body');body.replaceChildren();const dl=document.createElement('dl');body.append(dl);
+  field(dl,'Recording state',result.issues.length?'Some records remain unresolved.':'The observed activity has an explicit assessment.');
+  for(const issue of result.issues)field(dl,labels(issue.type),issue.reason);
+  field(dl,'Assessment',result.meaning);
+  const refs=document.createElement('div');refs.className='references';body.append(refs);
+  const append=value=>{for(const prompt of value.pending_prompts)reference(refs,prompt.id,'Inspect the unassessed request receipt');for(const gap of value.capture_gaps)reference(refs,gap,'Inspect the capture gap');for(const item of value.unconfirmed)reference(refs,item.id,'Inspect the uncertain tool result');for(const item of value.open_decisions)reference(refs,item.decision_id,'Inspect the decision without an outcome');};append(result);
+  if(result.more){const more=document.createElement('button');more.textContent='Show more records';let offset=result.next_offset;body.append(more);more.addEventListener('click',async()=>{more.disabled=true;try{const page=await api('coverage',{session_id:session,offset});if(coverageSession!==session)return;append(page);offset=page.next_offset;more.hidden=!page.more;}catch(error){disconnected(error);}finally{more.disabled=false;}});}
+  showDetail(refresh,scroll);
+ }catch(error){disconnected(error);}
+}
 function updateHealth(value){
  csrf=value.csrf;reviewHost=value.review_host;el('workspace-actions').hidden=!value.interactive;
+ const recording=el('recording-status');recording.replaceChildren();
+ const checks=(value.recording_checks?.sessions||[]).filter(s=>s.status==='needs_attention');
+ recording.hidden=!checks.length&&!value.capture?.failure;
+ if(value.capture?.failure)recording.append(document.createTextNode('Host capture failed. Some activity may be missing. '));
+ for(const session of checks){const button=document.createElement('button');button.textContent='Recording checks: '+session.issues.map(i=>labels(i.type)).join(', ');button.addEventListener('click',()=>showCoverage(session.session_id));recording.append(button);}
+ if(value.recording_checks?.more){recording.hidden=false;const more=document.createElement('button');more.textContent='More recording checks';more.addEventListener('click',async()=>{try{const page=await api('coverage',{offset:value.recording_checks.next_offset});updateHealth({...value,recording_checks:page});}catch(error){disconnected(error);}});recording.append(more);}
  el('project').textContent=value.project;el('scope').textContent='Project baseline: '+labels(value.baseline.status)+'. Product coverage has not been assessed.';
  el('requirements').replaceChildren();for(const rule of value.requirements){const li=document.createElement('li');li.textContent=rule;el('requirements').append(li);}
  const chosen=el('episode').value;el('episode').replaceChildren();option('episode','','All episodes');
@@ -410,7 +434,7 @@ async function poll(){
  if(polling||document.hidden)return;polling=true;
  try{
   const value=await api('health',{},true);
-  if(value){updateHealth(value);if(view==='board')await loadSprints(true);await loadPage();if(selectedId&&el('detail').open&&!el('editor').open){if(workDetail)await openWork(selectedId,true);else await open(selectedId,true);}}
+  if(value){updateHealth(value);if(coverageSession&&el('detail').open)await showCoverage(coverageSession,true);if(view==='board')await loadSprints(true);await loadPage();if(selectedId&&el('detail').open&&!el('editor').open){if(workDetail)await openWork(selectedId,true);else await open(selectedId,true);}}
   lastSuccess=new Date().toLocaleTimeString();el('detail-connection').hidden=true;el('connection').hidden=true;el('live-status').textContent='Live';el('live-status').dataset.state='connected';el('live-status').title='Last checked '+lastSuccess;
  }catch(error){healthTag=null;disconnected(error);}finally{polling=false;}
 }
@@ -429,7 +453,7 @@ function setView(value){view=value;page=1;el('status').value='';setBoardVisibili
 for(const b of document.querySelectorAll('[data-view]'))b.addEventListener('click',()=>setView(b.dataset.view));
 for(const id of ['query','subject','status','episode','from','to','order','page-size'])el(id).addEventListener('input',()=>{page=1;render();});
 el('clear').addEventListener('click',()=>{for(const id of ['query','subject','status','episode','from','to','sprint'])el(id).value='';page=1;render();});
-el('previous').addEventListener('click',()=>{page--;render();});el('next').addEventListener('click',()=>{page++;render();});el('close').addEventListener('click',()=>el('detail').close());el('detail').addEventListener('close',()=>{selectedId=null;workDetail=false;detailHistory.length=0;document.body.classList.remove('inspector-open');if(detailTrigger?.isConnected)detailTrigger.focus();else{const current=[...document.querySelectorAll('button[aria-label]')].find(b=>b.getAttribute('aria-label')===detailTriggerLabel);(current||document.querySelector('[data-view="'+view+'"]'))?.focus();}});
+el('previous').addEventListener('click',()=>{page--;render();});el('next').addEventListener('click',()=>{page++;render();});el('close').addEventListener('click',()=>el('detail').close());el('detail').addEventListener('close',()=>{selectedId=null;workDetail=false;coverageSession=null;detailHistory.length=0;document.body.classList.remove('inspector-open');if(detailTrigger?.isConnected)detailTrigger.focus();else{const current=[...document.querySelectorAll('button[aria-label]')].find(b=>b.getAttribute('aria-label')===detailTriggerLabel);(current||document.querySelector('[data-view="'+view+'"]'))?.focus();}});
 el('detail-back').addEventListener('click',async()=>{const previous=detailHistory.pop();if(!previous)return;restoringDetail=true;try{if(previous.work)await openWork(previous.id);else await open(previous.id);}finally{restoringDetail=false;el('detail-back').hidden=!detailHistory.length;}});
 document.addEventListener('keydown',event=>{if(event.key==='Escape'&&el('detail').open&&!el('editor').open&&!el('about').open){event.preventDefault();el('detail').close();}if(event.key==='Escape'){document.body.classList.remove('nav-open');el('menu-toggle').setAttribute('aria-expanded','false');}});
 el('menu-toggle').addEventListener('click',()=>{const shown=document.body.classList.toggle('nav-open');el('menu-toggle').setAttribute('aria-expanded',String(shown));});
@@ -492,7 +516,7 @@ async function renderBoard(){
 }
 async function openWork(id,refresh=false){
  selectDetail(id,refresh);
- selectedId=id;workDetail=true;const scroll=el('detail').scrollTop;
+ coverageSession=null;selectedId=id;workDetail=true;const scroll=el('detail').scrollTop;
  try{
   if(data.live){const result=await api('board',{episode:id,limit:1});if(selectedId!==id)return;if(result.cards[0])workById.set(id,result.cards[0]);}
   const work=workById.get(id);if(!work)return;el('detail-title').textContent=work.title;const body=el('detail-body');body.replaceChildren();metadata(body,{...work,kind:'Work item'});
