@@ -6,7 +6,10 @@ on:
 permissions:
   contents: read
 jobs:
+  verify:
+    uses: ./.github/workflows/ci.yml
   build:
+    needs: verify
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -16,7 +19,6 @@ jobs:
       - uses: astral-sh/setup-uv@v6
       - name: Check release tag
         run: python scripts/check_version.py
-      - run: python -m unittest discover -s tests -q
       - run: python scripts/build_bundle.py
       - run: uv build
       - run: python scripts/check_artifacts.py dist
