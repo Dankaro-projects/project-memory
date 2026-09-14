@@ -69,6 +69,7 @@ def main(argv=None):
         elif name=='review':
             p.add_argument('--wait');p.add_argument('--episode');p.add_argument('--role',choices=['outcome','intent','recovery'],default='outcome')
             p.add_argument('--cancel');p.add_argument('--retry',action='store_true')
+            p.add_argument('--max-seconds',type=int,default=300)
         elif name=='backup':p.add_argument('destination')
     hook=sub.add_parser('hook');hook.add_argument('--db');hook.add_argument('--host',choices=sorted(codex_host.HOSTS),default='codex')
     hook.add_argument('--if-unmanaged',action='store_true')
@@ -99,14 +100,14 @@ def main(argv=None):
             with Memory(database(args)) as memory:
                 if args.cancel:result=reviews.cancel(memory,args.cancel)
                 elif args.wait:
-                    deadline=time.monotonic()+305
+                    deadline=time.monotonic()+905
                     while True:
                         result=reviews.read(memory,args.wait)
                         if result['state'] not in reviews.ACTIVE or time.monotonic()>deadline:break
                         time.sleep(.5)
                 else:
                     if not args.episode:raise ValueError('Select --episode, --wait or --cancel.')
-                    result=reviews.request(memory,args.episode,args.role,request_key='cli:'+uuid.uuid4().hex,retry=args.retry)
+                    result=reviews.request(memory,args.episode,args.role,request_key='cli:'+uuid.uuid4().hex,retry=args.retry,max_seconds=args.max_seconds)
                     reviews.launch(memory,result)
                 result.pop('snapshot',None)
         elif args.command=='view' and not args.output:

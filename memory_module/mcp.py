@@ -61,7 +61,7 @@ def bounded(value, budget):
 
 def schema(kind):
     if kind=='agent_check':
-        return {'operation':'review','required':['episode_id'],'optional':{'role':['outcome','intent','recovery'],'retry':'Use true only to request a new check after inspecting the earlier result.'},'result':'A read-only agent checks the current work. Read memory_get reviews and wait using project-memory review --wait CHECK_ID.'}
+        return {'operation':'review','required':['episode_id'],'optional':{'role':['outcome','intent','recovery'],'max_seconds':'30 to 900; default 300. A longer explicit review preserves the same criteria.','retry':'Use true only to request a new check after inspecting the earlier result.'},'result':'A read-only agent checks the current work. Read memory_get reviews and wait using project-memory review --wait CHECK_ID.'}
     from .workflow import FIELDS
     from .planning import FIELDS as PLAN_FIELDS
     if kind == 'work_plan':

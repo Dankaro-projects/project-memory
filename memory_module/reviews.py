@@ -186,10 +186,12 @@ def current(memory, episode_id, role='outcome'):
     return {k: value[k] for k in ('id', 'role', 'state', 'report', 'error', 'updated_at')}
 
 
-def request(memory, episode_id, role='outcome', *, request_key, session_id='', retry=False):
+def request(memory, episode_id, role='outcome', *, request_key, session_id='', retry=False, max_seconds=300):
     _text(request_key, 'request_key', 180)
     if type(retry) is not bool: raise InvalidRecord('retry must be a boolean.')
+    if type(max_seconds) is not int or not 30<=max_seconds<=900:raise InvalidRecord('Review time must be between 30 and 900 seconds.')
     value, signature = snapshot(memory, episode_id, role)
+    value['execution_limit_seconds']=max_seconds
     config = configured(memory)
     with memory._write():
         prior = memory.db.execute('SELECT id,episode_id,role FROM review_runs WHERE request_key=?', (request_key,)).fetchone()
@@ -320,8 +322,9 @@ def review_evidence(snapshot, folder):
         'meaning':'Counts and tool-return fields are mechanical observations, not proof of a successful outcome. Inspect individual archived receipts when a criterion requires them; every original receipt is preserved.'}}
 
 
-def execute(memory, run_id, timeout=300):
+def execute(memory, run_id, timeout=None):
     run = read(memory, run_id)
+    if timeout is None:timeout=run['snapshot'].get('execution_limit_seconds',300)
     with memory._write():
         changed = memory.db.execute("UPDATE review_runs SET state='running',updated_at=? WHERE id=? AND state='queued'", (memory.now(), run_id)).rowcount
     if not changed:
@@ -333,6 +336,7 @@ def execute(memory, run_id, timeout=300):
                'Do not delegate, use the network or modify anything. For each criterion use result met, unmet or unknown and cite the actual file or record. '
                'Start with the supplied records and inspect the artifacts needed to verify each criterion. Retrieve individual receipts by ID when needed. '
                'Keep tool output bounded, and reuse evidence already read rather than dumping directories or rereading entire transcripts. '
+               'This is a check of the stated completion criteria, not a separate general code review. Once each criterion has cited support, a concrete contradiction or identified missing proof, return the report. Missing proof should produce unknown rather than indefinite searching. '
                'Return only the requested JSON. A pass requires every criterion to be met.\n')
     evidence=review_evidence(run['snapshot'],folder)
     (folder/'context.json').write_text(dumps(evidence),encoding='utf-8')
