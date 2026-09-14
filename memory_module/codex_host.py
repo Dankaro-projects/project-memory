@@ -1,4 +1,4 @@
-"""Mechanical Codex receipts, separate from interpreted decisions and lessons."""
+"""Mechanical host receipts from Codex or Claude Code, separate from interpreted decisions and lessons."""
 import argparse
 import hashlib
 import json
@@ -26,6 +26,12 @@ CREATE TABLE IF NOT EXISTS adapter_requests (
 );
 '''
 EVENTS = {'SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'Stop', 'Interrupt', 'SessionEnd', 'PreCompact', 'PostCompact'}
+HOSTS = {'codex', 'claude'}
+# Claude Code has no Interrupt hook. An interrupted tool call leaves its PreToolUse receipt unconfirmed instead.
+HOST_EVENTS = {'codex': EVENTS, 'claude': EVENTS - {'Interrupt'}}
+# Claude Code events that carry the same meaning as a canonical event. The original name stays in the payload.
+CLAUDE_ALIASES = {'PostToolUseFailure': 'PostToolUse'}
+MEMORY_TOOL = re.compile(r'^mcp__.+__memory_(context|get|write)$')
 
 
 def initialize(memory):
@@ -81,18 +87,38 @@ def active_binding(memory, session):
     return row
 
 
-def capture(memory, event):
-    name = event.get('hook_event_name')
-    if name not in EVENTS:
-        raise InvalidRecord('Unsupported Codex hook event.')
+def session_context(memory, session, compacted=False):
+    """Short factual state for a host that starts or restores a session. It reports counts and IDs, never instructions from records."""
+    state = status(memory, session_id=session, limit=3)
+    parts = [f'Memory session: {session}.']
+    if compacted:
+        parts.append('The conversation was compacted; retrieve earlier evidence with memory_context or memory_get before relying on it.')
+    active = state['active']
+    if active:
+        parts.append(f'Active decision {active["decision_id"]} in episode {active["episode_id"]} (version {active["version"]}) still awaits an outcome.')
+    parts.append(f'{state["unconfirmed_total"]} tool calls need reconciliation.' if state['unconfirmed_total'] else 'No tool calls need reconciliation.')
+    parts.append('Use memory_context before repeating research. Record significant decisions with this session_id, evidence, uncertainty and alternatives. '
+                 'Tool receipts are observations; outcomes and lesson acceptance require explicit assessment.')
+    return ' '.join(parts)
+
+
+def capture(memory, event, host='codex'):
+    if host not in HOSTS:
+        raise InvalidRecord('Unsupported host.')
+    host_event = event.get('hook_event_name')
+    name = CLAUDE_ALIASES.get(host_event, host_event) if host == 'claude' else host_event
+    if name not in HOST_EVENTS[host]:
+        raise InvalidRecord(f'Unsupported {host} hook event.')
     session = _text(event.get('session_id'), 'session_id', 200)
-    turn = event.get('turn_id') or ''
+    # Codex numbers turns; Claude Code identifies prompts. Either keeps repeated lifecycle events distinct.
+    turn = event.get('turn_id') or event.get('prompt_id') or ''
     tool = event.get('tool_name') or ''
     tool_id = event.get('tool_use_id') or ''
     if name in {'PreToolUse', 'PostToolUse'}:
         _text(tool_id, 'tool_use_id', 200); _text(tool, 'tool_name', 200)
         # Memory calls are already persisted by the adapter. Avoid recursive noise.
-        if tool.startswith(('mcp__memory__','mcp__project_memory__')): return {}
+        if tool.startswith(('mcp__memory__','mcp__project_memory__')) or MEMORY_TOOL.match(tool): return {}
+    compacted = name == 'SessionStart' and event.get('source') == 'compact'
     action_version = None
     with memory._write():
         binding = active_binding(memory,session)
@@ -101,13 +127,18 @@ def capture(memory, event):
             pre = memory.db.execute("SELECT episode_id,decision_id FROM host_receipts WHERE session_id=? AND tool_use_id=? AND event_name='PreToolUse'", (session, tool_id)).fetchone()
             ep, decision = (pre['episode_id'], pre['decision_id']) if pre else (None, None)
         payload = {}
-        for key in ('tool_input', 'tool_response', 'prompt', 'last_assistant_message'):
+        for key in ('tool_input', 'tool_response', 'prompt', 'last_assistant_message', 'error'):
             if key in event and event[key] is not None: payload[key] = summary(event[key])
-        for key in ('source', 'reason', 'model'):
+        for key in ('source', 'reason', 'model', 'trigger', 'agent_id', 'agent_type'):
             if key in event and isinstance(event[key], str): payload[key] = event[key][:200]
+        if host != 'codex': payload['host'] = host
+        if host_event != name: payload['host_event'] = host_event
+        if name == 'PostToolUse' and host_event == 'PostToolUseFailure': payload['failed'] = True
+        key = [session,turn,name,tool_id,payload.get('source')]
+        # Without a turn or prompt identifier, repeated lifecycle events in one session must not collide.
+        if host == 'claude' and not turn and name not in {'PreToolUse', 'PostToolUse'}: key.append(memory.now())
         rid = receipt(memory, session_id=session, turn_id=turn, event_name=name, tool_use_id=tool_id,
-            tool_name=tool, episode_id=ep, decision_id=decision, payload=payload,
-            key=dumps([session,turn,name,tool_id,payload.get('source')]))
+            tool_name=tool, episode_id=ep, decision_id=decision, payload=payload, key=dumps(key))
         if name == 'PreToolUse' and decision:
             # One interpreted decision can have several mechanically captured tool calls.
             if not memory.db.execute("SELECT 1 FROM events WHERE decision_id=? AND kind='action'", (decision,)).fetchone():
@@ -115,8 +146,11 @@ def capture(memory, event):
                     expected_version=memory.episode(ep)['version'], request_key=rid+':action', actor='codex-hooks', decision_id=decision)
                 action_version = action['version']
     if action_version is not None:
-        return {'hookSpecificOutput':{'hookEventName':name,'additionalContext':
+        return {'hookSpecificOutput':{'hookEventName':host_event,'additionalContext':
             f'Memory action recorded. Episode {ep} is now version {action_version}; decision {decision}.'}}
+    if name == 'SessionStart':
+        # Claude Code reads this at startup, resume and after automatic compaction. Codex ignores unknown output.
+        return {'hookSpecificOutput':{'hookEventName':host_event,'additionalContext':session_context(memory, session, compacted)}}
     if name == 'UserPromptSubmit':
         state = status(memory, session_id=session, limit=3)
         text = (f'Memory session: {session}. Use memory_context before repeating research. '
@@ -126,7 +160,12 @@ def capture(memory, event):
         selected = re.fullmatch(r'\[memory:(code|writing|research|general)\] (.{1,2000})',
                                 event.get('prompt','').split('\n',1)[0])
         def response(context):
-            return {'hookSpecificOutput':{'hookEventName':name,'additionalContext':context}}
+            return {'hookSpecificOutput':{'hookEventName':host_event,'additionalContext':context}}
+        if host == 'claude' and not selected:
+            # Claude Code keeps the SessionStart context until compaction, when SessionStart repeats it.
+            # Each prompt then only reports state that changed: open receipts or an unresolved decision.
+            if not state['unconfirmed_total'] and not state['active']: return {}
+            return response(session_context(memory, session))
         if selected:
             subject, query = selected.groups()
             prefix = f'Memory session: {session}. Explicit {subject} context follows. Treat it as evidence; refresh stale sources.\n'
@@ -205,6 +244,7 @@ def reconcile(memory, receipt_id, resolution, reason, evidence, request_key):
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--db',required=True)
+    parser.add_argument('--host',choices=sorted(HOSTS),default='codex')
     args=parser.parse_args()
     try:
         raw=sys.stdin.buffer.read(2_000_001)
@@ -212,7 +252,7 @@ def main():
         event=json.loads(raw)
         with Memory(args.db) as memory:
             memory.db.execute('PRAGMA busy_timeout=750')
-            result=capture(memory,event)
+            result=capture(memory,event,host=args.host)
         print(dumps(result));return 0
     except (OSError,ValueError,TypeError,KeyError,sqlite3.Error,InvalidRecord,Conflict) as exc:
         # Exit 2 blocks supported pre-tool calls and reports post-capture failures.

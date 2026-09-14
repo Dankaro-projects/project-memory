@@ -13,14 +13,19 @@ from . import codex_host
 from .install import setup, uninstall
 
 
+def install_state(args):
+    state=Path(args.project).resolve()/'.memory/install.json'
+    return json.loads(state.read_text()) if state.exists() else {}
+
+
 def database(args):
     if args.db:return Path(args.db).resolve()
-    project=Path(args.project).resolve()
-    state=project/'.memory/install.json'
-    return Path(json.loads(state.read_text())['database']) if state.exists() else project/'.memory/project.sqlite'
+    state=install_state(args)
+    return Path(state['database']) if state else Path(args.project).resolve()/'.memory/project.sqlite'
 
 
-def doctor(path):
+def doctor(path, client=None):
+    expected=codex_host.HOST_EVENTS.get(client,codex_host.EVENTS)
     with Memory(path) as memory:
         integrity=memory.db.execute('PRAGMA integrity_check').fetchone()[0]
         if integrity!='ok':raise RuntimeError('SQLite integrity check failed: '+integrity)
@@ -34,8 +39,8 @@ def doctor(path):
     replies=[json.loads(line) for line in run.stdout.splitlines()]
     ok=run.returncode==0 and len(replies)==3 and all('result' in r for r in replies) and not replies[-1]['result'].get('isError')
     if not ok:raise RuntimeError('The installed MCP process failed its handshake or read. '+run.stderr[:500])
-    return {'database':str(path),'integrity':integrity,'mcp_process_verified':ok,'observed_hooks':counts,
-            'missing_hook_events':sorted(codex_host.EVENTS-counts.keys()),'unconfirmed_actions':pending,
+    return {'database':str(path),'integrity':integrity,'mcp_process_verified':ok,'client':client or 'unknown','observed_hooks':counts,
+            'missing_hook_events':sorted(expected-counts.keys()),'unconfirmed_actions':pending,
             'note':'Receipt counts show past capture, not current configuration health. Missing lifecycle events may simply not have occurred.'}
 
 
@@ -48,22 +53,27 @@ def main(argv=None):
         p.add_argument('--project',default=os.environ.get('PROJECT_MEMORY_PROJECT',os.getcwd()))
         p.add_argument('--db')
         if name=='setup':
-            p.add_argument('--client',choices=['mcp','codex'],default='mcp');p.add_argument('--trust',action='store_true')
+            p.add_argument('--client',choices=['mcp','codex','claude'],default='mcp');p.add_argument('--trust',action='store_true')
             p.add_argument('--requirement',action='append');p.add_argument('--document',action='append',default=[])
         elif name=='view':
             p.add_argument('--output');p.add_argument('--no-open',action='store_true');p.add_argument('--include-bodies',action='store_true')
             p.add_argument('--episode');p.add_argument('--subject',choices=['code','writing','research','general'])
         elif name=='backup':p.add_argument('destination')
-    hook=sub.add_parser('hook');hook.add_argument('--db',required=True)
+    hook=sub.add_parser('hook');hook.add_argument('--db');hook.add_argument('--host',choices=sorted(codex_host.HOSTS),default='codex')
+    hook.add_argument('--project',default=os.environ.get('PROJECT_MEMORY_PROJECT',os.getcwd()))
     args=parser.parse_args(argv)
     try:
         if args.command=='setup':result=setup(args.project,client=args.client,database=args.db,requirements=args.requirement,documents=args.document,trust=args.trust)
         elif args.command=='uninstall':result=uninstall(args.project)
         elif args.command=='hook':
-            old=sys.argv;sys.argv=['project-memory hook','--db',args.db]
+            path=database(args)
+            if not args.db and not path.exists():
+                # A plugin hook runs in every project. Without a configured database there is nothing to capture.
+                print('{}');return 0
+            old=sys.argv;sys.argv=['project-memory hook','--db',str(path),'--host',args.host]
             try:return codex_host.main()
             finally:sys.argv=old
-        elif args.command=='doctor':result=doctor(database(args))
+        elif args.command=='doctor':result=doctor(database(args),install_state(args).get('client'))
         else:
             with Memory(database(args)) as memory:
                 if args.command=='serve':
