@@ -4,7 +4,7 @@ const fs=require('node:fs'),path=require('node:path'),os=require('node:os');
 const {execFileSync}=require('node:child_process');
 const assert=require('node:assert/strict');
 (async()=>{
- const root=path.resolve(__dirname,'..'),temp=fs.mkdtempSync(path.join(os.tmpdir(),'memory-workspace-'));
+ const root=path.resolve(__dirname,'../..'),temp=fs.mkdtempSync(path.join(os.tmpdir(),'memory-workspace-'));
  const output=process.env.MEMORY_WORKSPACE_OUTPUT||path.join(root,'results/workspace-browser');
  const python=process.env.MEMORY_PYTHON||'python';let browser,server;
  const run=code=>JSON.parse(execFileSync(python,['-c',code,temp],{cwd:root,encoding:'utf8'}));

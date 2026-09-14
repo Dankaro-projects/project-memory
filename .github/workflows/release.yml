@@ -19,6 +19,7 @@ jobs:
       - uses: astral-sh/setup-uv@v6
       - name: Check release tag
         run: python scripts/check_version.py
+      - run: python scripts/check_publication.py
       - run: python scripts/build_bundle.py
       - run: uv build
       - run: python scripts/check_artifacts.py dist

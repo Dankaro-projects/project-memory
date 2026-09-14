@@ -151,7 +151,7 @@ class DocumentTests(unittest.TestCase):
         self.assertEqual(fresh['version'],2)
 
     def test_live_evaluator_counts_errors_when_host_omits_iserror(self):
-        from examples.codex_documents import call_failed
+        from tests.integration.codex_documents import call_failed
         failed={'result':{'content':[{'type':'text','text':dumps({'error':'InvalidRecord','message':'max_chars must be 500–20000.'})}]},'error':None}
         self.assertTrue(call_failed(failed))
         self.assertFalse(call_failed({'result':{'content':[{'type':'text','text':dumps({'records':[]})}]}}))

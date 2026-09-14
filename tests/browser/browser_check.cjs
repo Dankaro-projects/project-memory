@@ -5,7 +5,7 @@ const {execFileSync}=require('node:child_process');
 const {pathToFileURL}=require('node:url');
 const assert=require('node:assert/strict');
 (async()=>{
- const root=path.resolve(__dirname,'..'),browserOutput=process.env.MEMORY_BROWSER_OUTPUT||path.join(root,'results/viewer-v3'),temp=fs.mkdtempSync(path.join(os.tmpdir(),'memory-viewer-'));
+ const root=path.resolve(__dirname,'../..'),browserOutput=process.env.MEMORY_BROWSER_OUTPUT||path.join(root,'results/viewer-v3'),temp=fs.mkdtempSync(path.join(os.tmpdir(),'memory-viewer-'));
  let browser;
  const documentText=['# Product vision','','The product preserves an explicitly requested export option.','','## Conditions','','| Path | Required behaviour |','| --- | --- |','| UTF-8 | Reject invalid input. |','| Tagged Latin-1 | Preserve the exception. |','','- Keep **conditions** visible.','- Keep `source` text available.','','> Evidence remains separate from acceptance.','','```html','<img src=x onerror="window.injected=true">','```','','[Unsafe](javascript:window.injected=true)'].join('\n');
  try{
@@ -121,7 +121,7 @@ with Memory.create(root/'memory.sqlite','Browser fixture',['Plain English.']) as
    optionalChecks.push('project decision, research, writing, pattern, drift and capture views','decision lineage navigation','project mobile width');
   }
   const planning=path.join(temp,'planning');
-  execFileSync(process.env.MEMORY_PYTHON||'python',['-m','examples.planning_case','--project',planning,'--extra','26'],{cwd:root});
+  execFileSync(process.env.MEMORY_PYTHON||'python',['-m','tests.integration.planning_case','--project',planning,'--extra','26'],{cwd:root});
   await page.setViewportSize({width:1440,height:1000});
   await page.goto(pathToFileURL(path.join(planning,'board.html')).href);
   await page.locator('[data-view=board]').click();

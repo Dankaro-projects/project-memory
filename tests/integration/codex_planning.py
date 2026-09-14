@@ -4,8 +4,8 @@ import json
 from pathlib import Path
 import subprocess
 import sys
-from examples.codex_app_client import CodexClient, project_database
-from examples.codex_cases import final_json
+from tests.integration.codex_app_client import CodexClient, project_database
+from tests.integration.codex_cases import final_json
 from memory_module import Memory
 from memory_module.planning import card
 

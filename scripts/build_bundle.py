@@ -10,7 +10,7 @@ import zipfile
 root=Path(__file__).resolve().parents[1]
 manifest=json.loads((root/'bundle/manifest.json').read_text())
 output=root/'dist'/('project-memory-'+manifest['version']+'.mcpb');output.parent.mkdir(exist_ok=True)
-files={p.name:p for p in (root/'bundle').iterdir() if p.is_file()}
+files={name:root/'bundle'/name for name in ('manifest.json','server.py')}
 files['LICENSE']=root/'LICENSE'
 files.update({p.relative_to(root).as_posix():p for p in (root/'memory_module').iterdir() if p.suffix in {'.py','.html'}})
 files.update({p.relative_to(root).as_posix():p for p in (root/'memory_module/agents').glob('*.md')})

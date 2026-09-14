@@ -3,8 +3,8 @@ import argparse
 import json
 from pathlib import Path
 
-from examples.codex_app_client import CodexClient, project_database
-from examples.codex_cases import final_json
+from tests.integration.codex_app_client import CodexClient, project_database
+from tests.integration.codex_cases import final_json
 from memory_module import Memory
 
 

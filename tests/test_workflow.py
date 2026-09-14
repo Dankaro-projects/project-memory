@@ -257,7 +257,7 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(result.returncode,0,result.stderr)
 
     def test_real_host_example_records_failure_repair_and_unconfirmed_action(self):
-        from examples.host_example import run
+        from tests.integration.host_example import run
         result=run(self.root/'host example')
         self.assertNotEqual(result['first_exit_code'],0)
         self.assertEqual(result['second_exit_code'],0)

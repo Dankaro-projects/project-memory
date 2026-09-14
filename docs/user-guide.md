@@ -1,6 +1,6 @@
 # Use Project Memory
 
-Set up Project Memory once in each project using the [installation instructions](../README.md#install-and-connect). Setup opens the workspace in your browser. Start a new assistant session after setup so it loads the connection and hooks.
+Set up Project Memory once in each project using the [installation instructions](../README.md#install). Setup opens the workspace in your browser. Start a new assistant session after setup so it loads the connection and hooks.
 
 There is no separate HTML installation and no frontend to rebuild after each task. Your assistant and the workspace use the same project records.
 

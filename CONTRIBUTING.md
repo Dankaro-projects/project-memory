@@ -9,3 +9,27 @@ Include a reproduction of the original defect, the changed behaviour and the rel
 Examples and public evidence must be synthetic. Never commit project databases, personal paths, configuration, transcripts or private source documents. Propose schema changes with a tested migration and backup path. Do not rewrite previously recorded decisions to match a newer interpretation.
 
 Use GitHub issues for reproducible defects and discussions about proposed changes. Maintainers are the Dankaro-projects repository owners. Beta feedback should describe installation success, completed work, preserved constraints, repeated research, corrections and time spent maintaining memory; omit project content unless it is deliberately shareable.
+
+## Repository layout
+
+`memory_module/` contains the runtime and workspace assets. `docs/` contains maintained product documentation. `examples/` contains one small invented project. Unit tests live directly under `tests/`; `tests/integration/` holds repeatable host cases and `tests/browser/` holds browser regressions. Build and publication tools live in `scripts/`.
+
+## Local checks
+
+```sh
+python scripts/check_publication.py
+python -m unittest discover -s tests -q
+python -m tests.integration.document_case --output results/documents
+python -m tests.integration.host_example --output results/host-example
+node tests/browser/viewer_logic.cjs
+python scripts/build_bundle.py
+uv build
+python scripts/check_artifacts.py dist
+python scripts/installed_smoke.py dist
+```
+
+For UI changes, install development-only Playwright and its Chromium browser, then run `node tests/browser/browser_check.cjs` and `node tests/browser/workspace_browser.cjs`. `MEMORY_PLAYWRIGHT` can select an existing Playwright installation and `MEMORY_PYTHON` selects the project interpreter. Native model tests are opt-in; see [testing and limitations](docs/evidence.md).
+
+Run the publication check before committing. It checks tracked and non-ignored new files against the public layout and scans text for likely credentials, personal paths, session identifiers and private workspace URLs. New documentation requires an intentional addition to the allowlist and source-package configuration. The release gate also inspects the actual wheel, source archive and MCPB.
+
+Keep generated results under ignored `results/` or outside the checkout. Do not add screenshots, traces, session reports or private audit archives to documentation. Review the diff and your Git commit identity before pushing; automated checks cannot establish that every name or statement is safe to publish, and they do not erase Git history.

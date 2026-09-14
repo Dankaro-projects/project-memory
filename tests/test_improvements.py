@@ -71,7 +71,7 @@ class ImprovementTests(unittest.TestCase):
         for data in [{'view':'record','id':True},{'query':'x','subject':'code','seen':True}]:
             with self.assertRaises(InvalidRecord):dispatch(self.m,'memory_get' if 'view' in data else 'memory_context',data)
     def test_input_audit_counts_full_requests_and_resume(self):
-        from examples.context_audit import audit
+        from tests.integration.context_audit import audit
         root=Path(self.temp.name)
         def usage(last,total):return json.dumps({'method':'thread/tokenUsage/updated','params':{'tokenUsage':{'last':{'inputTokens':last},'total':{'inputTokens':total}}}})+'\n'
         (root/'events.jsonl').write_text(usage(9000,9000)+usage(9999,18999))
@@ -81,7 +81,7 @@ class ImprovementTests(unittest.TestCase):
         (root/'resume.jsonl').write_text('')
         self.assertFalse(audit(root)['meets_target'])
     def test_task_quality_requires_actual_required_operations(self):
-        from examples.codex_cases import execution_checks
+        from tests.integration.codex_cases import execution_checks
         self.assertFalse(all(execution_checks('encoding','without_memory',[],0).values()))
         event={'method':'item/completed','params':{'item':{'type':'commandExecution','exitCode':0,'command':'cat parser.py','aggregatedOutput':'def decode_new_file(value):'}}}
         self.assertTrue(all(execution_checks('encoding','without_memory',[event],1).values()))

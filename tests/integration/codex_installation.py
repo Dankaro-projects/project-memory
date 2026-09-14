@@ -1,21 +1,21 @@
 """Verify an installed project through a fresh native Codex host; keep logs private.
 
-Usage: python -m examples.codex_installation PROJECT PRIVATE_OUTPUT
+Usage: python -m tests.integration.codex_installation PROJECT PRIVATE_OUTPUT
 Requires the actual Codex CLI login and completed, trusted project setup.
 The versioned marker prevents an accidental repeat of this verification.
 """
 import json,sys,time,uuid
 from pathlib import Path
-from examples.codex_app_client import CodexClient
-from memory_module import Memory
+from tests.integration.codex_app_client import CodexClient
+from memory_module import Memory, __version__
 from memory_module.codex_host import status
 project=Path(sys.argv[1]).resolve()
 output=Path(sys.argv[2]).resolve();output.mkdir(parents=True,exist_ok=True)
-marker=project/'.memory/beta8-installation-check.txt'
+marker=project/f'.memory/{__version__}-installation-check.txt'
 if marker.exists():raise FileExistsError(marker)
-text='Project Memory beta 8 preserves this project: '+uuid.uuid4().hex
+text=f'Project Memory {__version__} preserves this project: '+uuid.uuid4().hex
 marker.write_text(text+'\n')
-source_key='verification:beta8:'+uuid.uuid4().hex
+source_key=f'verification:{__version__}:'+uuid.uuid4().hex
 client=CodexClient(project,output/'events.jsonl')
 start=time.monotonic()
 try:

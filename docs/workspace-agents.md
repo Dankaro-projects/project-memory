@@ -53,7 +53,7 @@ Setup preserves existing data and opens the workspace. Existing project requirem
 
 SQLite remains authoritative, with one additional table for review runs and immutable execution receipts. The Python runtime has no third-party dependencies. The optional local server exits after ten minutes without requests. It polls for changes while the browser is visible and retains drafts independently of refresh.
 
-Review packets preserve full intent and criteria. Large supporting records move into a local file that the reviewer can read; they are not silently truncated. Full receipt archives remain separate. Review context includes mechanical counts, reported failures, unconfirmed calls and reconciliation evidence, with individual completed receipts available on demand. This bounds the initial packet, not the complete model input or aggregate provider usage. It does not enforce a 10K-token cap. The [evaluation](workspace-agents-evidence-2026-09-14.md) reports actual provider counts and latency separately from initial packet characters.
+Review packets preserve full intent and criteria. Large supporting records move into a local file that the reviewer can read; they are not silently truncated. Full receipt archives remain separate. Review context includes mechanical counts, reported failures, unconfirmed calls and reconciliation evidence, with individual completed receipts available on demand. This bounds the initial packet, not the complete model input or aggregate provider usage. It does not enforce a 10K-token cap. Report actual provider counts and latency separately from initial packet characters.
 
 This release adds conditional independent checking and interactive planning. It does not start unattended implementation from the board, guarantee detection of unrecorded intent, prove lower daily correction rates or establish superiority over competing systems. Agent judgments can be wrong. Cancelled and failed checks remain visible rather than being removed from the measured results.
 
@@ -67,4 +67,4 @@ The reviewer receives numbered checklist entries for the criterion, scope, gover
 
 When SQLite cannot capture an event, the hook reports failure to the host and attempts to write a small local `.capture-error.json` sidecar. The viewer notices it even without a database revision. On successful recovery, the gap becomes an immutable receipt; an explicit checkpoint must acknowledge the inspected interval. If both the database and directory are unwritable, only the host error channel can report the failure. No unavailable storage mechanism can prove complete capture.
 
-See [the completeness evaluation](completeness-evidence-2026-09-14.md) for the baseline, actual host runs, costs and remaining limits.
+See [testing and limitations](evidence.md) for host checks and evaluation requirements.

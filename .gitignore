@@ -19,3 +19,13 @@ memory-viewer.html
 uv.lock
 example-run/
 node_modules/
+playwright-report/
+test-results/
+screenshots/
+traces/
+coverage/
+htmlcov/
+.coverage*
+*.log
+*.har
+.claude/settings.local.json

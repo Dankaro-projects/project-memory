@@ -2,7 +2,7 @@
 import argparse
 import json
 from pathlib import Path
-from examples.agent_check_case import seed, assess, FIXED, TESTS, LEGACY
+from tests.integration.agent_check_case import seed, assess, FIXED, TESTS, LEGACY
 from memory_module import Memory, reviews
 
 

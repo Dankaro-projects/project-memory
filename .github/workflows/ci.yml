@@ -20,11 +20,12 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
       - uses: astral-sh/setup-uv@v6
+      - run: python scripts/check_publication.py
       - run: python -u -m unittest discover -s tests -v
         timeout-minutes: 5
-      - run: python -m examples.document_case --output results/documents
-      - run: python -m examples.host_example --output results/host-example
-      - run: node tests/viewer_logic.cjs
+      - run: python -m tests.integration.document_case --output results/documents
+      - run: python -m tests.integration.host_example --output results/host-example
+      - run: node tests/browser/viewer_logic.cjs
       - run: python scripts/build_bundle.py
       - run: uv build
       - run: python scripts/check_artifacts.py dist
@@ -41,6 +42,6 @@ jobs:
           node-version: '22'
       - run: npm install --no-save playwright@1.55.1
       - run: npx playwright install --with-deps chromium
-      - run: python -m examples.host_example --output results/host-example
-      - run: node tests/browser_check.cjs
-      - run: node tests/workspace_browser.cjs
+      - run: python -m tests.integration.host_example --output results/host-example
+      - run: node tests/browser/browser_check.cjs
+      - run: node tests/browser/workspace_browser.cjs

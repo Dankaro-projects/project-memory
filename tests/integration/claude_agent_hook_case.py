@@ -5,7 +5,7 @@ from pathlib import Path
 import subprocess
 import time
 import uuid
-from examples.agent_check_case import seed
+from tests.integration.agent_check_case import seed
 from memory_module import Memory, codex_host, reviews
 from memory_module.install import setup
 from memory_module.planning import latest

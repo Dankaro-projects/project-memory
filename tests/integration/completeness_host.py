@@ -5,7 +5,7 @@ from pathlib import Path
 import subprocess
 import time
 import uuid
-from examples.codex_app_client import CodexClient
+from tests.integration.codex_app_client import CodexClient
 from memory_module import Memory
 from memory_module.install import setup
 from memory_module.coverage import inspect

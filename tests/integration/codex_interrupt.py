@@ -4,8 +4,8 @@ import json
 from pathlib import Path
 import queue
 import time
-from examples.codex_app_client import CodexClient, project_database
-from examples.codex_documents import call_failed
+from tests.integration.codex_app_client import CodexClient, project_database
+from tests.integration.codex_documents import call_failed
 from memory_module import Memory
 from memory_module.codex_host import status
 

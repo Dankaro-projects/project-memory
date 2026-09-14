@@ -2,7 +2,7 @@
 import argparse
 import json
 from pathlib import Path
-from examples.codex_app_client import CodexClient, project_database
+from tests.integration.codex_app_client import CodexClient, project_database
 from memory_module import Memory
 from memory_module.codex_host import status
 

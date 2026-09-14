@@ -59,7 +59,7 @@ The Codex and Claude Code plugins provide the same three MCP tools and a short w
 
 A successful subprocess check does not establish that the three native tools are available in an already open task. In that task, call `memory_get` with `view: health` once. If the tools are absent, open a new task after setup; do not report a custom stdio bridge as native integration.
 
-In a new Codex task, ask the assistant to capture a selected document, record a decision with evidence, perform a small project action and record its actual outcome. Inspect the records with `view` and `doctor`. Reproducible live interruption and lifecycle harnesses are in `examples/`; they require a signed-in local Codex and intentionally execute synthetic work. [Evidence](evidence.md) separates those checks from unit tests.
+In a new Codex task, ask the assistant to capture a selected document, record a decision with evidence, perform a small project action and record its actual outcome. Inspect the records with `view` and `doctor`. Reproducible live interruption and lifecycle harnesses are in `tests/integration/`; they require a signed-in local Codex and intentionally execute synthetic work. [Evidence](evidence.md) separates those checks from unit tests.
 
 ## Back up, upgrade and remove
 

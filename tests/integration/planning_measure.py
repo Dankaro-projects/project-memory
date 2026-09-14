@@ -4,7 +4,7 @@ from pathlib import Path
 from statistics import median
 import tempfile
 from time import perf_counter
-from examples.planning_case import seed
+from tests.integration.planning_case import seed
 from memory_module import Memory, __version__
 from memory_module.mcp import dispatch, tool_result
 

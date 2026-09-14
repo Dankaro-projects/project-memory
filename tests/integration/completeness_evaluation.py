@@ -10,7 +10,7 @@ import time
 
 
 def main():
-    p=argparse.ArgumentParser();p.add_argument('--package-root',type=Path,default=Path(__file__).resolve().parents[1]);p.add_argument('--output',type=Path,required=True);a=p.parse_args()
+    p=argparse.ArgumentParser();p.add_argument('--package-root',type=Path,default=Path(__file__).resolve().parents[2]);p.add_argument('--output',type=Path,required=True);a=p.parse_args()
     root=a.package_root.resolve();env={**os.environ,'PYTHONPATH':str(root)};started=time.monotonic()
     with tempfile.TemporaryDirectory(prefix='memory-completeness-eval-') as d:
         database=Path(d)/'memory.sqlite'

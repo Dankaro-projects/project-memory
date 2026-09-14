@@ -1,34 +1,22 @@
 # Project Memory
 
-Project Memory keeps a project's decisions, evidence, outcomes and reviewed lessons in a local SQLite database. An AI assistant retrieves the relevant records through three MCP tools; people inspect the same history in a self-contained HTML viewer.
+Project Memory keeps decisions, evidence, outcomes and reviewed lessons in a local SQLite database. Your assistant retrieves relevant records through three MCP tools. You follow the same work in a live workspace with a sprint board, decision history and searchable documents.
 
-The [work board](docs/work-board.md) groups actions into sprints and connects each card to its intended result, scope, next action and decision history. The assistant uses the same checked state to resume work, inspect uncertain execution and recognise when human input is needed. Start with the [user guide](docs/user-guide.md) for opening the workspace, following work and resolving missing updates. Beta 5 adds interactive planning and conditional agent checks; see [workspace and agents](docs/workspace-agents.md).
-
-Use it when a project repeatedly revisits research, loses the reasons behind decisions, or carries outdated requirements into new work. It preserves the original evidence and the conditions under which a decision or lesson applies.
-
-**Public beta.** The runtime uses Python 3.11+ and its standard library. There is no model service, vector database, telemetry or background maintenance process. The assistant still interprets evidence and needs explicit agreement before accepting a lesson or changing project requirements. [Evidence and limits](docs/evidence.md) describe what has actually been measured.
+**Public beta.** Python 3.11+ is required. The runtime has no third-party dependencies, telemetry or hosted database. Optional reviewer agents use your installed Codex or Claude Code account.
 
 <!-- mcp-name: io.github.Dankaro-projects/project-memory -->
 
-## Install and connect
+## Install
 
-Install [uv](https://docs.astral.sh/uv/getting-started/installation/), then run this **inside the project you want to remember**:
+Install [uv](https://docs.astral.sh/uv/getting-started/installation/), then run this inside the project you want to remember:
 
 ```sh
 uvx project-memory-mcp@0.5.0b8 setup --client codex --trust
 ```
 
-This creates `.memory/project.sqlite`, adds a project-local MCP connection and nine command hooks, and asks the installed Codex host for the exact hook hashes to enable. Existing settings and records are preserved. Setup opens the included live HTML viewer; add `--no-view` for headless use. Open a new Codex task afterwards. `--trust` explicitly enables these project hooks; omit it to review and enable them in Codex yourself.
+For Claude Code, replace `--client codex` with `--client claude`. Setup preserves existing records and settings, connects MCP and lifecycle hooks, and opens the workspace. `--trust` enables the project integration; omit it to review trust in your client. Start a new assistant session afterwards. Add `--no-view` for headless setup.
 
-For Claude Code, run the same command with `--client claude`:
-
-```sh
-uvx project-memory-mcp@0.5.0b8 setup --client claude --trust
-```
-
-This adds the `project_memory` server to the project's `.mcp.json` and the lifecycle hooks to `.claude/settings.local.json`, which Claude Code keeps out of version control. `--trust` pre-approves the project MCP server in that local settings file; omit it to approve the server when Claude Code asks. Start a new Claude Code session in the project afterwards. Claude Code has no interrupt hook, so eight of the nine lifecycle events are captured there; an interrupted tool call remains visible as an unconfirmed receipt. Claude Code's tool failure event closes the same receipt as a completed call, with the failure retained. After automatic compaction, the session start hook restores the memory session, the active decision and the reconciliation count.
-
-For a permanent CLI installation:
+For a permanent CLI:
 
 ```sh
 uv tool install project-memory-mcp==0.5.0b8
@@ -36,62 +24,30 @@ project-memory doctor
 project-memory view
 ```
 
-For another local MCP client, run `project-memory setup --client mcp`, then configure the client to run `project-memory serve --project /absolute/path/to/project`. Generic MCP supports explicit records and retrieval; automatic receipts exist for Codex and Claude Code. The Codex integration has been verified in a live host; the Claude Code integration has a bounded live CLI check, with separate limits on interruption and compaction evidence. [Setup and lifecycle](docs/setup.md) includes imports, upgrades, backup, uninstall and client configuration.
+Other local MCP clients can use `setup --client mcp` and the stdio server. See [setup](docs/setup.md) for client configuration, imports, upgrades, backup and uninstall, or [distribution](docs/distribution.md) for plugins and desktop bundles.
 
-Claude Code can also install the plugin, which provides the three tools, the lifecycle hooks and a workflow skill in every project that has run `project-memory setup --client mcp`:
-
-```sh
-claude plugin marketplace add Dankaro-projects/project-memory
-claude plugin install project-memory@dankaro
-```
-
-Claude plugin hooks skip capture when managed project hooks are present. Keep one MCP connection enabled to avoid presenting the same tools twice. Codex does not discover the Claude hook file.
-
-The same versioned wheel is available from [GitHub Releases](https://github.com/Dankaro-projects/project-memory/releases). The MCPB asset supports directory selection in compatible desktop clients.
-
-Published on [PyPI](https://pypi.org/project/project-memory-mcp/0.5.0b8/), the [official MCP Registry](https://registry.modelcontextprotocol.io/v0.1/servers/io.github.Dankaro-projects%2Fproject-memory/versions/0.5.0b8), and [Smithery](https://smithery.ai/servers/msuteu/project-memory). The [Glama listing](https://glama.ai/mcp/servers/Dankaro-projects/project-memory) is also claimed and has a tested beta container release. See [distribution and compatibility](docs/distribution.md) for verified launch paths and remaining limits.
-
-![The workspace shows synthetic sprint actions, priorities and checked progress.](docs/images/viewer.png)
-
-## Use it in ordinary work
+## Work with it
 
 Ask your assistant:
 
-> Capture VISION.md and our decision log. Show which statements are evidence, proposals and agreed requirements. Preserve the originals. Before choosing an approach, retrieve relevant decisions and check whether their evidence is still current.
+> Capture VISION.md and our decision log. Separate evidence, proposals and agreed requirements. Before choosing an approach, retrieve relevant decisions and check whether their evidence is still current.
 
-Then work normally. The assistant supplies record IDs and versions. You review the meaning, rather than maintain a second set of forms.
+- Decisions retain their evidence, alternatives, uncertainty, expected consequences and revisions.
+- The work board connects actions and sprints to decisions, outcomes and dependencies.
+- Selected Markdown files refresh through hooks. Earlier versions remain available and changed evidence is flagged.
+- Code reviews, writing corrections and research remain separate, with explicit dependencies between them.
+- Successes, failures and recoveries can produce proposed lessons. Acceptance remains an explicit review.
 
-- A decision records its evidence, initial choice, alternatives, uncertainty, expected consequences and conditions for reconsideration.
-- Actions and actual outcomes attach to that decision. Revisions retain the earlier choice and its result.
-- Successful practices, anti-patterns and recoveries can become proposed lessons. A separate review accepts, rejects or retires them, with their scope and exceptions intact.
-- Code reviews, writing corrections and research remain separate subjects. A dependency across subjects must name the evidence and explain why it matters.
-- Selected Markdown files are captured verbatim. Changed, missing and superseded evidence is flagged. Importing a vision does not approve its proposals.
-- Approved project requirements can evolve through append-only revisions. Earlier decisions retain the version they used and become reviewable when the agreed basis changes.
+Run `project-memory view` whenever you want to follow work or plan actions. The local workspace refreshes automatically; the assistant does not rebuild it after each change. Use `--output review.html --include-bodies` for an offline snapshot. The [user guide](docs/user-guide.md) covers everyday use and missing updates.
 
-Run `project-memory view` for decisions, documents, corrections, patterns, drift, captures and unresolved work. It opens a live local workspace with paged records, evidence navigation and automatic refresh. Beta 5 also lets you create actions and sprints, revise plans, add comments and inspect or cancel agent checks. The [workspace interface](docs/workspace-ui.md) adds sidebar navigation, a side inspector and formatted documents with access to the original text. Source text loads on demand. Use `--output review.html --include-bodies` for an offline snapshot.
+Hooks capture events mechanically. The assistant still needs to record meaning, decisions and outcomes correctly. An interrupted command stays uncertain until its actual effects are checked. Bounded retrieval limits returned characters; it cannot guarantee that the host's complete model input stays below 10K tokens. [Testing and limitations](docs/evidence.md) explains the verified boundaries and unmeasured claims.
 
-## What is automatic
+## Documentation
 
-Codex and Claude Code hooks mechanically record session and tool events, sizes, hashes and available execution metadata. They do not turn a failed command into a lesson or assume that an interrupted command rolled back. The assistant records interpretation separately and checks side effects before retrying uncertain work.
+- [User guide](docs/user-guide.md) and [work board](docs/work-board.md)
+- [Setup and upgrades](docs/setup.md) and [client compatibility](docs/distribution.md)
+- [Records and evidence](docs/record-fields.md) and [reviewer agents](docs/workspace-agents.md)
+- [Workspace interface](docs/workspace-ui.md)
+- [Contributing and tests](CONTRIBUTING.md), [security](SECURITY.md) and [releasing](docs/releasing.md)
 
-Retrieval returns bounded, complete records and preserves exceptions. Search indexes and explicit source slices support expansion when needed. The default MCP reply limit is 6,000 characters, with an explicit maximum of 20,000; these are **characters in the tool result, not complete model-input tokens**. Keeping every model input below 10K tokens remains a target, subordinate to quality and feature preservation.
-
-## Develop and verify
-
-```sh
-python -m unittest discover -s tests -q
-python -m examples.document_case --output results/documents
-python -m examples.host_example --output results/host-example
-node tests/viewer_logic.cjs
-uv build
-python scripts/check_artifacts.py dist
-python scripts/installed_smoke.py dist
-```
-
-The public artifacts contain code, documentation and synthetic examples. They exclude project databases, host transcripts, private evaluation archives and local configuration. [Contributing](CONTRIBUTING.md), [security](SECURITY.md), [record fields](docs/record-fields.md), [release process](docs/releasing.md).
-
-The [first-beta feedback review](docs/feedback-2026-09-14.md) records the observed workflow defects, the fixes, comparable measurements and remaining limits.
-
-The [autonomy and Kanban report](docs/autonomy-2026-09-14.md) records actual continuation, interruption recovery and board checks, including the unmet full-input target.
-
-The completeness changes and their measured limits are documented in the [completeness evaluation](docs/completeness-evidence-2026-09-14.md).
+Packages are available through [PyPI](https://pypi.org/project/project-memory-mcp/), [GitHub Releases](https://github.com/Dankaro-projects/project-memory/releases), the [MCP Registry](https://registry.modelcontextprotocol.io/v0.1/servers/io.github.Dankaro-projects%2Fproject-memory/versions/0.5.0b8), [Smithery](https://smithery.ai/servers/msuteu/project-memory) and [Glama](https://glama.ai/mcp/servers/Dankaro-projects/project-memory). Directory availability does not establish compatibility with every client.
