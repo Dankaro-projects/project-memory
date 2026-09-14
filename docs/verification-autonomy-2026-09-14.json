@@ -301,5 +301,15 @@
     "same_database": true,
     "old_viewer_remains_available": true,
     "initial_harness_failure": "Running inside the source checkout shadowed the installed beta 3 child module. The version assertion failed; running outside the checkout verified the installed boundary."
+  },
+  "initial_ci": {
+    "run": 34842932721,
+    "passed": [
+      "Chromium",
+      "Linux Python 3.11 and 3.14",
+      "macOS Python 3.11 and 3.14"
+    ],
+    "failed": "Windows Python 3.11 and 3.14: test cleanup sent a console interrupt through signal zero.",
+    "correction": "Poll the owned HTTP endpoint after terminating the test server."
   }
 }

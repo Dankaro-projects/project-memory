@@ -177,7 +177,7 @@ class PlanningTests(unittest.TestCase):
             os.kill(server['pid'],signal.SIGTERM)
             import time
             for _ in range(100):
-                try:os.kill(server['pid'],0)
+                try:read('api/health')
                 except OSError:break
                 time.sleep(.01)
 
