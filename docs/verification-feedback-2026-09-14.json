@@ -471,6 +471,13 @@
       "failure": "Five live-viewer tests timed out at startup. A diagnostic stack located the block in socket.getfqdn called by HTTPServer.server_bind.",
       "correction": "Bind the fixed loopback address directly and set its known server name without DNS. Terminate and reap a child when startup fails.",
       "rerun": "Pending final cross-platform CI."
+    },
+    {
+      "run": "https://github.com/Dankaro-projects/project-memory/actions/runs/34828177061",
+      "platform": "Windows, Python 3.14",
+      "failure": "Two test assumptions failed: text-mode file reads normalized CRLF while capture correctly preserved bytes; a 250 ms expiry could pass before the first HTTP check on the slower runner.",
+      "correction": "Compare against decoded file bytes and establish a live current-copy response before waiting past a longer deadline.",
+      "rerun": "Pending final cross-platform CI."
     }
   ]
 }
