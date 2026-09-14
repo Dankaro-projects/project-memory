@@ -8,6 +8,7 @@ Work intent now connects to an explicit next action, scope, dependencies and spr
 - Bounded continuation distinguishes ready work, human proposals, dependency and evidence review, uncertain execution, another session's work, and completion that only needs its plan finalised.
 - Decisions retain the work plan used at the time. Scope and prerequisite changes trigger review; routine progress changes do not.
 - Startup and continuation hooks point to the planned work without starting another objective or claiming tool permissions.
+- Setup opens the current viewer after an upgrade instead of reusing an older process.
 - Existing records remain intact. The first plan write extends the existing event validation trigger transactionally; no dependency, task database or agent scheduler is added.
 
 See [work board and continuation](docs/work-board.md) for usage and boundaries, and the [iteration evidence](docs/autonomy-2026-09-14.md) for measured failures and recovery.
