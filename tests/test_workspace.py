@@ -132,6 +132,13 @@ class WorkspaceTests(unittest.TestCase):
         retry=reviews.request(self.m,ep,'intent',request_key='human-retry',retry=True)
         self.assertNotEqual(retry['id'],first['id'])
         with self.assertRaises(Conflict):reviews.request(self.m,ep,'outcome',request_key='parallel')
+    def test_long_reviews_have_an_explicit_bounded_time_allowance(self):
+        reviews.configure(self.m,self.root,'codex');ep=self.work['episode_id']
+        for value in [0,901,True]:
+            with self.assertRaises(InvalidRecord):reviews.request(self.m,ep,request_key='bad-limit',max_seconds=value)
+        run=reviews.request(self.m,ep,request_key='extended-review',max_seconds=900)
+        self.assertEqual(run['snapshot']['execution_limit_seconds'],900)
+        self.assertEqual(reviews.current(self.m,ep)['state'],'queued')
     def test_false_pass_and_missing_evidence_are_rejected(self):
         report={'verdict':'pass','summary':'The host claims success.','checks':[{'criterion':'Preserve exception.','evidence':'No direct evidence.','result':'unknown'}],'findings':[],'lesson_proposals':[]}
         with self.assertRaises(InvalidRecord):reviews.validate_report(report)

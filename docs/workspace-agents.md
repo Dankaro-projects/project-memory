@@ -20,7 +20,7 @@ These are separate, short-lived host CLI processes with bundled role instruction
 
 Open a card's **Agent checks** panel to run a selected check, cancel a running check and inspect criterion-level findings. Earlier checks remain readable. Proposed lessons carry their basis, conditions and exceptions; they are not automatically accepted into memory. The UI does not currently provide lesson acceptance or project-requirement approval; those existing explicit MCP operations remain available.
 
-The same work and evidence reuse a check. A new explicit request can retry a failed or cancelled review. Only one check runs per project; a competing request returns a visible conflict. Workers report activity, time out after five minutes and preserve diagnostic files. A worker without activity for 30 seconds appears interrupted. No automatic retry assumes that interrupted implementation did not execute.
+The same work and evidence reuse a check. A new explicit request can retry a failed or cancelled review. Only one check runs per project; a competing request returns a visible conflict. Workers report activity, use a five-minute default deadline. The user can select up to fifteen minutes for a larger check and preserve diagnostic files. A worker without activity for 30 seconds appears interrupted. No automatic retry assumes that interrupted implementation did not execute.
 
 Codex Interrupt cancels checks tied to that session. Claude has no equivalent Interrupt hook; use **Cancel check**, or inspect the expired-worker state after a process failure. Stop intervenes once for a check. Subsequent Stop events do not add more review feedback. The host can finish its reply while a check is still running; the board's Done gate continues to enforce the result. Use the CLI wait command when the current task needs the result before replying.
 
@@ -29,6 +29,7 @@ project-memory review --episode EPISODE_ID --role outcome
 project-memory review --wait CHECK_ID
 project-memory review --cancel CHECK_ID
 project-memory review --episode EPISODE_ID --role recovery --retry
+project-memory review --episode EPISODE_ID --role outcome --retry --max-seconds 900
 ```
 
 MCP still exposes three tools. Use `memory_get` with `view: "schema", id: "agent_check"` for the review request shape; `id: "review"` retains the existing code-review record schema. Retrieve a bounded review list with `view: "reviews", id: EPISODE_ID`, then read a full check by its ID.
