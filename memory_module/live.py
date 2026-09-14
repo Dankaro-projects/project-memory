@@ -254,15 +254,21 @@ def _start(path,state):
             import threading
             threading.Thread(target=process.wait,daemon=True).start()
             return {k:v for k,v in value.items() if k!='token'}
-        if process.poll() is not None:raise RuntimeError('The viewer did not start. Inspect '+str(log))
+        if process.poll() is not None:raise RuntimeError('The viewer did not start. '+log.read_text()[-4000:])
         time.sleep(.05)
-    raise RuntimeError('Viewer startup timed out. Inspect '+str(log))
+    process.terminate()
+    try:process.wait(timeout=2)
+    except subprocess.TimeoutExpired:process.kill();process.wait()
+    raise RuntimeError('Viewer startup timed out. '+log.read_text()[-4000:])
 
 
 def main():
     parser=argparse.ArgumentParser();parser.add_argument('--db',required=True);parser.add_argument('--state',required=True)
     args=parser.parse_args();state=Path(args.state);info=json.loads(state.read_text())
+    import faulthandler
+    faulthandler.dump_traceback_later(3)
     with Viewer(args.db,info['token'],info.get('port',0)) as server:
+        faulthandler.cancel_dump_traceback_later()
         info.update(port=server.server_port,url=f'http://127.0.0.1:{server.server_port}/{info["token"]}/',phase='ready',pid=os.getpid())
         atomic(state,dumps(info));state.chmod(0o600);server.timeout=1
         while time.monotonic()-server.last_access<600:server.handle_request()
