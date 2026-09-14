@@ -38,7 +38,7 @@ New completion claims require a current passing outcome check when reviews are e
 
 ## Install this development version
 
-Beta 5 is unreleased. Run these commands from a checked-out copy of this branch:
+The README installs published beta 5. To work from source instead, run these commands from a checked-out copy of the repository:
 
 ```sh
 uv tool install --force .
@@ -67,4 +67,4 @@ The reviewer receives numbered checklist entries for the criterion, scope, gover
 
 When SQLite cannot capture an event, the hook reports failure to the host and attempts to write a small local `.capture-error.json` sidecar. The viewer notices it even without a database revision. On successful recovery, the gap becomes an immutable receipt; an explicit checkpoint must acknowledge the inspected interval. If both the database and directory are unwritable, only the host error channel can report the failure. No unavailable storage mechanism can prove complete capture.
 
-See [the completeness evaluation](completeness-evidence-2026-09-14.md) for the baseline, actual host runs, costs and remaining limits. Beta publication remains on hold.
+See [the completeness evaluation](completeness-evidence-2026-09-14.md) for the baseline, actual host runs, costs and remaining limits.
