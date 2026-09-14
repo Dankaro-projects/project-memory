@@ -11,7 +11,7 @@ Release and client status was verified on 13 September 2026 for `0.5.0b1`. Glama
 | [Glama](https://glama.ai/mcp/servers/Dankaro-projects/project-memory) | The listing is public and author-verified. Container release `0.5.0-beta.1` is published from the GitHub release commit. Glama's build test passed the MCP handshake and discovered all three tool schemas. Public tool indexing and quality grading remain unverified. |
 | Codex project setup | Actual capture of all nine hooks, one interrupted side effect, recovery in a new host, and four facts retained through compaction on Codex 0.153.4/macOS. |
 | Codex plugin | Installed from the repository marketplace; a fresh host launched the published wheel and completed `memory_get direction`. Hooks require the separate project setup. |
-| Claude Code project setup (unreleased) | Setup writes `.mcp.json` and `.claude/settings.local.json`; the installed hook command captured simulated Claude Code payloads for all eight applicable events, including compaction context and a tool failure, in real processes. A live Claude Code session has not yet been observed. |
+| Claude Code project setup | A live Claude Code 2.1.270 CLI session used native MCP health, retrieval and document capture and produced six applicable lifecycle event types. Simulated payload tests cover the other events. Live Claude compaction and interruption remain unverified; see the dated feedback report. |
 | Other local MCP clients | The MCPB entry point and generic stdio process are tested. Installation inside each desktop client is not yet verified. |
 
 Python tests, bundled process execution and installed-wheel checks pass on Windows, macOS and Linux with Python 3.11 and 3.14. That does not imply that Codex hooks have been exercised on every operating system.
@@ -36,7 +36,7 @@ claude plugin marketplace add Dankaro-projects/project-memory
 claude plugin install project-memory@dankaro
 ```
 
-Plugin hooks run in every project. They resolve the project's database from its install record and exit silently where no Project Memory database exists, so unrelated projects are not blocked. Initialise a project with `project-memory setup --client mcp` before use, and do not combine the plugin with `setup --client claude` in the same project. `claude plugin validate` accepts both manifests; a live Claude Code session with the installed plugin has not yet been observed.
+Plugin hooks run in every project. They resolve the project's database from its install record and exit silently where no Project Memory database exists, so unrelated projects are not blocked. Initialise a project with `project-memory setup --client mcp` before use, and keep one MCP connection enabled. Plugin hooks skip capture when managed Claude project hooks already exist. `claude plugin validate` accepts both manifests; a live Claude Code session with the installed plugin has not yet been observed.
 
 ## Remaining channels
 

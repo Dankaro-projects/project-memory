@@ -2,6 +2,22 @@
 import json
 from .core import InvalidRecord, Conflict, _text, _digest, dumps
 
+PLACEHOLDER = 'No project-specific requirements have been approved. Obtain agreement before making material project decisions.'
+
+
+def items(memory, limit=10, offset=0):
+    """Page complete requirements without treating captured documents as approval."""
+    revision = current(memory)
+    requirements = revision['requirements']
+    signature = _digest(dumps([revision['version'], requirements, revision.get('status', 'current')]))
+    return {'version': revision['version'], 'signature': signature,
+            'status': 'not_established' if requirements == [PLACEHOLDER] else revision.get('status', 'current'),
+            'items': [{'id': f"requirement_{revision['version']}_{i+1}", 'text': text}
+                      for i, text in enumerate(requirements) if offset <= i < offset + limit],
+            'evidence': revision['evidence'], 'total': len(requirements), 'offset': offset,
+            'more': offset + limit < len(requirements), 'next_offset': min(offset + limit, len(requirements)),
+            'note': 'These are the recorded governing requirements, not proof of complete product coverage. Only reuse the signature after reading every item. Captured source capabilities and proposals remain evidence until explicitly approved.'}
+
 SCHEMA = ['''
 CREATE TABLE IF NOT EXISTS project_revisions (
  version INTEGER PRIMARY KEY, requirements TEXT NOT NULL, reason TEXT NOT NULL,

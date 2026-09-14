@@ -32,7 +32,9 @@ class InvalidRecord(MemoryError):
 
 
 class BudgetTooSmall(MemoryError):
-    pass
+    def __init__(self, message, **details):
+        super().__init__(message)
+        self.details = details
 
 
 def dumps(value):
@@ -154,18 +156,21 @@ class Memory(Workflow):
         db.close()
         return cls(path, clock=clock)
 
-    def __init__(self, path, *, clock=None):
+    def __init__(self, path, *, clock=None, read_only=False):
         self.path = Path(path).resolve()
         self.clock = clock or (lambda: datetime.now(timezone.utc).isoformat())
-        self.db = sqlite3.connect(self.path.as_uri() + "?mode=rw", uri=True,
+        self.db = sqlite3.connect(self.path.as_uri() + ("?mode=ro" if read_only else "?mode=rw"), uri=True,
                                   isolation_level=None, timeout=5)
         self.db.row_factory = sqlite3.Row
         try:
             if self.db.execute("PRAGMA user_version").fetchone()[0] != SCHEMA_VERSION:
                 raise InvalidRecord("Unsupported database version. Use migrate to upgrade version 1 to a new file.")
             self.db.execute("PRAGMA foreign_keys=ON")
-            self.db.execute("PRAGMA journal_mode=WAL")
-            self.db.execute("PRAGMA synchronous=FULL")
+            if read_only:
+                self.db.execute("PRAGMA query_only=ON")
+            else:
+                self.db.execute("PRAGMA journal_mode=WAL")
+                self.db.execute("PRAGMA synchronous=FULL")
             self.project = self.db.execute("SELECT value FROM settings WHERE key='project'").fetchone()[0]
             self.initial_requirements = json.loads(self.db.execute(
                 "SELECT value FROM settings WHERE key='requirements'").fetchone()[0])
@@ -258,10 +263,10 @@ class Memory(Workflow):
         return {"id": sid, "version": version, "status": self.source_status(sid)}
 
     def source_status(self, source_id):
-        source = self.db.execute("SELECT * FROM sources WHERE id=?", (source_id,)).fetchone()
+        source = self.db.execute("SELECT source_key,content_hash FROM sources WHERE id=?", (source_id,)).fetchone()
         if source is None:
             raise InvalidRecord("Evidence source was not found in this project.")
-        latest = self.db.execute("SELECT * FROM sources WHERE source_key=? ORDER BY version DESC LIMIT 1",
+        latest = self.db.execute("SELECT content_hash,origin,source_key,review_after FROM sources WHERE source_key=? ORDER BY version DESC LIMIT 1",
                                  (source["source_key"],)).fetchone()
         if latest["content_hash"] != source["content_hash"]:
             return "superseded"
@@ -274,7 +279,7 @@ class Memory(Workflow):
             return "review_due"
         return "current_copy"  # Version/freshness status, not a truth judgement.
 
-    def document(self, path, *, subject='general', review_after=None):
+    def document(self, path, *, subject=None, review_after=None):
         from .documents import capture
         return capture(self, path, subject=subject, review_after=review_after)
 
@@ -424,11 +429,10 @@ class Memory(Workflow):
 
     def read(self, record_id, *, detail=False):
         """Read exact stored text. Budgeted context should be used for discovery."""
-        source = self.db.execute("SELECT * FROM sources WHERE id=?", (record_id,)).fetchone()
+        columns="*" if detail else "id,source_key,version,title,summary,origin,content_hash,checked_at,review_after,subject"
+        source = self.db.execute("SELECT "+columns+" FROM sources WHERE id=?", (record_id,)).fetchone()
         if source:
             value = dict(source)
-            if not detail:
-                value.pop("body")
             value.update(kind="source", status=self.source_status(record_id))
             if value['origin'] == 'document':
                 from .documents import document_path
@@ -454,7 +458,9 @@ class Memory(Workflow):
             value["status"] = "needs_review"
         value["links"] = [dict(row) for row in self.db.execute(
             "SELECT prior_event_id AS event_id,reason FROM event_links WHERE event_id=? ORDER BY prior_event_id", (record_id,))]
-        if not replacement and self._needs_review(record_id):
+        reasons=self.review_reasons(record_id) if not replacement else []
+        if reasons:
+            value['review_reasons']=reasons
             value["status"] = "needs_review"
         if value["kind"] == "lesson":
             review = self._lesson_review(record_id)
@@ -534,6 +540,11 @@ class Memory(Workflow):
         required = [{"id": "requirements", "kind": "requirements", "text": "\n".join(direction["requirements"])}]
         if direction["version"]:
             required[0].update(version=direction["version"],status=direction["status"])
+        signature = _digest(dumps([direction['version'], direction['requirements'], direction.get('status', 'current')]))
+        required[0]['signature'] = signature
+        if seen.get('requirements') == signature:
+            required[0].pop('text')
+            required[0]['text'] = 'The previously retrieved requirements are unchanged and still apply.'
         if episode_id:
             episode = self.episode(episode_id)
             if subject is not None and subject != episode["subject"]:
@@ -550,7 +561,7 @@ class Memory(Workflow):
         required_ids = {record["id"] for record in required}
         candidates = [record for record in matches["records"] if record["id"] not in required_ids
                       and seen.get(record["id"]) != record["signature"]]
-        packet = {"project": self.project, "unit": unit, "budget": budget,
+        packet = {"project": self.project, "scope":{"subject":subject,"include_general":include_general}, "unit": unit, "budget": budget,
                   "used": 0, "omitted": len(candidates), "more_matches": matches["more"], "records": required}
 
         def size():
@@ -564,13 +575,29 @@ class Memory(Workflow):
             raise InvalidRecord("Counter did not produce a stable count.")
 
         if size() > budget:
-            raise BudgetTooSmall(f"Required task context needs {packet['used']} {unit}; budget is {budget}.")
+            raise BudgetTooSmall(f"Required task context needs {packet['used']} {unit}; budget is {budget}.",
+                minimum_required=packet['used'], unit=unit, max_chars_limit=20000,
+                required_ids=[r['id'] for r in required],
+                next_call={'tool':'memory_get','arguments':{'view':'requirements','offset':0,'limit':10}},
+                note='Read every requirements page before reusing its signature in seen.requirements. Do not omit constraints you have not read.')
+        # Reserve bounded discovery information before packing full evidence.
+        omitted = []
+        packet['omitted_records'] = omitted
+        packet['expand'] = {'tool':'memory_get','view':'search','query':query,'subject':subject,
+                            'include_general':include_general,'offset':0}
+        if size() > budget:
+            packet.pop('expand'); packet.pop('omitted_records')
         for record in candidates:
             packet["records"].append(record)
             packet["omitted"] -= 1
             if size() > budget:
                 packet["records"].pop()
                 packet["omitted"] += 1
+                if 'omitted_records' in packet and len(omitted) < 5:
+                    omitted.append({'id':record['id'],'kind':record['kind'],
+                                    'reason':'The complete record does not fit the remaining budget.',
+                                    'read':{'view':'record','id':record['id']}})
+                    if size() > budget: omitted.pop()
                 size()
         assert size() <= budget
         return packet

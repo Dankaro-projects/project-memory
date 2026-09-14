@@ -7,7 +7,7 @@ from .core import InvalidRecord, Conflict, dumps, _time
 
 
 def export_html(memory, destination, *, episode_id=None, subject=None, since=None,
-                until=None, max_records=1000, max_bytes=10_000_000, include_bodies=False):
+                until=None, replace=False, max_records=1000, max_bytes=10_000_000, include_bodies=False):
     if type(max_records) is not int or not 1 <= max_records <= 10000:
         raise InvalidRecord('max_records must be between 1 and 10000; narrow the export for larger histories.')
     if type(max_bytes) is not int or not 1024 <= max_bytes <= 50_000_000:
@@ -94,12 +94,12 @@ def export_html(memory, destination, *, episode_id=None, subject=None, since=Non
                 item = read_receipt(memory, host['id'])
                 state = 'observed'
                 if item['event_name'] == 'PreToolUse':
-                    reported = memory.db.execute("SELECT 1 FROM host_receipts WHERE session_id=? AND tool_use_id=? AND event_name='PostToolUse'", (item['session_id'],item['tool_use_id'])).fetchone()
+                    reported = memory.db.execute("SELECT 1 FROM host_receipts WHERE session_id=? AND tool_use_id=? AND event_name='PostToolUse' AND coalesce(json_extract(payload,'$.host'),'codex')=?", (item['session_id'],item['tool_use_id'],item['payload'].get('host','codex'))).fetchone()
                     reconciled = memory.db.execute("SELECT 1 FROM host_receipts WHERE event_name='Reconciled' AND json_extract(payload,'$.receipt_id')=? AND json_extract(payload,'$.resolution')!='unknown'",(item['id'],)).fetchone()
                     if not reported and not reconciled:
                         state = 'execution_unconfirmed'
                 rows.append({'id':item['id'],'kind':'host_receipt','subject':host['subject'] or 'general','status':state,
-                    'date':item['created_at'],'title':f'{item["event_name"]}: {item["tool_name"] or "Codex session"}',
+                    'date':item['created_at'],'title':f'{item["event_name"]}: {item["tool_name"] or "Host session"}',
                     'episode_id':item['episode_id'] or '', 'detail':item})
         for source in sources:
             rows.append({'id': source['id'], 'kind': 'source', 'subject': source['subject'], 'status': source['status'],
@@ -129,8 +129,13 @@ def export_html(memory, destination, *, episode_id=None, subject=None, since=Non
     finally:
         memory.db.rollback()  # End the read transaction, including on failure.
     try:
-        with destination.open('xb') as stream:
-            stream.write(content)
+        if replace:
+            if destination.suffix.lower() != '.html':raise InvalidRecord('Use an .html destination when replacing a snapshot.')
+            from .install import atomic
+            atomic(destination, content.decode('utf-8'))
+        else:
+            with destination.open('xb') as stream:
+                stream.write(content)
     except FileExistsError as exc:
         raise Conflict('HTML destination already exists. Choose a new filename for the snapshot.') from exc
     return {'path': str(destination.resolve()), 'records': len(rows), 'bytes': len(content),

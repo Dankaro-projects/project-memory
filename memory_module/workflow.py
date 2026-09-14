@@ -105,6 +105,10 @@ class Workflow:
         return sorted(links, key=lambda ref: ref['event_id'])
 
     def _needs_review(self, event_id):
+        return bool(self.review_reasons(event_id))
+
+    def review_reasons(self, event_id):
+        reasons=[]
         # UNION deduplicates dependencies. Traversal is iterative in SQLite,
         # rather than recursive Python reads of an ever-growing history.
         ancestors = '''WITH RECURSIVE ancestors(id) AS (
@@ -116,18 +120,23 @@ class Workflow:
         explicit_ancestors = '''WITH RECURSIVE ancestors(id) AS (
             SELECT ? UNION SELECT l.prior_event_id FROM event_links l JOIN ancestors a ON l.event_id=a.id
           ) '''
-        revised = self.db.execute(explicit_ancestors + '''SELECT 1 FROM ancestors a JOIN events n ON n.supersedes=a.id
+        revised = self.db.execute(explicit_ancestors + '''SELECT a.id,n.id FROM ancestors a JOIN events n ON n.supersedes=a.id
             WHERE a.id != ? LIMIT 1''', (event_id, event_id)).fetchone()
         if revised:
-            return True
+            reasons.append({'reason':'An explicitly linked decision was revised.','record_id':revised[0],'replacement_id':revised[1]})
         direction=self.direction()
         version=direction['version']
-        if direction.get('status')=='needs_review':return True
-        if version and self.db.execute(ancestors + '''SELECT 1 FROM ancestors a JOIN events e ON e.id=a.id
-            WHERE e.kind='decision' AND coalesce(json_extract(e.payload,'$.project_revision'),0) != ? LIMIT 1''', (event_id,version)).fetchone():
-            return True
+        if direction.get('status')=='needs_review':
+            reasons.append({'reason':'The evidence supporting the current project requirements needs review.','version':version})
+        old=self.db.execute(ancestors + '''SELECT e.id,coalesce(json_extract(e.payload,'$.project_revision'),0) FROM ancestors a JOIN events e ON e.id=a.id
+            WHERE e.kind='decision' AND coalesce(json_extract(e.payload,'$.project_revision'),0) != ? LIMIT 1''', (event_id,version)).fetchone() if version else None
+        if old:
+            reasons.append({'reason':'A decision used earlier project requirements.','record_id':old[0],'used_version':old[1],'current_version':version})
         rows = self.db.execute(ancestors + 'SELECT DISTINCT d.source_id FROM dependencies d JOIN ancestors a ON d.event_id=a.id', (event_id,))
-        return any(self.source_status(row[0]) != 'current_copy' for row in rows)
+        for row in rows:
+            state=self.source_status(row[0])
+            if state!='current_copy':reasons.append({'reason':'Referenced evidence changed or requires a check.','source_id':row[0],'status':state})
+        return reasons
 
     def _lesson_review(self, lesson_id):
         import json
@@ -140,7 +149,7 @@ class Workflow:
                 value['status'] = 'needs_review'
             return value
 
-    def pending(self, episode_id=None, *, limit=100, offset=0, due_only=False, unscheduled_only=False):
+    def pending(self, episode_id=None, *, decision_id=None, limit=100, offset=0, due_only=False, unscheduled_only=False):
         """Unresolved execution and consequences, including work without a date."""
         import json
         from .core import InvalidRecord
@@ -157,6 +166,8 @@ class Workflow:
           FROM events d WHERE d.kind='decision'"""
         sql += ' AND d.episode_id=?' if episode_id else ''
         args = [episode_id] if episode_id else []
+        if decision_id:
+            sql += ' AND d.id=?'; args.append(decision_id)
         filters = "coalesce(json_extract(outcome,'$.assessment'),'pending') NOT IN ('good','bad') AND (action_id IS NOT NULL OR replaced=0)"
         deadline = "coalesce(json_extract(follow_up,'$.review_after'),json_extract(payload,'$.review_after'))"
         if due_only:

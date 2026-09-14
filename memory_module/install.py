@@ -185,6 +185,8 @@ def setup(project, *, client='mcp', database=None, requirements=None, documents=
                 if path.exists():shutil.copy2(path,backup_dir/path.name)
             backups=[str(backup_dir)]
         initialize(memory)
+        from .health import inspect
+        health=inspect(memory)
         captured=[memory.document(str(Path(doc).resolve()))['id'] for doc in documents]
     # Persist ownership first: a retry can finish after either configuration write.
     new_state={'version':__version__,'phase':'pending','database':str(database),'client':client,'block':block,
@@ -202,7 +204,8 @@ def setup(project, *, client='mcp', database=None, requirements=None, documents=
     capture={'codex':'Configured only. Run a new Codex task and inspect doctor for actual receipts.',
              'claude':'Configured only. Start a new Claude Code session in this project, approve the project MCP server if asked, and inspect doctor for actual receipts.',
              'mcp':'Explicit MCP capture only; this client has no automatic hooks.'}[client]
-    result={'project':str(project),'database':str(database),'client':client,'documents':captured,'phase':'installed','capture':capture}
+    result={'project':str(project),'database':str(database),'client':client,'documents':captured,'phase':'installed','capture':capture,'baseline':health['baseline'],
+            'viewer':{'available':True,'command':'project-memory view','mode':'live; read-only; local'}}
     if trust and client=='codex':
         from .setup_codex import trust_project_hooks
         result['trust']=trust_project_hooks(project,database,command)
