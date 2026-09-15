@@ -9,12 +9,12 @@ import sys
 import webbrowser
 from . import Memory, MemoryError, __version__
 from . import codex_host
-from .install import setup, uninstall, python_args
+from .install import setup, uninstall, python_args, project_state
 
 
 def install_state(args):
-    state=Path(args.project).resolve()/'.memory/install.json'
-    return json.loads(state.read_text()) if state.exists() else {}
+    """Return the ownership record in the per client format, or an empty dictionary."""
+    return project_state(args.project)
 
 
 def database(args):
@@ -23,8 +23,13 @@ def database(args):
     return Path(state['database']) if state else Path(args.project).resolve()/'.memory/project.sqlite'
 
 
-def doctor(path, client=None, project=None):
-    expected=codex_host.HOST_EVENTS.get(client,codex_host.EVENTS)
+def doctor(path, client=None, project=None, clients=None):
+    """Verify the database and MCP process, and compare receipts with the configured clients."""
+    from .health import expected_hook_events
+    if clients is None and client:
+        clients=[client]
+    clients=sorted(clients) if clients is not None else None
+    expected=expected_hook_events(clients,client)
     with Memory(path) as memory:
         integrity=memory.db.execute('PRAGMA integrity_check').fetchone()[0]
         if integrity!='ok':raise RuntimeError('SQLite integrity check failed: '+integrity)
@@ -40,12 +45,13 @@ def doctor(path, client=None, project=None):
     replies=[json.loads(line) for line in run.stdout.splitlines()]
     ok=run.returncode==0 and len(replies)==3 and all('result' in r for r in replies) and not replies[-1]['result'].get('isError')
     if not ok:raise RuntimeError('The installed MCP process failed its handshake or read. '+run.stderr[:500])
-    if client=='codex' and project:
+    if 'codex' in (clients or []) and project:
         from .health import codex_hooks
         try: health['host_discovery']=codex_hooks(project)
         except (OSError,ValueError,RuntimeError,TimeoutError) as exc:
             health['host_discovery']={'status':'unverified','error':str(exc)}
-    return {**health,'database':str(path),'integrity':integrity,'mcp_process_verified':ok,'client':client or 'unknown','observed_hooks':counts,
+    return {**health,'database':str(path),'integrity':integrity,'mcp_process_verified':ok,'client':client or 'unknown','clients':clients or [],
+            'expected_hook_events':sorted(expected),'observed_hooks':counts,
             'missing_hook_events':sorted(expected-counts.keys()),'unconfirmed_actions':pending,
             'note':'Receipt counts show past capture, not current configuration health. Missing lifecycle events may simply not have occurred.'}
 
@@ -66,6 +72,8 @@ def main(argv=None):
             p.add_argument('--replace',action='store_true');p.add_argument('--episode');p.add_argument('--subject',choices=['code','writing','research','general'])
         elif name in {'sync','check'}:
             p.add_argument('--limit',type=int,default=100);p.add_argument('--offset',type=int,default=0)
+        elif name=='uninstall':
+            p.add_argument('--client',choices=['mcp','codex','claude'],help='Remove only this client. Without it, every client is removed.')
         elif name=='review':
             p.add_argument('--wait');p.add_argument('--episode');p.add_argument('--role',choices=['outcome','intent','recovery'],default='outcome')
             p.add_argument('--cancel');p.add_argument('--retry',action='store_true')
@@ -83,9 +91,9 @@ def main(argv=None):
                 from .live import start
                 result['viewer']=start(result['database'])
                 result['viewer']['browser_open_requested']=webbrowser.open(result['viewer']['url'])
-        elif args.command=='uninstall':result=uninstall(args.project)
+        elif args.command=='uninstall':result=uninstall(args.project,args.client)
         elif args.command=='hook':
-            if args.if_unmanaged and install_state(args).get('client')==args.host and install_state(args).get('hook_command'):
+            if args.if_unmanaged and install_state(args).get('clients',{}).get(args.host,{}).get('hook_command'):
                 print('{}');return 0
             path=database(args)
             if not args.db and not path.exists():
@@ -94,7 +102,9 @@ def main(argv=None):
             old=sys.argv;sys.argv=['project-memory hook','--db',str(path),'--host',args.host]
             try:return codex_host.main()
             finally:sys.argv=old
-        elif args.command=='doctor':result=doctor(database(args),install_state(args).get('client'),args.project)
+        elif args.command=='doctor':
+            state=install_state(args)
+            result=doctor(database(args),state.get('client'),args.project,sorted(state['clients']) if state else None)
         elif args.command=='review':
             from . import reviews
             import uuid

@@ -5,7 +5,7 @@ from datetime import date
 STATES = ('backlog', 'ready', 'in_progress', 'blocked', 'review', 'done', 'cancelled')
 FIELDS = {
     'work_plan': ({'state', 'next_action', 'scope', 'autonomy', 'reason'},
-                  {'sprint_id', 'depends_on', 'owner', 'priority', 'session_id'}),
+                  {'sprint_id', 'depends_on', 'owner', 'priority', 'session_id', 'paths'}),
     'sprint': ({'starts_on', 'ends_on', 'status', 'reason'}, set()),
 }
 
@@ -36,6 +36,9 @@ def validate_payload(kind, payload):
                 raise InvalidRecord('Dependencies must be unique.')
         elif key == 'sprint_id' and value is None:
             continue
+        elif kind == 'work_plan' and key == 'paths':
+            from .guards import validate_patterns
+            validate_patterns(value)
         else:
             _text(value, key, 2000)
     if kind == 'sprint':

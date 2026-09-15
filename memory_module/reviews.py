@@ -40,18 +40,26 @@ CREATE TRIGGER IF NOT EXISTS immutable_review_input BEFORE UPDATE ON review_runs
 
 
 def configured(memory):
+    """Return the agent check setting; legacy values gain a hosts list."""
     row = memory.db.execute("SELECT value FROM settings WHERE key='review_host'").fetchone()
-    return json.loads(row[0]) if row else None
+    if not row:
+        return None
+    value = json.loads(row[0])
+    if isinstance(value, dict) and 'hosts' not in value:
+        value['hosts'] = [value['host']] if value.get('host') else []
+    return value
 
 
 def configure(memory, project, host):
+    """Record the last configured host and the sorted union of all configured hosts."""
     if host not in {'codex', 'claude'}:
         raise InvalidRecord('Select Codex or Claude for agent checks.')
     previous = configured(memory)
+    hosts = sorted(set(previous.get('hosts', []) if previous else []) | {host})
     memory.db.executescript(SCHEMA)
     with memory._write():
         memory.db.execute("INSERT OR REPLACE INTO settings VALUES ('review_host',?)",
-                          (dumps({'project': str(Path(project).resolve()), 'host': host,
+                          (dumps({'project': str(Path(project).resolve()), 'host': host, 'hosts': hosts,
                                   'enabled_at': previous['enabled_at'] if previous else memory.now()}),))
 
 
@@ -360,28 +368,8 @@ def report_schema(snapshot):
 
 
 def command(host, project, folder, prompt):
-    if host == 'codex':
-        import tomllib
-        config_path=Path(os.environ.get('CODEX_HOME',str(Path.home()/'.codex')))/'config.toml'
-        config=tomllib.loads(config_path.read_text()) if config_path.exists() else {}
-        overrides=[]
-        if isinstance(config.get('model'),str): overrides += ['-m',config['model']]
-        for path in [config_path, *(p/'.codex/config.toml' for p in reversed([Path(project),*Path(project).parents]))]:
-            if path.exists():
-                for name in tomllib.loads(path.read_text()).get('mcp_servers',{}):
-                    if not re.fullmatch(r'[A-Za-z0-9_-]+',name):
-                        raise InvalidRecord('The review host cannot safely disable the MCP server named '+name+'.')
-                    overrides += ['-c','mcp_servers.'+name+'.enabled=false']
-        return ['codex', 'exec', '--ephemeral', '--skip-git-repo-check', '--sandbox', 'read-only',
-                '-C', project, '-c', 'approval_policy="never"', '-c', 'features.hooks=false', '-c', 'features.plugins=false',
-                '-c', 'features.apps=false', '-c', 'features.multi_agent=false', '-c', 'project_doc_max_bytes=0',
-                '-c', 'memories.use_memories=false', '-c', 'memories.generate_memories=false',
-                '-c', 'skills.include_instructions=false', '-c','web_search="disabled"', *overrides,
-                '--output-schema', str(folder/'schema.json'), '--output-last-message', str(folder/'answer.json'), '--json', '-']
-    return ['claude', '-p', '--restricted', '--no-session-persistence', '--output-format', 'stream-json', '--verbose', '--permission-mode', 'dontAsk',
-            '--setting-sources', '', '--settings', '{"disableAllHooks":true}', '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}',
-            '--disable-slash-commands', '--tools', 'Read,Glob,Grep', '--allowedTools', 'Read,Glob,Grep',
-            '--json-schema', (folder/'schema.json').read_text(), '--system-prompt', prompt]
+    from .hosts import review_command
+    return review_command(host, project, folder, prompt)
 
 
 def validate_report(report, checklist=None, constraints=None):

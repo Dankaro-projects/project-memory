@@ -110,7 +110,7 @@ class ClaudeInstallTests(unittest.TestCase):
         (self.project/'.claude').mkdir()
         (self.project/'.claude/settings.local.json').write_text(json.dumps({'permissions':{'allow':['Bash(ls)']},'hooks':{'Stop':[{'hooks':[{'type':'command','command':'other'}]}]}}))
         a=self.setup(client='claude',trust=True);b=self.setup(client='claude',trust=True)
-        self.assertEqual(a['database'],b['database']);self.assertEqual(a['client'],'claude')
+        self.assertEqual(a['database'],b['database']);self.assertEqual(a['client'],'claude');self.assertEqual(b['clients'],['claude'])
         servers=json.loads((self.project/'.mcp.json').read_text())['mcpServers']
         self.assertEqual(set(servers),{'other','project_memory'})
         self.assertEqual(servers['project_memory']['args'][-3:],['serve','--db',a['database']])

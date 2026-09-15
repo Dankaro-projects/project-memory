@@ -5,7 +5,9 @@ import json
 import re
 import sqlite3
 import sys
+from pathlib import Path
 from .core import Memory, InvalidRecord, Conflict, BudgetTooSmall, dumps, _text, _digest
+from . import guards
 
 HOST_SCHEMA = '''
 CREATE TABLE IF NOT EXISTS host_receipts (
@@ -39,6 +41,39 @@ def initialize(memory):
 
 def exists(memory):
     return bool(memory.db.execute("SELECT 1 FROM sqlite_master WHERE name='host_receipts'").fetchone())
+
+
+def project_root(memory):
+    """The project folder used to compare edit targets with recorded work paths."""
+    try:
+        from .architecture import project_root as architecture_root
+    except ImportError:
+        architecture_root = None
+    if architecture_root is not None:
+        return architecture_root(memory)
+    for key in ('workspace_project', 'review_host'):
+        row = memory.db.execute('SELECT value FROM settings WHERE key=?', (key,)).fetchone()
+        if not row:
+            continue
+        try:
+            value = json.loads(row[0])
+        except ValueError:
+            continue
+        if key == 'review_host':
+            value = value.get('project') if isinstance(value, dict) else None
+        if isinstance(value, str) and value:
+            return Path(value)
+    return memory.path.parent.parent
+
+
+def record_block(memory, *, session, turn, tool, tool_id, host, result):
+    """Commit a ScopeBlocked receipt in its own write. The blocked tool call gets no PreToolUse receipt."""
+    payload = {'episode_id': result['episode_id'], 'plan_id': result['plan_id'], 'tool_name': tool,
+               'blocked': result['blocked'], 'allowed_patterns': result['allowed_patterns'], 'host': host}
+    key = dumps([session, turn, 'ScopeBlocked', tool_id, result['plan_id'], host])
+    with memory._write():
+        return receipt(memory, session_id=session, turn_id=turn, event_name='ScopeBlocked', tool_use_id=tool_id,
+                       tool_name=tool, episode_id=result['episode_id'], payload=payload, key=key)
 
 
 def receipt(memory, *, session_id, turn_id='', event_name, tool_use_id='', tool_name='',
@@ -130,6 +165,14 @@ def capture(memory, event, host='codex'):
         _text(tool_id, 'tool_use_id', 200); _text(tool, 'tool_name', 200)
         # Memory calls are already persisted by the adapter. Avoid recursive noise.
         if tool.startswith(('mcp__memory__','mcp__project_memory__')) or MEMORY_TOOL.match(tool): return {}
+    root = project_root(memory) if name == 'PreToolUse' else None
+    if name == 'PreToolUse':
+        # Checked before any receipt: a blocked tool never runs, so it must not look like an unconfirmed call.
+        blocked = guards.scope_check(memory, session_id=session, event=event, project_root=root)
+        if blocked:
+            record_block(memory, session=session, turn=turn, tool=tool, tool_id=tool_id, host=host, result=blocked)
+            raise guards.ScopeBlocked(guards.blocked_message(blocked))
+    reminders = []
     compacted = name == 'SessionStart' and event.get('source') == 'compact'
     action_version = None
     refreshed = None
@@ -184,12 +227,19 @@ def capture(memory, event, host='codex'):
                 action = memory.record(ep,'action',{'action':f'Execute the recorded decision through {"Claude Code" if host == "claude" else "Codex"} tools.', 'host_reference':rid},
                     expected_version=memory.episode(ep)['version'], request_key=rid+':action', actor=host+'-hooks', decision_id=decision)
                 action_version = action['version']
+        if name == 'PreToolUse':
+            targets = guards.relative_targets(guards.edit_targets(tool, event.get('tool_input')), root, event.get('cwd'))
+            reminders = guards.guard_reminders(memory, session_id=session, targets=targets, root=root)
+    reminder = guards.reminder_text(reminders) if reminders else ''
     if action_version is not None:
-        return {'hookSpecificOutput':{'hookEventName':host_event,'additionalContext':
-            f'Memory action recorded. Episode {ep} is now version {action_version}; decision {decision}.'}}
+        text = f'Memory action recorded. Episode {ep} is now version {action_version}; decision {decision}.'
+        return {'hookSpecificOutput':{'hookEventName':host_event,'additionalContext':text+(' '+reminder if reminder else '')}}
+    if reminder:
+        return {'hookSpecificOutput':{'hookEventName':host_event,'additionalContext':reminder}}
+    scope = guards.scope_sentence(memory, session) if name in {'SessionStart', 'UserPromptSubmit'} else ''
     if name == 'SessionStart':
         # Claude Code reads this at startup, resume and after automatic compaction. Codex ignores unknown output.
-        return {'hookSpecificOutput':{'hookEventName':host_event,'additionalContext':session_context(memory, session, compacted)+setup_context(memory, refreshed)}}
+        return {'hookSpecificOutput':{'hookEventName':host_event,'additionalContext':session_context(memory, session, compacted)+setup_context(memory, refreshed)+(' '+scope if scope else '')}}
     if name == 'UserPromptSubmit':
         state = status(memory, session_id=session, limit=3)
         text = (f'Memory session: {session}. Prompt receipt: {rid}. Use memory_context before repeating research. '
@@ -202,7 +252,7 @@ def capture(memory, event, host='codex'):
         selected = re.fullmatch(r'\[memory:(code|writing|research|general)\] (.{1,2000})',
                                 event.get('prompt','').split('\n',1)[0])
         def response(context):
-            return {'hookSpecificOutput':{'hookEventName':host_event,'additionalContext':context}}
+            return {'hookSpecificOutput':{'hookEventName':host_event,'additionalContext':context+(' '+scope if scope else '')}}
         if host == 'claude' and not selected:
             # Claude Code keeps the SessionStart context until compaction, when SessionStart repeats it.
             # Each prompt then only reports state that changed: open receipts or an unresolved decision.
@@ -324,6 +374,10 @@ def main():
                     output=result.setdefault('hookSpecificOutput',{'hookEventName':event['hook_event_name']})
                     output['additionalContext']=output.get('additionalContext','')+' '+extra
         print(dumps(result));return 0
+    except guards.ScopeBlocked as exc:
+        # The block is already committed as a ScopeBlocked receipt. It is not a capture failure.
+        print(str(exc), file=sys.stderr)
+        return 2
     except (OSError,ValueError,TypeError,KeyError,sqlite3.Error,InvalidRecord,Conflict) as exc:
         # A sidecar remains observable when SQLite itself cannot accept a receipt.
         try:

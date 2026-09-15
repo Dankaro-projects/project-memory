@@ -295,8 +295,13 @@ class Memory(Workflow):
 
     def _validate_payload(self, kind, payload):
         from .planning import validate_payload as validate_plan
+        from . import guards
         if validate_plan(kind, payload):
             return
+        if kind == "lesson_review" and isinstance(payload, dict):
+            # Optional trigger overrides are validated here; the remaining fields keep their existing checks.
+            guards.validate_triggers(payload)
+            payload = {key: value for key, value in payload.items() if key not in guards.TRIGGERS}
         if validate_payload(kind, payload):
             return
         required = {
@@ -308,17 +313,23 @@ class Memory(Workflow):
             "note": {"text"},
         }[kind]
         optional = {
-            "decision": {"uncertainty", "assumptions", "alternatives", "review_after", "model", "follow_up_owner", "condition", "case_id", "project_revision", "work_plan_id"},
+            "decision": {"uncertainty", "assumptions", "alternatives", "review_after", "model", "follow_up_owner", "condition", "case_id", "project_revision", "work_plan_id", "lessons_considered"},
             "action": {"host_reference"},
             "outcome": {"tokens", "human_corrections", "duration_ms", "failure_type", "model",
                         "context_characters", "research_calls", "repeated_research", "maintenance_ms", "completion"},
             "research": {"queries", "refresh_reason"},
-            "lesson": {"pattern_type"}, "note": set(),
+            "lesson": {"pattern_type", "paths", "keywords", "failure_type"}, "note": set(),
         }[kind]
         if not isinstance(payload, dict) or set(payload) - required - optional or required - set(payload):
             raise InvalidRecord(f"{kind} requires {sorted(required)}; optional: {sorted(optional)}.")
         for key, value in payload.items():
-            if key in {"queries", "assumptions", "alternatives"}:
+            if kind == "decision" and key == "lessons_considered":
+                guards.validate_considered(value)
+            elif kind == "lesson" and key == "paths":
+                guards.validate_patterns(value, minimum=0)
+            elif kind == "lesson" and key == "keywords":
+                guards.validate_keywords(value)
+            elif key in {"queries", "assumptions", "alternatives"}:
                 if not isinstance(value, list) or len(value) > 30:
                     raise InvalidRecord(f"{key} must be a list of at most 30 strings.")
                 for item in value:
@@ -430,6 +441,8 @@ class Memory(Workflow):
                     raise Conflict('The decision must use the current work plan.')
                 if plan:
                     payload['work_plan_id'] = plan['id']
+                from .guards import require_acknowledgement
+                require_acknowledgement(self, episode, payload)
             if kind in {'work_plan', 'sprint'}:
                 from .schema import enable_plans
                 enable_plans(self)
@@ -644,6 +657,7 @@ class Memory(Workflow):
             lines.append(f"{labels.get(key, key.replace('_', ' ').capitalize())}: " +
                          ("; ".join(item if isinstance(item, str) else
                           f"{item['episode_id']}: {item['reason']}" if key == 'depends_on' else
+                          f"{item['lesson_id']} (applies: {item['applies']}): {item['reason']}" if key == 'lessons_considered' else
                           f"{item['location']} ({item['severity']}): {item['issue']}" for item in value) if isinstance(value, list) else str(value)))
         if event["supersedes"]:
             lines.append("Replaces: " + event["supersedes"])

@@ -130,6 +130,10 @@ def payload_rule(kind):
     if 'depends_on' in properties:
         properties['depends_on'] = {'type':'array','maxItems':30,'items':obj({'episode_id':S,'reason':S},['episode_id','reason'])}
     if 'sprint_id' in properties: properties['sprint_id'] = {'type':['string','null']}
+    if 'paths' in properties: properties['paths'] = {'type':'array','items':S,'maxItems':100}
+    if 'keywords' in properties: properties['keywords'] = {'type':'array','items':S,'maxItems':30}
+    if 'lessons_considered' in properties:
+        properties['lessons_considered'] = {'type':'array','maxItems':50,'items':obj({'lesson_id':S,'applies':{'enum':['yes','no']},'reason':S},['lesson_id','applies','reason'])}
     for key, rule in properties.items():
         choices = metadata.get('choices',{})
         allowed = choices.get(kind+'.'+key,choices.get(key))
@@ -280,12 +284,13 @@ def schema(kind):
         return {'fields':{k:('required' if p.default is inspect.Parameter.empty else p.default) for k,p in sig.parameters.items() if k!='self'},
                 'choices':{'subject':['code','writing','research','general'],'origin':['user','tool','document']}}
     fields={
-      'decision':(['decision','why','expected','reconsider_when','uncertainty','alternatives'],['assumptions','review_after','follow_up_owner','model','condition','case_id']),
+      'decision':(['decision','why','expected','reconsider_when','uncertainty','alternatives'],['assumptions','review_after','follow_up_owner','model','condition','case_id','lessons_considered']),
       'action':(['action'],['host_reference']),
       'outcome':(['observed','assessment','assessment_reason','severity','attribution'],['completion','tokens','context_characters','research_calls','repeated_research','human_corrections','maintenance_ms','duration_ms','failure_type','model']),
       'research':(['question','findings','gaps'],['queries','refresh_reason']),
-      'lesson':(['when','do','because','exceptions'],['pattern_type']),
-      'note':(['text'],[]), **FIELDS, **PLAN_FIELDS}
+      'lesson':(['when','do','because','exceptions'],['pattern_type','paths','keywords','failure_type']),
+      'note':(['text'],[]), **FIELDS, **PLAN_FIELDS,
+      'lesson_review':(FIELDS['lesson_review'][0],FIELDS['lesson_review'][1]|{'paths','keywords','failure_type'})}
     if kind not in fields: return {'record_kinds':list(fields),'note':'Request a kind by id to see its payload fields.'}
     required,optional=fields[kind]
     return {'kind':kind,'payload_required':sorted(required),'payload_optional':sorted(optional),
