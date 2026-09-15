@@ -15,8 +15,8 @@ All event payloads reject unknown fields. Text must be nonempty; lists and costs
 | lesson_review | lesson_id, status, reason | paths, keywords, failure_type |
 | follow_up | review_after, owner, reason | None |
 | episode_status | status, reason | None |
-| note | text | None |
-| work_plan | state, next_action, scope, autonomy, reason | sprint_id, depends_on, owner, priority, session_id, paths |
+| note | text | kickoff_answers |
+| work_plan | state, next_action, scope, autonomy, reason | sprint_id, depends_on, owner, priority, session_id, paths, item_type, acceptance, parent_id |
 | sprint | starts_on, ends_on, status, reason | None |
 
 ## Paths, lesson triggers and guards
@@ -29,7 +29,19 @@ A guard matches a decision when a plan path matches or overlaps a guard pattern,
 
 When a host session has work in progress with `paths`, or has a bound decision whose plan has `paths`, the hook blocks edit tools whose targets fall outside those patterns. The block is recorded as a `ScopeBlocked` host receipt and the tool call is not recorded as started. The hook does not parse shell redirection or other indirect writes inside shell commands; it reads edit tool paths and patch markers only.
 
-`assumptions`, `alternatives` and `queries` are lists of strings. Review `findings` is a list of objects with exactly `location`, `issue` and `severity`. An empty findings list represents a completed review without findings, not proof that the code is correct. Record the exact code revision in `revision` and attach the captured code or review output as evidence.
+A change to `scope`, `autonomy` or `depends_on` is a change of scope: a plan revision that changes any of these fields cannot move work to Done directly, and a decision recorded under the earlier plan needs review. A change to `paths` alone is not a change of scope, so the user can widen the allowed paths after a scope block and the work continues. Path additions by an actor other than the user are listed for the user to inspect.
+
+The scope check also covers write tools of MCP servers that change something outside the project files, such as a workflow in an n8n instance or a file in a document service. A tool of this kind is a write when its name contains a verb such as create, update, delete, publish or execute, and its target is `mcp:<server>/<tool>`. Add the pattern `mcp:<server>` to the plan paths to allow every write tool of that server, or `mcp:<server>/<tool>` to allow one tool.
+
+## Work items, components and templates
+
+The same work item fields serve a software product, a consulting engagement and a workflow automation. `item_type` is one of `phase`, `epic`, `story`, `task`, `research`, `deliverable` or `workflow`; a plan without it is a `task`. `acceptance` is a list of 1 to 30 unique acceptance criteria, and each criterion is a complete sentence that ends with a full stop, a question mark or an exclamation mark. `parent_id` names an existing work item that is not a sprint. A parent chain cannot contain a cycle. The graph derives a `part_of` edge from the latest plan of each item, and the plan hierarchy counts the states of the descendants of each item.
+
+An authored component describes a part of the project that is not extracted from code, such as a system, a stakeholder, a workstream, a workflow or a deliverable. It is stored as a versioned source with the key `component:<slug>` and a JSON body with `title`, `kind`, `description`, `status` and `path`. Kinds are `system`, `component`, `service`, `workflow`, `integration`, `dataset`, `stakeholder`, `workstream`, `deliverable` and `process`. Status is `proposed`, `confirmed` or `retired`. Only `workspace-user` can set the status `confirmed` or change a confirmed component, so a component that an agent authors stays proposed until the user confirms it. Links between components use the link types `uses`, `produces`, `part_of`, `owns` and `informs`, in addition to the earlier link types.
+
+A project created from a template stores the setting `project_template`. A `note` can carry `kickoff_answers`, a list of 1 to 30 unique kickoff question ids, which records that the note answers those questions.
+
+`assumptions`, `alternatives` and `queries` are lists of strings. Review `findings` is a list of objects with exactly `location`, `issue` and `severity`. An empty findings list represents a completed review without findings, not proof that the reviewed work is correct. A review can be recorded in any subject: it can examine code, a report, a deck, a workflow or another deliverable. Record the exact version that was reviewed in `revision`, such as a code revision or a named draft, use `location` for a file and line, a section or a slide, and attach the captured work or review output as evidence.
 
 Use the atomic `plan` and `sprint` write operations to create or intentionally revise plans; they preserve the earlier version using the supplied episode version. Use `progress` for routine work state or next-action changes while retaining scope, dependencies, links and evidence. Work dependencies are `[{episode_id, reason}]`. The [work board guide](work-board.md) defines states and continuation rules. Decisions automatically retain their current project revision and, when present, `work_plan_id`. These references do not grant permission or accept the plan's interpretation as fact.
 

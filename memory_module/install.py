@@ -413,6 +413,7 @@ def uninstall(project, client=None):
         return {'removed': False, 'reason': f'The {client} client is not installed in this project.',
                 'clients': sorted(clients)}
     selected = sorted(clients) if client is None else [client]
+    removed_hosts = remove_review_hosts(state['database'], [name for name in selected if name in HOOK_CLIENTS])
     if 'codex' in selected:
         entry = clients['codex']
         original = config.read_text(encoding='utf-8') if config.exists() else ''
@@ -444,4 +445,16 @@ def uninstall(project, client=None):
         state_path.unlink()
     return {'removed': True, 'clients_removed': selected, 'clients': sorted(remaining),
             'installation_file_kept': bool(remaining), 'database_preserved': state['database'],
-            'note': 'Project records and backups remain. Codex may retain inactive trust entries for removed commands. The agent check host setting is unchanged.'}
+            'agent_hosts_removed': removed_hosts,
+            'note': 'Project records and backups remain. Codex may retain inactive trust entries for removed commands. Removed clients no longer run agent checks or delegated work.'}
+
+
+def remove_review_hosts(database, names):
+    """Remove uninstalled hook clients from the agent host setting before their configuration is removed."""
+    if not names or not Path(database).exists():
+        return []
+    from .reviews import remove_host
+    with Memory(database) as memory:
+        for name in names:
+            remove_host(memory, name)
+    return sorted(names)

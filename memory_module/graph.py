@@ -12,7 +12,10 @@ import uuid
 
 from .core import Conflict, InvalidRecord, _digest, _text, dumps
 
-LINK_TYPES = ('depends_on', 'blocks', 'implements', 'affects_component', 'relates_to', 'caused_by', 'learned_from', 'annotates')
+LINK_TYPES = ('depends_on', 'blocks', 'implements', 'affects_component', 'relates_to', 'caused_by', 'learned_from', 'annotates',
+              'uses', 'produces', 'part_of', 'owns', 'informs')
+AUTHORED_PREFIX = 'component:'
+SERVICE_NAME = re.compile(r'[a-z0-9][a-z0-9._-]{0,99}')
 EVENT_TITLE_KEYS = ('decision', 'summary', 'observed', 'question', 'do', 'text', 'next_action', 'reason', 'action')
 DECISION_KINDS = ('action', 'action_result', 'outcome', 'follow_up')
 CHECK_ROLES = ('outcome', 'intent', 'recovery', 'work_review')
@@ -137,14 +140,84 @@ def node(memory, id):
                 'subject': 'general', 'date': revision.get('created_at'), 'episode_id': None}
     if id.startswith('component:'):
         path = _component_path(id[len('component:'):])
+        authored = authored_component(memory, id)
+        if authored:
+            return {'id': id, 'kind': 'component', 'title': _title(authored['title']), 'status': authored['status'],
+                    'subject': 'general', 'date': authored['updated_at'], 'episode_id': None}
+        if path.startswith('n8n:'):
+            title = _workflow_title(memory, path[len('n8n:'):]) or path[len('n8n:'):]
+            return {'id': id, 'kind': 'component', 'title': _title(title), 'status': None,
+                    'subject': 'general', 'date': None, 'episode_id': None}
         title = memory.project if path == '.' else path
         return {'id': id, 'kind': 'component', 'title': _title(title), 'status': None,
-                'subject': 'code', 'date': None, 'episode_id': None}
+                'subject': _component_subject(memory, path), 'date': None, 'episode_id': None}
+    if id.startswith('service:'):
+        name = id[len('service:'):]
+        if not SERVICE_NAME.fullmatch(name):
+            raise InvalidRecord('A service id must be service: followed by a lowercase name of letters, digits, dots, hyphens or underscores.')
+        return {'id': id, 'kind': 'service', 'title': _title(name), 'status': None,
+                'subject': 'general', 'date': None, 'episode_id': None}
     if id.startswith('package:'):
         _, name = _package_parts(id[len('package:'):])
         return {'id': id, 'kind': 'package', 'title': _title(name), 'status': None,
                 'subject': 'code', 'date': None, 'episode_id': None}
     raise InvalidRecord('The graph node id is not a known record, component or package.')
+
+
+def _workflow_title(memory, key):
+    """The name of an exported n8n workflow, `<file>` or `<file>#<position>` in a bulk export, or None."""
+    from .architecture import MAX_FILE_BYTES, _read_workflow, project_root
+    name, _, position = key.rpartition('#')
+    if not name or not position.isdigit():
+        name, position = key, ''
+    try:
+        path = project_root(memory) / name
+        if not path.is_file() or path.stat().st_size > MAX_FILE_BYTES:
+            return None
+        summary = _read_workflow(path)
+    except (OSError, InvalidRecord):
+        return None
+    if isinstance(summary, dict) and not position:
+        return summary['name']
+    if isinstance(summary, list) and position and 1 <= int(position) <= len(summary):
+        return summary[int(position) - 1]['name']
+    return None
+
+
+def _component_subject(memory, path):
+    """code when the folder or file holds source files that the code layer reads, otherwise general."""
+    from .architecture import LANGUAGES, project_root
+    try:
+        root = project_root(memory)
+        target = root if path == '.' else root / path
+        if target.is_file():
+            return 'code' if target.suffix in LANGUAGES else 'general'
+        if target.is_dir():
+            for count, child in enumerate(target.iterdir()):
+                if count >= 5000:
+                    break
+                if child.suffix in LANGUAGES and child.is_file():
+                    return 'code'
+    except (OSError, InvalidRecord):
+        return 'general'
+    return 'general'
+
+
+def authored_component(memory, component_id):
+    """Return the latest authored version of `component:<slug>`, or None when no authored source exists."""
+    row = memory.db.execute('SELECT id, version, body, checked_at FROM sources WHERE source_key=? ORDER BY version DESC LIMIT 1',
+                            (component_id,)).fetchone()
+    if row is None:
+        return None
+    try:
+        body = json.loads(row['body'])
+    except ValueError:
+        return None
+    if not isinstance(body, dict) or not isinstance(body.get('title'), str) or not isinstance(body.get('status'), str):
+        return None
+    return {'id': component_id, 'source_id': row['id'], 'version': row['version'], 'updated_at': row['checked_at'],
+            'title': body['title'], 'kind': body.get('kind'), 'description': body.get('description'),
+            'status': body['status'], 'path': body.get('path')}
 
 
 def link(memory, *, from_id, to_id, type, reason, actor, request_key, retire=None):
@@ -215,6 +288,9 @@ def _branches(memory):
                     'FROM events e WHERE e.supersedes IS NOT NULL AND ' + _focus('e.supersedes', 'e.id'),
         'plan_dependency': "SELECT e.episode_id, " + target_episode + ", 'depends_on', json_extract(j.value,'$.reason'), 'plan', NULL "
                            "FROM events e JOIN json_each(e.payload,'$.depends_on') j WHERE " + latest_plan + ' AND ' + _focus('e.episode_id', target_episode),
+        'plan_parent': "SELECT e.episode_id, json_extract(e.payload,'$.parent_id'), 'part_of', 'The latest work plan places this work item under the parent work item.', 'plan', NULL "
+                       "FROM events e WHERE " + latest_plan + " AND json_extract(e.payload,'$.parent_id') IS NOT NULL AND "
+                       + _focus('e.episode_id', "json_extract(e.payload,'$.parent_id')"),
         'episode': "SELECT e.episode_id, e.id, 'contains', 'The record belongs to this work item.', 'episode', NULL "
                    'FROM events e WHERE e.kind NOT IN (' + kinds + ') AND ' + _focus('e.episode_id', 'e.id'),
         'direction': 'SELECT ' + direction + ", e.id, 'governs', 'The decision was recorded under this project direction version.', 'direction', NULL "
@@ -362,6 +438,7 @@ def work_graph(memory, *, states=None, limit=300):
         plan = json.loads(row['payload']) if row['payload'] else {}
         nodes.append({'id': row['id'], 'kind': 'episode', 'title': _title(row['title']), 'subject': row['subject'],
                       'priority': plan.get('priority', 'normal'),
+                      'item_type': plan.get('item_type', 'task'), 'parent_id': plan.get('parent_id'),
                       'state': states.get(row['id']) or plan.get('state') or 'backlog'})
     ids = {item['id'] for item in nodes}
     found = _query(memory, ids, ['plan_dependency', 'link'], EDGE_LIMIT_WORK_GRAPH + 1)

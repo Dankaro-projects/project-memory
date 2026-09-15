@@ -80,6 +80,13 @@ def main(argv=None):
             p.add_argument('--max-seconds',type=int,help='Execution limit; with --wait, legacy alias for --wait-seconds.')
             p.add_argument('--wait-seconds',type=int,help='Stop waiting after this many seconds without cancelling the review (default: 60).')
         elif name=='backup':p.add_argument('destination')
+    init=sub.add_parser('init',help='Create a project from a template: product, engagement or automation.')
+    init.add_argument('path')
+    init.add_argument('--template',required=True,choices=['product','engagement','automation'])
+    init.add_argument('--client',action='append',choices=['mcp','codex','claude'],default=[])
+    init.add_argument('--name')
+    init.add_argument('--no-git',action='store_true')
+    init.add_argument('--no-view',action='store_true')
     hook=sub.add_parser('hook');hook.add_argument('--db');hook.add_argument('--host',choices=sorted(codex_host.HOSTS),default='codex')
     hook.add_argument('--if-unmanaged',action='store_true')
     hook.add_argument('--project',default=os.environ.get('PROJECT_MEMORY_PROJECT',os.getcwd()))
@@ -87,6 +94,13 @@ def main(argv=None):
     try:
         if args.command=='setup':
             result=setup(args.project,client=args.client,database=args.db,requirements=args.requirement,documents=args.document,trust=args.trust)
+            if not args.no_view:
+                from .live import start
+                result['viewer']=start(result['database'])
+                result['viewer']['browser_open_requested']=webbrowser.open(result['viewer']['url'])
+        elif args.command=='init':
+            from .templates import scaffold
+            result=scaffold(args.path,args.template,name=args.name,clients=args.client,git=not args.no_git)
             if not args.no_view:
                 from .live import start
                 result['viewer']=start(result['database'])

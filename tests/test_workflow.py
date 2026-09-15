@@ -58,7 +58,7 @@ class WorkflowTests(unittest.TestCase):
         self.assertNotIn(source,[r['id'] for r in self.m.search('Unicode',subject='code')['records']])
         self.assertIn(source,[r['id'] for r in self.m.search('Unicode',subject='code',include_general=True)['records']])
 
-    def test_review_requires_code_scope_revision_and_evidence(self):
+    def test_review_requires_revision_findings_and_evidence_in_any_subject(self):
         payload={'target':'parser.py','revision':'sha256:fixture','summary':'Missing case','findings':[
             {'location':'parse','issue':'Unicode not handled','severity':'major'}]}
         with self.assertRaises(InvalidRecord): self.record('review',payload)
@@ -66,8 +66,11 @@ class WorkflowTests(unittest.TestCase):
                              expected_version=0,request_key='review',evidence=self.refs)
         self.assertEqual(self.m.read(review['id'])['kind'],'review')
         with self.assertRaises(InvalidRecord): self.record('review',{**payload,'findings':[{'issue':'x'}]},evidence=self.refs)
+        # A client or quality review of a report is recorded in a writing episode.
         self.ep=self.m.start('Copy','Copy','writing','Clear',subject='writing')
-        with self.assertRaises(InvalidRecord): self.record('review',payload,evidence=self.refs)
+        report={'target':'deliverables/report.md','revision':'Draft 2 sent on 12 September','summary':'The client asked for one change.',
+                'findings':[{'location':'Section 3','issue':'The price table has no source.','severity':'minor'}]}
+        self.assertEqual(self.m.read(self.record('review',report,evidence=self.refs)['id'])['kind'],'review')
 
     def test_research_is_separate_from_code(self):
         with self.assertRaises(InvalidRecord):

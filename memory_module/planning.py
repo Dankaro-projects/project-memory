@@ -3,11 +3,30 @@ import json
 from datetime import date
 
 STATES = ('backlog', 'ready', 'in_progress', 'blocked', 'review', 'done', 'cancelled')
+ITEM_TYPES = ('phase', 'epic', 'story', 'task', 'research', 'deliverable', 'workflow')
 FIELDS = {
     'work_plan': ({'state', 'next_action', 'scope', 'autonomy', 'reason'},
-                  {'sprint_id', 'depends_on', 'owner', 'priority', 'session_id', 'paths'}),
+                  {'sprint_id', 'depends_on', 'owner', 'priority', 'session_id', 'paths',
+                   'item_type', 'acceptance', 'parent_id'}),
     'sprint': ({'starts_on', 'ends_on', 'status', 'reason'}, set()),
 }
+# A revision of these plan fields changes what the work covers, so an earlier assessment no longer applies.
+# Allowed paths are an enforcement boundary rather than the task itself: widening them after a scope block lets
+# work continue, and guards.scope_changes lists path additions by agents for the user to inspect.
+SCOPE_FIELDS = ('scope', 'autonomy', 'depends_on')
+SENTENCE_END = ('.', '!', '?')
+
+
+def scope_value(plan, key):
+    """Return a plan field for scope comparison, treating an absent list as empty."""
+    if key in ('depends_on', 'paths'):
+        return plan.get(key) or []
+    return plan.get(key)
+
+
+def scope_changed(before, after):
+    """True when two plan payloads differ in a field that defines the scope of work."""
+    return any(scope_value(before, key) != scope_value(after, key) for key in SCOPE_FIELDS)
 
 
 def latest(memory, episode_id, kind):
@@ -39,6 +58,13 @@ def validate_payload(kind, payload):
         elif kind == 'work_plan' and key == 'paths':
             from .guards import validate_patterns
             validate_patterns(value)
+        elif kind == 'work_plan' and key == 'item_type':
+            if value not in ITEM_TYPES:
+                raise InvalidRecord(f'item_type must be one of {list(ITEM_TYPES)}.')
+        elif kind == 'work_plan' and key == 'acceptance':
+            validate_acceptance(value)
+        elif kind == 'work_plan' and key == 'parent_id':
+            _text(value, 'parent_id', 200)
         else:
             _text(value, key, 2000)
     if kind == 'sprint':
@@ -58,6 +84,40 @@ def validate_payload(kind, payload):
         if payload['state'] == 'in_progress' and payload.get('owner', 'agent') == 'agent' and not payload.get('session_id'):
             raise InvalidRecord('Agent work in progress requires its host session_id.')
     return True
+
+
+def validate_acceptance(value):
+    """Acceptance criteria are 1 to 30 unique complete sentences."""
+    from .core import InvalidRecord, _text
+    if not isinstance(value, list) or not 1 <= len(value) <= 30:
+        raise InvalidRecord('acceptance must be a list of 1 to 30 acceptance criteria.')
+    for criterion in value:
+        _text(criterion, 'acceptance criterion', 2000)
+        if not criterion.rstrip().endswith(SENTENCE_END):
+            raise InvalidRecord('Each acceptance criterion must be a complete sentence that ends with a full stop, '
+                                'a question mark or an exclamation mark.')
+    if len(set(value)) != len(value):
+        raise InvalidRecord('Acceptance criteria must be unique.')
+    return value
+
+
+def validate_parent(memory, episode, parent_id):
+    """A parent is an existing work item that is not a sprint and is not a descendant of this item."""
+    from .core import InvalidRecord
+    if parent_id == episode['id']:
+        raise InvalidRecord('A work item cannot be its own parent.')
+    parent = memory.episode(parent_id)
+    if parent['task_type'] == 'sprint':
+        raise InvalidRecord('A sprint cannot be the parent of a work item. Assign the sprint with sprint_id instead.')
+    # Parents follow the latest plan of each item, as dependencies do.
+    found = memory.db.execute('''WITH RECURSIVE ancestors(id) AS (
+      SELECT ? UNION SELECT json_extract(e.payload,'$.parent_id') FROM ancestors a
+      JOIN events e ON e.episode_id=a.id AND e.kind='work_plan'
+        AND e.seq=(SELECT max(n.seq) FROM events n WHERE n.episode_id=e.episode_id AND n.kind='work_plan')
+      WHERE json_extract(e.payload,'$.parent_id') IS NOT NULL
+    ) SELECT 1 FROM ancestors WHERE id=?''', (parent_id, episode['id'])).fetchone()
+    if found:
+        raise InvalidRecord('Work item parents cannot contain a cycle.')
 
 
 def unresolved(memory, episode_id):
@@ -139,13 +199,15 @@ def validate_event(memory, episode, kind, payload, evidence):
         ) SELECT 1 FROM ancestors WHERE id=?''', (ref['episode_id'], episode['id'])).fetchone()
         if found:
             raise InvalidRecord('Work dependencies cannot contain a cycle.')
+    if payload.get('parent_id'):
+        validate_parent(memory, episode, payload['parent_id'])
     if payload['state'] == 'done' and not completion(memory, episode['id']):
         step = completion_guidance(memory, card(memory, episode['id']))
         raise InvalidRecord('Done requires current completion evidence. '+step['reason'],
                             episode_id=episode['id'], next_step=step)
     if payload['state']=='done':
         prior=latest(memory,episode['id'],'work_plan')
-        if prior and any(prior.get(k,[] if k=='depends_on' else None)!=payload.get(k,[] if k=='depends_on' else None) for k in ('scope','autonomy','depends_on')):
+        if prior and scope_changed(prior, payload):
             raise InvalidRecord('Changed scope or dependencies require a new assessment before Done. Save the revised plan in Review first.')
 
 
@@ -359,6 +421,85 @@ def _board(memory, *, limit=25, offset=0, sprint_id=None, subject=None, query=''
     if grouped: return {'groups':groups,'counts':counts,'total':total}
     return {'cards': records, 'counts': counts, 'total': total, 'offset': offset, 'more': offset+len(records)<total,
             'note': 'State is checked against recorded evidence. This view does not run work or grant permission.'}
+
+
+def hierarchy(memory, *, root=None, limit=500, states=None):
+    """Work items arranged by parent_id, with state counts rolled up over the descendants of each item.
+
+    States come from the optional `states` map {episode_id: state}; missing states
+    are computed once per included item from its card. Items whose parent is not a
+    work item in this project are roots. The result is bounded by `limit` items.
+    """
+    from .core import InvalidRecord
+    if type(limit) is not int or not 1 <= limit <= 5000:
+        raise InvalidRecord('limit must be an integer from 1 to 5000.')
+    if states is not None and not isinstance(states, dict):
+        raise InvalidRecord('states must map episode ids to states.')
+    if root is not None:
+        if memory.episode(root)['task_type'] == 'sprint':
+            raise InvalidRecord('A sprint is not part of the work item hierarchy.')
+    rows = memory.db.execute('''SELECT ep.id, ep.title, ep.subject, ep.created_at, p.id AS plan_id, p.payload
+        FROM episodes ep LEFT JOIN events p ON p.episode_id=ep.id AND p.kind='work_plan'
+          AND p.seq=(SELECT max(n.seq) FROM events n WHERE n.episode_id=ep.id AND n.kind='work_plan')
+        WHERE ep.task_type!='sprint' ORDER BY ep.created_at, ep.id''').fetchall()
+    items = {}
+    children = {}
+    for row in rows:
+        plan = json.loads(row['payload']) if row['payload'] else {}
+        items[row['id']] = {'id': row['id'], 'title': row['title'], 'subject': row['subject'], 'created_at': row['created_at'],
+                            'plan_id': row['plan_id'], 'item_type': plan.get('item_type', 'task'),
+                            'parent_id': plan.get('parent_id'), 'owner': plan.get('owner', 'agent') if plan else None,
+                            'priority': plan.get('priority', 'normal'), 'acceptance_total': len(plan.get('acceptance', []))}
+    for item in items.values():
+        if item['parent_id'] in items:
+            children.setdefault(item['parent_id'], []).append(item['id'])
+    if root is not None:
+        roots = [root]
+    else:
+        roots = [item_id for item_id, item in items.items() if item['parent_id'] not in items]
+    included = []
+    seen = set()
+    stack = list(reversed(roots))
+    truncated = False
+    while stack:
+        item_id = stack.pop()
+        if item_id in seen:
+            continue
+        if len(included) >= limit:
+            truncated = True
+            break
+        seen.add(item_id)
+        included.append(item_id)
+        stack.extend(reversed(children.get(item_id, [])))
+    states = states or {}
+    root_ids = set(roots)
+    nodes = {}
+    for item_id in included:
+        node = dict(items[item_id])
+        node['state'] = states.get(item_id) or card(memory, item_id)['state']
+        node['children'] = []
+        node['rollup'] = dict.fromkeys(STATES, 0)
+        node['descendants'] = 0
+        nodes[item_id] = node
+    # Included items are in depth-first order, so every child follows its parent.
+    for item_id in reversed(included):
+        node = nodes[item_id]
+        parent = nodes.get(node['parent_id']) if item_id not in root_ids else None
+        if parent is None:
+            continue
+        parent['children'].insert(0, node)
+        parent['descendants'] += 1 + node['descendants']
+        parent['rollup'][node['state']] += 1
+        for state, count in node['rollup'].items():
+            parent['rollup'][state] += count
+    counts = dict.fromkeys(STATES, 0)
+    for node in nodes.values():
+        counts[node['state']] += 1
+        active = node['descendants'] - node['rollup']['cancelled']
+        node['progress'] = round(node['rollup']['done'] / active, 4) if active else None
+    return {'roots': [nodes[item_id] for item_id in roots if item_id in nodes], 'total': len(nodes), 'counts': counts,
+            'truncated': truncated,
+            'note': 'Progress counts descendant work items that are done, excluding cancelled items. It does not measure effort.'}
 
 
 def sprints(memory, limit=25, offset=0, episode_id=None):

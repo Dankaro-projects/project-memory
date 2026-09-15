@@ -10,13 +10,13 @@ import time
 import unittest
 from unittest.mock import patch
 
-from memory_module import Memory, InvalidRecord, Conflict, reviews
+from memory_module import Memory, InvalidRecord, Conflict, hosts, reviews
 from memory_module.core import dumps
 from memory_module.cli import main
 from memory_module.install import setup
 from memory_module.mcp import write
 from memory_module.planning import latest
-from memory_module.review_logs import ReviewLog
+from memory_module.hosts import RunLog as ReviewLog
 from memory_module.workspace import action
 
 
@@ -218,6 +218,25 @@ class ReviewDiagnosticsTests(unittest.TestCase):
         result = reviews.read(self.m,run['id'])
         self.assertEqual(result['metrics']['termination_reason'],'host_exit')
         self.assertEqual(result['metrics']['host_error_events'],1)
+
+    def test_host_unavailability_is_a_distinct_state_and_marks_the_host(self):
+        result = self.execute_child("print(json.dumps({'type':'error','message':'You have hit your usage limit. Try again in 5 minutes.'}))\nraise SystemExit(1)\n")
+        self.assertEqual(result['state'],'host_unavailable')
+        self.assertEqual(result['metrics']['termination_reason'],'host_unavailable')
+        self.assertIn('usage limit',result['error'])
+        availability = hosts.availability(self.m,'codex')
+        self.assertFalse(availability['available'])
+        self.assertIsNotNone(availability['until'])
+        with self.assertRaisesRegex(InvalidRecord,'No configured agent host is available'):
+            reviews.request(self.m,self.ep,request_key='during-limit',retry=True)
+        hosts.mark_available(self.m,'codex')
+        run = reviews.request(self.m,self.ep,request_key='after-limit',retry=True)
+        folder = self.m.path.parent/'agent-runs'/run['id']
+        program = 'import json,pathlib\nfolder=pathlib.Path('+repr(str(folder))+')\n(folder/"answer.json").write_text(json.dumps('+repr(self.report(run['snapshot']))+'))\n'
+        with patch.object(reviews,'command',return_value=[sys.executable,'-c',program]):
+            reviews.execute(self.m,run['id'],timeout=3)
+        self.assertEqual(reviews.read(self.m,run['id'])['state'],'pass')
+        self.assertTrue(hosts.availability(self.m,'codex')['available'])
 
     def test_cancellation_terminates_child_and_retains_its_progress(self):
         code = "sys.path.insert(0,"+repr(str(Path(__file__).resolve().parents[1]))+")\nfrom memory_module import Memory,reviews\nprint(json.dumps({'type':'thread.started'}))\nwith Memory("+repr(str(self.m.path))+") as m: reviews.cancel(m,folder.name)\ntime.sleep(10)\n"

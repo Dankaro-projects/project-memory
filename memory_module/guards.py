@@ -13,6 +13,15 @@ tools that are not edit tools, markers are also found after escaped line breaks
 other indirect writes are not parsed, so a shell command can still change files
 outside the recorded scope without being blocked.
 
+Write tools of MCP servers that change something outside the project files,
+such as a workflow in an n8n instance or a file in a document service, have no
+file path. Such a tool counts as a write when a word of its name is a write verb
+(create, update, delete, publish, execute and similar) and its first word is not
+a read verb. Its target is `mcp:<server>/<tool>`, so the plan pattern
+`mcp:<server>` allows every write tool of that server. The tools of Project
+Memory itself are never targets. A write tool whose name uses no listed verb is
+not detected.
+
 Relative patterns never match paths outside the project root, and absolute
 patterns inside the root are compared relative to it.
 """
@@ -35,6 +44,17 @@ PATCH_MARKER = re.compile(r'^[ \t]*\*\*\* (?:Add File|Update File|Delete File|Mo
 QUOTED_PATCH_MARKER = re.compile(
     r'''(?:^[ \t]*|(?<=['"]))\*\*\* (?:Add File|Update File|Delete File|Move to): ([^\n'"]*[^\s'"])''', re.MULTILINE)
 PATCH_BODY_PREFIXES = ('+', '-', ' ', '\t', '@')
+MCP_TARGET_PREFIX = 'mcp:'
+WRITE_VERBS = frozenset({
+    'activate', 'add', 'append', 'apply', 'approve', 'archive', 'cancel', 'complete', 'copy', 'create', 'deactivate',
+    'delete', 'deploy', 'disable', 'edit', 'enable', 'execute', 'grant', 'import', 'insert', 'invite', 'merge', 'move',
+    'patch', 'pause', 'post', 'publish', 'put', 'rebase', 'remove', 'rename', 'replace', 'reset', 'restore', 'revoke',
+    'run', 'schedule', 'send', 'set', 'share', 'submit', 'test', 'transfer', 'trash', 'unarchive', 'unpublish',
+    'update', 'upload', 'upsert', 'write'})
+READ_VERBS = frozenset({
+    'analyze', 'check', 'count', 'describe', 'download', 'explore', 'fetch', 'find', 'get', 'inspect', 'list', 'lookup',
+    'prepare', 'preview', 'query', 'read', 'resolve', 'search', 'show', 'status', 'validate', 'view'})
+OWN_SERVER_MARKERS = ('project_memory', 'project-memory')
 GLOB_CHARACTERS = ('*', '?')
 
 
@@ -437,6 +457,26 @@ def edit_tool_name(tool_name):
     return None
 
 
+def mcp_write_target(tool_name):
+    """Return `mcp:<server>/<tool>` for an MCP tool that writes outside the project files, otherwise None.
+
+    File tools of MCP servers are handled as edit tools with their paths, and the
+    tools of Project Memory itself are never targets.
+    """
+    if not isinstance(tool_name, str) or not tool_name.startswith('mcp__') or edit_tool_name(tool_name):
+        return None
+    parts = tool_name[len('mcp__'):].rsplit('__', 1)
+    if len(parts) != 2 or not parts[0] or not parts[1]:
+        return None
+    server, tool = parts
+    if any(marker in server.lower() for marker in OWN_SERVER_MARKERS):
+        return None
+    words = [word for word in re.split(r'[_\-.\s]+', re.sub(r'(?<=[a-z0-9])(?=[A-Z])', '_', tool).lower()) if word]
+    if not words or words[0] in READ_VERBS or not any(word in WRITE_VERBS for word in words):
+        return None
+    return MCP_TARGET_PREFIX + server + '/' + tool
+
+
 def _escaped_markers(text):
     """Patch marker targets written with escaped line breaks or after a quote.
 
@@ -453,8 +493,14 @@ def _escaped_markers(text):
 
 
 def edit_targets(tool_name, tool_input):
-    """Paths an edit tool call would change, in order and without duplicates."""
+    """Paths an edit tool call would change, in order and without duplicates.
+
+    An MCP write tool without file paths yields the target `mcp:<server>/<tool>`.
+    """
     targets = []
+    external = mcp_write_target(tool_name)
+    if external:
+        targets.append(external)
     name = edit_tool_name(tool_name)
     if name and isinstance(tool_input, dict):
         keys = PATH_KEYS + MOVE_KEYS if name == 'move_file' else PATH_KEYS
@@ -495,6 +541,9 @@ def relative_targets(targets, project_root, cwd=None):
     base = cwd if isinstance(cwd, str) and cwd.startswith('/') else normalize(project_root)
     result = []
     for target in targets:
+        if target.startswith(MCP_TARGET_PREFIX):
+            result.append(target)
+            continue
         absolute = normalize(target if target.startswith('/') else posixpath.join(base, target))
         relative = _relative(absolute, roots)
         if relative == absolute:
@@ -524,10 +573,14 @@ def scope_check(memory, *, session_id, event, project_root):
 
 
 def blocked_message(result):
-    return (f'Project Memory blocked this edit because {", ".join(result["blocked"])} '
+    text = (f'Project Memory blocked this edit because {", ".join(result["blocked"])} '
             f'{"is" if len(result["blocked"]) == 1 else "are"} outside the recorded scope of work {result["episode_id"]}. '
             f'Allowed paths: {", ".join(result["allowed_patterns"])}. '
             'Ask the user to extend the scope in the control panel, or record a plan revision with the reason.')
+    if any(target.startswith(MCP_TARGET_PREFIX) for target in result['blocked']):
+        text += (' A target that starts with mcp: is a write tool of an MCP server that changes something outside the project files. '
+                 'The plan pattern mcp:<server> allows the write tools of that server.')
+    return text
 
 
 def guard_reminders(memory, *, session_id, targets, root=None):

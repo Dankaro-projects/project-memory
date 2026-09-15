@@ -72,7 +72,7 @@ class LinkTableTests(GraphFixture):
         with self.assertRaises(Conflict):
             graph.link(self.m, request_key='link-2', **args)
         with self.assertRaises(InvalidRecord):
-            graph.link(self.m, request_key='link-3', **{**args, 'type': 'owns'})
+            graph.link(self.m, request_key='link-3', **{**args, 'type': 'contains'})
         with self.assertRaises(InvalidRecord):
             graph.link(self.m, request_key='link-4', **{**args, 'reason': '   '})
         with self.assertRaises(InvalidRecord):
@@ -152,7 +152,6 @@ class DerivedEdgeTests(GraphFixture):
                              evidence=self.evidence, links=[{'event_id': lesson['id'], 'reason': 'This review accepts the lesson.'}])
         dependent = self.work('Dependent', depends_on=[{'episode_id': episode, 'reason': 'The parser must be repaired first.'}])
         reviews.configure(self.m, self.root, 'codex')
-        self.m.db.execute('ALTER TABLE review_runs ADD COLUMN parent_run TEXT')
         runs = {}
         for name, role, parent in (('outcome', 'outcome', None), ('work', 'work', None), ('rerouted', 'work', 'work'), ('work_review', 'work_review', 'rerouted')):
             runs[name] = 'check_' + name

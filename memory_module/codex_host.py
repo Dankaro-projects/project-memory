@@ -70,7 +70,8 @@ def record_block(memory, *, session, turn, tool, tool_id, host, result):
     """Commit a ScopeBlocked receipt in its own write. The blocked tool call gets no PreToolUse receipt."""
     payload = {'episode_id': result['episode_id'], 'plan_id': result['plan_id'], 'tool_name': tool,
                'blocked': result['blocked'], 'allowed_patterns': result['allowed_patterns'], 'host': host}
-    key = dumps([session, turn, 'ScopeBlocked', tool_id, result['plan_id'], host])
+    # A redelivered call under the same plan can name other targets; each distinct block gets its own receipt.
+    key = dumps([session, turn, 'ScopeBlocked', tool_id, result['plan_id'], host, tool, result['blocked']])
     with memory._write():
         return receipt(memory, session_id=session, turn_id=turn, event_name='ScopeBlocked', tool_use_id=tool_id,
                        tool_name=tool, episode_id=result['episode_id'], payload=payload, key=key)
@@ -237,6 +238,11 @@ def capture(memory, event, host='codex'):
     if reminder:
         return {'hookSpecificOutput':{'hookEventName':host_event,'additionalContext':reminder}}
     scope = guards.scope_sentence(memory, session) if name in {'SessionStart', 'UserPromptSubmit'} else ''
+    if name in {'SessionStart', 'UserPromptSubmit'}:
+        from .templates import kickoff_hint
+        hint = kickoff_hint(memory)
+        if hint:
+            scope = (scope + ' ' + hint).strip()
     if name == 'SessionStart':
         # Claude Code reads this at startup, resume and after automatic compaction. Codex ignores unknown output.
         return {'hookSpecificOutput':{'hookEventName':host_event,'additionalContext':session_context(memory, session, compacted)+setup_context(memory, refreshed)+(' '+scope if scope else '')}}

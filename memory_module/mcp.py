@@ -300,7 +300,7 @@ def schema(kind):
       'optional_record_fields':['decision_id','supersedes','links'],
       'evidence':'[{source_id, reason}]','links':'[{event_id, reason}]',
       'types':'alternatives, assumptions and queries are lists of text; review findings are [{location,issue,severity}]; metrics are nonnegative integers; all other fields are text.',
-      'subject_restrictions':{'review':['code'],'research':['research','general']},
+      'subject_restrictions':{'research':['research','general']},
       'choices':{'assessment':['good','bad','unknown','pending'],'severity':['none','minor','major','unknown'],'completion':['complete','partial','blocked','abandoned'],'pattern_type':['practice','anti_pattern','recovery'],'lesson_review.status':['accepted','rejected','retired']}}
 
 

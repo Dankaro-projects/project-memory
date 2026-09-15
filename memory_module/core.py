@@ -318,7 +318,7 @@ class Memory(Workflow):
             "outcome": {"tokens", "human_corrections", "duration_ms", "failure_type", "model",
                         "context_characters", "research_calls", "repeated_research", "maintenance_ms", "completion"},
             "research": {"queries", "refresh_reason"},
-            "lesson": {"pattern_type", "paths", "keywords", "failure_type"}, "note": set(),
+            "lesson": {"pattern_type", "paths", "keywords", "failure_type"}, "note": {"kickoff_answers"},
         }[kind]
         if not isinstance(payload, dict) or set(payload) - required - optional or required - set(payload):
             raise InvalidRecord(f"{kind} requires {sorted(required)}; optional: {sorted(optional)}.")
@@ -329,6 +329,9 @@ class Memory(Workflow):
                 guards.validate_patterns(value, minimum=0)
             elif kind == "lesson" and key == "keywords":
                 guards.validate_keywords(value)
+            elif kind == "note" and key == "kickoff_answers":
+                from .templates import validate_answers
+                validate_answers(value)
             elif key in {"queries", "assumptions", "alternatives"}:
                 if not isinstance(value, list) or len(value) > 30:
                     raise InvalidRecord(f"{key} must be a list of at most 30 strings.")
