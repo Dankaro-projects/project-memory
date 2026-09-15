@@ -220,8 +220,11 @@ class WorkflowTests(unittest.TestCase):
         for included in [False,True]:
             out=self.root/('bodies-'+str(included)+'.html');self.m.export_html(out,include_bodies=included)
             text=out.read_text().split('<script id="memory-data" type="application/json">')[1].split('</script>')[0]
-            data=json.loads(text);source=next(r for r in data['records'] if r['id']==self.sid)
+            data=json.loads(text);source=data['responses']['record?id='+self.sid]['record']
+            # With bodies the record key holds the live response, which carries the first body slice.
             self.assertEqual('body' in source['detail'],included)
+            sliced=data['responses'].get('record?body_offset=0&id='+self.sid)
+            self.assertEqual(sliced is not None and 'body' in sliced['record']['detail'],included)
 
     def test_sql_rejects_invalid_json_null_id_and_subject_change(self):
         with self.assertRaises(sqlite3.IntegrityError):

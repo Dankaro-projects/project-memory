@@ -395,7 +395,7 @@ class FallbackMatcherTests(unittest.TestCase):
 
 
 class ManifestTests(ArchitectureTestCase):
-    """Copied from tests/test_project_dependencies.py for the functions moved into this module."""
+    """Package manifest declarations, grouped and versioned as each manifest states them."""
 
     def test_packages_preserve_manifest_groups_and_declared_versions(self):
         (self.root / 'package.json').write_text(json.dumps({'dependencies': {'react': '^19', 'optional': '1'},

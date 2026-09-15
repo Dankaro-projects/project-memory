@@ -10,7 +10,7 @@ import re
 import sys
 import tomllib
 
-from .core import Conflict, InvalidRecord, _digest, _text, dumps
+from .core import Conflict, InvalidRecord, USER_ACTOR, _digest, _text, dumps
 
 
 MAX_FILE_BYTES = 1_000_000
@@ -66,7 +66,7 @@ def project_root(memory):
     return memory.path.parent.parent
 
 
-# Package manifests, moved unchanged from project_dependencies.py.
+# Package manifests.
 
 def dependency_sections(title, body):
     """Preserve complete authored sections, including their nested exceptions."""
@@ -637,7 +637,6 @@ def _attach(node, key, ids):
 COMPONENT_KINDS = ('system', 'component', 'service', 'workflow', 'integration', 'dataset', 'stakeholder',
                    'workstream', 'deliverable', 'process')
 COMPONENT_STATUSES = ('proposed', 'confirmed', 'retired')
-USER_ACTOR = 'workspace-user'
 SLUG = re.compile(r'[a-z0-9]+(?:-[a-z0-9]+)*')
 MAX_SLUG = 80
 COMPONENT_SCHEMA = (

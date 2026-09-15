@@ -15,6 +15,8 @@ from .workflow import Workflow, validate_payload, validate_event
 
 SCHEMA_VERSION = 2
 SUBJECTS = {"general", "code", "writing", "research"}
+# The actor of every change saved in the local control panel. MCP callers cannot use it.
+USER_ACTOR = "workspace-user"
 KINDS = {"decision", "action", "outcome", "research", "lesson", "note", "review", "correction", "action_result", "follow_up", "episode_status", "lesson_review", "work_plan", "sprint"}
 ASSESSMENTS = {"pending", "good", "bad", "unknown"}
 
@@ -158,11 +160,12 @@ class Memory(Workflow):
         db.close()
         return cls(path, clock=clock)
 
-    def __init__(self, path, *, clock=None, read_only=False):
+    def __init__(self, path, *, clock=None, read_only=False, any_thread=False):
+        """any_thread allows a caller that serializes access itself to use the connection from several threads."""
         self.path = Path(path).resolve()
         self.clock = clock or (lambda: datetime.now(timezone.utc).isoformat())
         self.db = sqlite3.connect(self.path.as_uri() + ("?mode=ro" if read_only else "?mode=rw"), uri=True,
-                                  isolation_level=None, timeout=5)
+                                  isolation_level=None, timeout=5, check_same_thread=not any_thread)
         self.db.row_factory = sqlite3.Row
         try:
             if self.db.execute("PRAGMA user_version").fetchone()[0] != SCHEMA_VERSION:

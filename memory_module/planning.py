@@ -284,7 +284,8 @@ def card(memory, episode_id):
         problems.append({'type': 'completion_review', 'reason': 'Current completion evidence does not establish that the intended result is achieved.'})
     state = recorded
     if state != 'cancelled':
-        if any(p['type'] in {'execution_unconfirmed', 'dependency'} for p in problems):
+        # Backlog that waits for an unfinished prerequisite is not blocked: nothing is scheduled yet.
+        if any(p['type'] == 'execution_unconfirmed' or p['type'] == 'dependency' and recorded != 'backlog' for p in problems):
             state = 'blocked'
         elif problems and recorded not in {'backlog', 'blocked'}:
             state = 'review'
@@ -371,17 +372,10 @@ def completion_guidance(memory, item):
 
 
 def board(memory, *, limit=25, offset=0, sprint_id=None, subject=None, query='', state=None, episode_id=None, grouped=False):
-    from .reviews import configured, exists, tree_signature
-    from .core import InvalidRecord
-    from subprocess import SubprocessError
-    config=configured(memory)
-    cache=config and exists(memory) and memory.db.execute('SELECT 1 FROM review_runs LIMIT 1').fetchone()
-    if cache:
-        try:memory._review_tree=tree_signature(config['project'],cache=getattr(memory,'_review_tree_cache',None))
-        except (OSError,SubprocessError,InvalidRecord):cache=False
-    try:return _board(memory,limit=limit,offset=offset,sprint_id=sprint_id,subject=subject,query=query,state=state,episode_id=episode_id,grouped=grouped)
-    finally:
-        if cache:del memory._review_tree
+    from .reviews import shared_tree
+    with shared_tree(memory):
+        return _board(memory, limit=limit, offset=offset, sprint_id=sprint_id, subject=subject, query=query, state=state,
+                      episode_id=episode_id, grouped=grouped)
 
 
 def _board(memory, *, limit=25, offset=0, sprint_id=None, subject=None, query='', state=None, episode_id=None, grouped=False):
@@ -560,12 +554,9 @@ def next_work(memory, *, episode_id=None, session_id=None, limit=5, offset=0, su
         update = {'tool':'memory_write','operation':'progress','episode_id':episode_id,'expected_version':item['version'],
                   'schema':{'view':'schema','id':'progress'},
                   'note':'Supply actor and payload with reason and state or next_action. Pass this host session_id for in_progress. Progress preserves scope, dependencies, links and evidence. Use plan only for an intentional scope revision.'}
-    selected_skills = memory.db.execute("SELECT count(*) FROM sources s WHERE source_key LIKE ? AND version=(SELECT max(version) FROM sources WHERE source_key=s.source_key) AND json_extract(body,'$.state') != 'released'", ('workspace-skill-selection:' + episode_id + ':%',)).fetchone()[0]
     step = completion_guidance(memory,item) if action in {'reconcile','refresh_evidence','assess_coverage','inspect_dependency','review_plan','wait_review','refresh_review','request_review','review_findings','inspect_review','finalize'} else None
     return {'work': item, 'action': action, 'reason': reason, 'update':update,
             **({'next_step':step} if step and step['action']==action else {}),
-            'skills': {'selected': selected_skills, 'read_with': {'view': 'skill_selections', 'id': episode_id},
-                       'note': 'Read selected versions and conditions before using them. Selection is not execution evidence.'},
             'unconfirmed': state['unconfirmed'] if state and action == 'reconcile' else [],
             'recent_execution': state['recent'] if state and action == 'inspect_execution' else [],
             'requirements': {'version': memory.direction()['version'], 'read_with': 'memory_get requirements'},

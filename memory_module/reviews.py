@@ -1,6 +1,7 @@
 """Conditional, durable review runs through the user's installed host CLI."""
 import argparse
 from collections import Counter
+from contextlib import contextmanager
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -210,6 +211,34 @@ def required(memory, episode_id):
 
 def exists(memory):
     return bool(memory.db.execute("SELECT 1 FROM sqlite_master WHERE name='review_runs'").fetchone())
+
+
+def project_tree(memory):
+    """The content signature of the project for agent checks, or None when the project has no agent run."""
+    config = configured(memory)
+    if not (config and exists(memory) and memory.db.execute('SELECT 1 FROM review_runs LIMIT 1').fetchone()):
+        return None
+    return tree_signature(config['project'], cache=getattr(memory, '_review_tree_cache', None))
+
+
+@contextmanager
+def shared_tree(memory):
+    """Hash the project tree once for every card read inside the block. A failed hash leaves each card to hash again."""
+    if getattr(memory, '_review_tree', None) is not None:
+        yield
+        return
+    try:
+        signature = project_tree(memory)
+    except (OSError, subprocess.SubprocessError, InvalidRecord):
+        signature = None
+    if signature is None:
+        yield
+        return
+    memory._review_tree = signature
+    try:
+        yield
+    finally:
+        del memory._review_tree
 
 
 def project_paths(project):
@@ -908,10 +937,10 @@ def request_for_done(memory, episode_id, *, session_id=''):
     step = completion_guidance(memory, item)
     if step.get('action') != 'request_review':
         return {'requested': False, 'state': 'not_requested', 'reason': step['reason'], 'next_step': step}
+    from .delegation import summary
     run = request(memory, episode_id, 'outcome', request_key='done-check:'+item['outcome']['id'], session_id=session_id)
     launch(memory, run)
-    result = {'requested': True, **{key: run[key] for key in ('id', 'episode_id', 'role', 'host', 'state', 'error')},
-              'read_with': {'view': 'reviews', 'id': episode_id}}
+    result = {'requested': True, **summary(memory, run), 'read_with': {'view': 'reviews', 'id': episode_id}}
     if run['state'] in ACTIVE:
         result['wait_command'] = wait_command(memory, run['id'])
     return result

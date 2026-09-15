@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from memory_module import Memory, InvalidRecord, hosts, reviews, review_logs
+from memory_module import Memory, InvalidRecord, hosts, reviews
 
 
 NOW = datetime(2026, 9, 15, 10, 0, tzinfo=timezone.utc)
@@ -124,8 +124,7 @@ class RunLogTests(unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
-    def test_review_logs_module_reexports_the_run_log(self):
-        self.assertIs(review_logs.ReviewLog, hosts.RunLog)
+    def test_review_log_name_is_an_alias_of_the_run_log(self):
         self.assertIs(hosts.ReviewLog, hosts.RunLog)
 
     def test_codex_usage_limit_across_split_lines(self):

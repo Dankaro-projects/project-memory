@@ -41,8 +41,9 @@ import threading
 import time
 import uuid
 
-from .core import InvalidRecord, Conflict, Memory, dumps, _text
+from .core import InvalidRecord, Conflict, Memory, USER_ACTOR, dumps, _text
 from . import codex_host, documents, hosts, reviews
+from .templates import COMMIT_IDENTITY
 
 ROLES = ('work', 'work_review')
 ACTIVE = reviews.ACTIVE
@@ -55,7 +56,6 @@ SOURCE_TOTAL_LIMIT = 150_000
 WORK_REPORT_MAX_CHARACTERS = 32_000
 GIT_TIMEOUT = 120
 HEARTBEAT_SECONDS = 5
-COMMIT_IDENTITY = ['-c', 'user.name=Project Memory', '-c', 'user.email=project-memory@localhost', '-c', 'commit.gpgsign=false']
 WORK_CANCELLED = 'The delegated work was cancelled. Its changes were not merged.'
 WORK_TIMED_OUT = 'The worker reached its execution deadline. Its changes were not merged.'
 # Review states that did not assess the work, so a merge request may start a new review.
@@ -740,9 +740,6 @@ def start_missing_reviews(memory, *, limit=10):
     """
     if not reviews.exists(memory):
         return []
-    columns = {row[1] for row in memory.db.execute('PRAGMA table_info(review_runs)')}
-    if 'parent_run' not in columns:
-        return []
     rows = memory.db.execute("""SELECT w.id FROM review_runs w WHERE w.role='work' AND w.state='completed'
         AND NOT EXISTS (SELECT 1 FROM review_runs r WHERE r.parent_run=w.id AND r.role='work_review')
         ORDER BY w.rowid LIMIT ?""", (limit,)).fetchall()
@@ -887,11 +884,8 @@ def settlement(memory, run_id):
 
 
 def latest_review(memory, run_id):
-    """Return the latest work review of a work run, or None."""
+    """Return the latest work review of a work run, or None. Work runs exist only with the delegation columns."""
     if not reviews.exists(memory):
-        return None
-    columns = {row[1] for row in memory.db.execute('PRAGMA table_info(review_runs)')}
-    if 'parent_run' not in columns:
         return None
     row = memory.db.execute("SELECT id FROM review_runs WHERE parent_run=? AND role='work_review' ORDER BY rowid DESC LIMIT 1",
                             (run_id,)).fetchone()
@@ -923,6 +917,61 @@ def restart_review(memory, run):
     return result
 
 
+def retry_review(memory, run_id, *, request_key, max_seconds=900):
+    """Queue a new work review of a completed run that is not merged or discarded and whose review did not assess the work.
+
+    A repeated request key returns the review it created, even after that review started.
+    """
+    _text(run_id, 'run_id', 200)
+    _text(request_key, 'request_key', 180)
+    work = _work_run(memory, run_id)
+    prior = reviews.exists(memory) and memory.db.execute('SELECT id FROM review_runs WHERE request_key=?', (request_key,)).fetchone()
+    if prior:
+        run = reviews.read(memory, prior[0])
+        if run['role'] != 'work_review' or run.get('parent_run') != run_id:
+            raise Conflict('The review request key belongs to different work.')
+        return run
+    if work['state'] != 'completed':
+        raise InvalidRecord('Only a completed delegated run can be reviewed. This run is ' + work['state'].replace('_', ' ') + '.')
+    if settlement(memory, run_id):
+        raise InvalidRecord('This delegated run was already merged or discarded, so it needs no new review.')
+    review = latest_review(memory, run_id)
+    if review and review['state'] not in RETRY_REVIEW_STATES:
+        raise InvalidRecord('The latest work review of this run is ' + review['state'].replace('_', ' ') +
+                            '. A new review is requested only after a review failed, was cancelled or could not start.',
+                            review_id=review['id'], review_state=review['state'])
+    return request_review(memory, run_id, request_key=request_key, max_seconds=max_seconds)
+
+
+def require_user_grant(memory, episode_id):
+    """Reject delegation by an assistant unless the user saved the plan with autonomy act and paths, unchanged since.
+
+    An assistant can record a plan with autonomy act and a source of origin user, so
+    only a plan revision saved by the user in the control panel counts as the grant.
+    Later revisions by others keep the grant while they leave autonomy and paths as they were.
+    """
+    rows = memory.db.execute("SELECT actor,payload FROM events WHERE episode_id=? AND kind='work_plan' ORDER BY seq",
+                             (episode_id,)).fetchall()
+    granted = False
+    changed_by = None
+    previous = {}
+    for row in rows:
+        payload = json.loads(row['payload'])
+        if row['actor'] == USER_ACTOR:
+            granted = payload.get('autonomy') == 'act' and bool(payload.get('paths'))
+        elif any(payload.get(key) != previous.get(key) for key in ('autonomy', 'paths')):
+            granted = False
+            changed_by = row['actor']
+        previous = payload
+    if previous.get('autonomy') != 'act' or not previous.get('paths') or granted:
+        return
+    message = ('An assistant can delegate this work item only after the user saves its plan with autonomy act and the allowed paths '
+               'in the control panel.')
+    if changed_by:
+        message += f' The autonomy or the allowed paths were last changed by {changed_by}.'
+    raise InvalidRecord(message, changed_by=changed_by)
+
+
 def merge(memory, run_id, *, request_key, actor, override_reason=None):
     """Merge a completed work run into the project branch after a passing review or a user override.
 
@@ -951,7 +1000,7 @@ def merge(memory, run_id, *, request_key, actor, override_reason=None):
         raise Conflict('A work review of this run is still active. Wait for it or cancel it before merging.')
     if override_reason is not None:
         _text(override_reason, 'override_reason', 2000)
-        if actor != 'workspace-user':
+        if actor != USER_ACTOR:
             raise InvalidRecord('Only the user can merge delegated work with an override reason.')
     if (not review or review['state'] != 'pass') and override_reason is None:
         if not review or review['state'] in RETRY_REVIEW_STATES:
@@ -1037,6 +1086,25 @@ def discard(memory, run_id, *, request_key, actor, reason):
     return {**payload, 'discarded': not settled, 'duplicate': False, 'cleanup': removed}
 
 
+def summary(memory, run):
+    """The summary of one agent run without its snapshot, with review and merge state for delegated work."""
+    metrics = run.get('metrics') or {}
+    result = {key: run.get(key) for key in ('id', 'episode_id', 'role', 'host', 'state', 'error', 'created_at',
+                                            'updated_at', 'parent_run', 'branch', 'workspace')}
+    result['summary'] = (run.get('report') or {}).get('summary')
+    result['changed_files'] = len(metrics.get('changed_files') or [])
+    result['independence'] = (run.get('snapshot') or {}).get('independence')
+    if run['role'] == 'work':
+        review = latest_review(memory, run['id'])
+        result['review'] = {'id': review['id'], 'state': review['state'], 'host': review['host']} if review else None
+        settled = settlement(memory, run['id'])
+        result['merge'] = None
+        if settled:
+            result['merge'] = {'state': 'merged' if settled['event_name'] == 'DelegationMerged' else 'discarded',
+                               'commit': settled['payload'].get('commit'), 'at': settled['created_at']}
+    return result
+
+
 def runs(memory, *, episode_id=None, limit=20, offset=0):
     """Bounded run summaries without snapshots, newest first."""
     if type(limit) is not int or not 1 <= limit <= 100 or type(offset) is not int or offset < 0:
@@ -1048,22 +1116,5 @@ def runs(memory, *, episode_id=None, limit=20, offset=0):
     where = ' WHERE episode_id=?' if episode_id is not None else ''
     arguments = ((episode_id,) if episode_id is not None else ()) + (limit + 1, offset)
     rows = memory.db.execute('SELECT id FROM review_runs' + where + ' ORDER BY rowid DESC LIMIT ? OFFSET ?', arguments).fetchall()
-    result = []
-    for row in rows[:limit]:
-        run = reviews.read(memory, row[0])
-        metrics = run['metrics'] or {}
-        summary = {key: run[key] for key in ('id', 'episode_id', 'role', 'host', 'state', 'error', 'created_at',
-                                             'updated_at', 'parent_run', 'branch', 'workspace')}
-        summary['summary'] = (run['report'] or {}).get('summary')
-        summary['changed_files'] = len(metrics.get('changed_files') or [])
-        summary['independence'] = (run['snapshot'] or {}).get('independence')
-        if run['role'] == 'work':
-            review = latest_review(memory, run['id'])
-            summary['review'] = {'id': review['id'], 'state': review['state'], 'host': review['host']} if review else None
-            settled = settlement(memory, run['id'])
-            summary['merge'] = None
-            if settled:
-                summary['merge'] = {'state': 'merged' if settled['event_name'] == 'DelegationMerged' else 'discarded',
-                                    'commit': settled['payload'].get('commit'), 'at': settled['created_at']}
-        result.append(summary)
+    result = [summary(memory, reviews.read(memory, row[0])) for row in rows[:limit]]
     return {'runs': result, 'more': len(rows) > limit, 'next_offset': offset + len(result)}

@@ -125,8 +125,8 @@ class KickoffTests(unittest.TestCase):
         spec = templates.TEMPLATES['engagement']
         self.assertEqual(state['template'], 'engagement')
         self.assertEqual(state['baseline']['status'], 'not_established')
-        # Each later phase depends on the unfinished phase before it, so the board shows it as blocked.
-        self.assertEqual([phase['state'] for phase in state['phases']], ['backlog'] + ['blocked'] * 6)
+        # Each later phase depends on the phase before it, but backlog that waits for a prerequisite is not blocked.
+        self.assertEqual([phase['state'] for phase in state['phases']], ['backlog'] * 7)
         self.assertEqual({entry['status'] for entry in state['documents']}, {'unchanged'})
         self.assertEqual([question['id'] for question in state['questions'] if not question['answered']],
                          [question['id'] for question in spec['questions']])

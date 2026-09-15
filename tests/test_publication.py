@@ -63,6 +63,14 @@ class PublicationTests(unittest.TestCase):
             root = Path(directory)
             members = {'memory_module/viewer.html': b'<html></html>'}
             from memory_module.viewer import UI_SCRIPTS
+            sys.path.insert(0, str(script.parent))
+            try:
+                from check_artifacts import REQUIRED_MODULES
+            finally:
+                sys.path.remove(str(script.parent))
+            for module in REQUIRED_MODULES:
+                members[f'memory_module/{module}.py'] = b'"""Public fixture."""\n'
+            members['memory_module/viewer.py'] = ('UI_SCRIPTS = ' + repr(UI_SCRIPTS) + '\n').encode()
             for name in (*UI_SCRIPTS, 'workspace.css'):
                 members['memory_module/ui/' + name] = b'/* public fixture */'
             for weight in (400, 700):

@@ -1,4 +1,5 @@
 """Check the actual wheel and source archive before publishing."""
+import ast
 import hashlib
 import json
 from pathlib import Path, PurePosixPath
@@ -7,6 +8,25 @@ import tarfile
 import zipfile
 
 from check_publication import check_member
+
+
+REQUIRED_MODULES = (
+    'api', 'architecture', 'capture_errors', 'cli', 'codex_host', 'core', 'coverage', 'delegation',
+    'direction', 'documents', 'graph', 'guards', 'health', 'hooks', 'hosts', 'install', 'live', 'mcp',
+    'planning', 'reviews', 'schema', 'setup_codex', 'templates', 'viewer', 'workflow', 'workspace',
+)
+RETIRED_MODULES = ('maps', 'skills', 'project_dependencies', 'review_logs')
+
+
+def ui_scripts(members):
+    """The browser scripts that the packaged viewer.py embeds, read from the archive itself."""
+    source = members.get('memory_module/viewer.py')
+    if source is None:
+        raise ValueError('Required module is missing: memory_module/viewer.py')
+    for node in ast.parse(source.decode('utf-8')).body:
+        if isinstance(node, ast.Assign) and any(getattr(target, 'id', None) == 'UI_SCRIPTS' for target in node.targets):
+            return tuple(ast.literal_eval(node.value))
+    raise ValueError('The packaged viewer does not declare its browser scripts.')
 
 
 def inspect(path, kind):
@@ -37,7 +57,13 @@ def inspect(path, kind):
                 members[entry.filename] = archive.read(entry)
     for name, body in members.items():
         check_member(name, body, kind)
-    ui_files = ('state.js', 'records.js', 'api.js', 'sync.js', 'navigation.js', 'board.js', 'editor.js', 'reviews.js', 'approvals.js', 'skills.js', 'map.js', 'boot.js', 'workspace.css')
+    for module in REQUIRED_MODULES:
+        if f'memory_module/{module}.py' not in members:
+            raise ValueError(f'Required module is missing: memory_module/{module}.py')
+    for module in RETIRED_MODULES:
+        if f'memory_module/{module}.py' in members:
+            raise ValueError(f'Retired module is still packaged: memory_module/{module}.py')
+    ui_files = (*ui_scripts(members), 'workspace.css')
     for name in tuple('memory_module/ui/' + name for name in ui_files) + ('memory_module/viewer.html',
                  'memory_module/assets/manrope-latin-400.woff2',
                  'memory_module/assets/manrope-latin-700.woff2'):

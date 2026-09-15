@@ -158,25 +158,34 @@ class CodexTests(unittest.TestCase):
             dispatch(self.m,'memory_write',{'operation':'review','request_key':'agent-check','data':{}})
         self.assertEqual(caught.exception.details['next_step']['read_with'],{'view':'schema','id':'agent_check'})
 
-    def test_nested_map_fields_are_rejected_before_writing_and_corrected_once(self):
-        episode=self.m.start('Architecture','Record the component.','test','Keep the proposal.',subject='code')
-        source=self.m.source('map-contract','Architecture request','Record a proposed component.','The user requests a diagram.','user')
-        node={'id':'node_component','title':'Parser','kind':'component','description':'Preserves the encoding exception.','reference':'','status':'proposed'}
-        args={'operation':'map','request_key':'map-recovery','data':{'episode_id':episode['id'],'expected_version':0,
-            'map_version':0,'mode':'architecture','nodes':[node],'edges':[],'reason':'Record the proposed component.',
-            'evidence':[{'source_id':source['id'],'reason':'The user requests this diagram.'}]}}
-        for bad in [{**node,'unexpected':True},{**node,'title':3}]:
+    def test_nested_component_fields_are_rejected_before_writing_and_corrected_once(self):
+        source=self.m.source('component-request','Architecture request','Record a proposed stakeholder.','The user names the finance team as a stakeholder.','user')
+        reference={'source_id':source['id'],'reason':'The user names this stakeholder.'}
+        args={'operation':'component','request_key':'component-recovery','data':{'title':'Finance team','kind':'stakeholder',
+            'description':'The finance team approves the budget.','status':'proposed','actor':'assistant','evidence':[reference]}}
+        def components():
+            return self.m.db.execute("SELECT count(*) FROM sources WHERE source_key LIKE 'component:%'").fetchone()[0]
+        for bad in [{**reference,'unexpected':True},{**reference,'reason':3}]:
             with self.assertRaises(InvalidRecord) as caught:
-                dispatch(self.m,'memory_write',{**args,'data':{**args['data'],'nodes':[bad]}})
+                dispatch(self.m,'memory_write',{**args,'data':{**args['data'],'evidence':[bad]}})
             details=caught.exception.details
             self.assertEqual(details['execution'],'not_started')
-            self.assertTrue(details['field_errors'][0]['field'].startswith('arguments.data.nodes[0].'))
-            self.assertEqual(details['next_step']['read_with'],{'view':'schema','id':'map'})
-        self.assertEqual(self.m.episode(episode['id'])['version'],0)
+            self.assertTrue(details['field_errors'][0]['field'].startswith('arguments.data.evidence[0].'))
+            self.assertEqual(details['next_step']['read_with'],{'view':'schema','id':'component'})
+        with self.assertRaises(InvalidRecord) as caught:
+            dispatch(self.m,'memory_write',{**args,'data':{**args['data'],'kind':'feature'}})
+        self.assertEqual(caught.exception.details['field_errors'][0]['problem'],'invalid_choice')
+        self.assertEqual(components(),0)
         result=dispatch(self.m,'memory_write',args)
         self.assertEqual(dispatch(self.m,'memory_write',args),result)
-        self.assertEqual(result['map']['version'],1)
-        self.assertEqual(self.m.episode(episode['id'])['version'],1)
+        self.assertEqual((result['id'],result['status']),('component:finance-team','proposed'))
+        self.assertEqual(components(),1)
+        confirm={**args['data'],'component_id':result['id'],'status':'confirmed'}
+        with self.assertRaises(InvalidRecord):
+            dispatch(self.m,'memory_write',{'operation':'component','request_key':'agent-confirms','data':confirm})
+        with self.assertRaises(InvalidRecord):
+            dispatch(self.m,'memory_write',{'operation':'component','request_key':'impersonated','data':{**confirm,'actor':'workspace-user'}})
+        self.assertEqual(components(),1)
 
     def test_every_advertised_write_operation_rejects_unknown_fields_at_protocol_boundary(self):
         from memory_module.mcp import TOOLS
@@ -206,12 +215,12 @@ class CodexTests(unittest.TestCase):
                 if op=='approve_requirements':self.assertEqual(set(metadata['required']),{'requirements','reason','actor','evidence','expected_version'})
         self.assertEqual(before,{table:self.m.db.execute('SELECT count(*) FROM '+table).fetchone()[0] for table in before})
 
-    def test_skill_schema_correction_and_replay_preserve_import_and_selection_counts(self):
-        from tests.test_workspace_knowledge import files
-        from memory_module import skills
-        episode=self.m.start('Skill selection','Select a method.','test','Preserve its revision.',subject='code')
-        source=self.m.source('skill-request','Skill request','Inspect this method.','The user requests a skill selection.','user')
-        evidence=[{'source_id':source['id'],'reason':'The user requests this selection.'}]
+    def test_link_schema_correction_and_replay_in_a_real_mcp_process(self):
+        research=self.m.start('Market research','Collect the regional evidence.','research','The evidence is recorded.',subject='research')
+        report=self.m.start('Client report','Write the recommendations.','deliverable','The client receives the report.',subject='writing')
+        def links():
+            exists=self.m.db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='links'").fetchone()
+            return self.m.db.execute('SELECT count(*) FROM links').fetchone()[0] if exists else 0
         def call(args):
             requests=[{'jsonrpc':'2.0','id':0,'method':'initialize','params':{'protocolVersion':'2025-11-25'}},
                       {'jsonrpc':'2.0','id':1,'method':'tools/call','params':{'name':'memory_write','arguments':args}}]
@@ -220,28 +229,23 @@ class CodexTests(unittest.TestCase):
                 cwd=Path(__file__).resolve().parent.parent)
             reply=json.loads(result.stdout.splitlines()[-1])['result']
             return reply['isError'],json.loads(reply['content'][0]['text'])
-        imported={'operation':'skill_import','request_key':'skill-import-once','data':{'files':files(),'expected_version':0}}
-        bad={**imported,'data':{**imported['data'],'unexpected':True}}
-        failed,error=call(bad);self.assertTrue(failed);self.assertEqual(error['execution'],'not_started')
-        self.assertEqual(error['next_step']['read_with'],{'view':'schema','id':'skill_import'})
-        failed,result=call(imported);self.assertFalse(failed,result)
-        self.assertEqual(call(imported),(False,result));skill=result['skill']
-        self.assertEqual(self.m.db.execute("SELECT count(*) FROM sources WHERE source_key LIKE ?",(skills.PREFIX+'%',)).fetchone()[0],1)
-        selection={'operation':'skill_selection','request_key':'skill-select-once','data':{
-            'episode_id':episode['id'],'expected_version':0,'skill_id':skill['id'],'revision':skill['revision'],
-            'state':'selected','reason':'Inspect this method.','evidence':evidence}}
-        failed,error=call({**selection,'data':{**selection['data'],'unexpected':True}})
-        self.assertTrue(failed);self.assertEqual(error['execution'],'not_started')
-        self.assertEqual(error['next_step']['read_with'],{'view':'schema','id':'skill_selection'})
-        failed,result=call(selection);self.assertFalse(failed,result)
-        self.assertEqual(call(selection),(False,result));self.assertEqual(self.m.episode(episode['id'])['version'],1)
-        self.assertEqual(len(skills.selections(self.m,episode['id'])),1)
-        failed,conflict=call({**selection,'data':{**selection['data'],'reason':'Changed request.'}})
-        self.assertTrue(failed);self.assertEqual(conflict['error'],'Conflict');self.assertNotIn('execution',conflict)
-        for data in [{'expected_version':0},{'expected_version':0,'files':files(),'archive':'encoded'},
-                     {'expected_version':0,'files':[{'path':'SKILL.md','content':3}]}]:
-            failed,error=call({**imported,'data':data});self.assertTrue(failed)
+        link={'operation':'link','request_key':'link-once','data':{'from_id':report['id'],'to_id':research['id'],'type':'depends_on',
+            'reason':'The report uses the research findings.','actor':'assistant'}}
+        for data,problem in [({**link['data'],'unexpected':True},'unexpected'),({**link['data'],'type':'needs'},'invalid_choice'),
+                             ({k:v for k,v in link['data'].items() if k!='reason'},'missing')]:
+            failed,error=call({**link,'data':data});self.assertTrue(failed)
             self.assertEqual(error['execution'],'not_started')
+            self.assertIn(problem,[issue['problem'] for issue in error['field_errors']])
+            self.assertEqual(error['next_step']['read_with'],{'view':'schema','id':'link'})
+        self.assertEqual(links(),0)
+        failed,result=call(link);self.assertFalse(failed,result)
+        self.assertEqual(call(link),(False,result));self.assertEqual(links(),1)
+        failed,conflict=call({**link,'data':{**link['data'],'reason':'Changed request.'}})
+        self.assertTrue(failed);self.assertEqual(conflict['error'],'Conflict');self.assertNotIn('execution',conflict)
+        failed,error=call({**link,'request_key':'impersonated','data':{**link['data'],'type':'relates_to','actor':'workspace-user'}})
+        self.assertTrue(failed);self.assertEqual(error['error'],'InvalidRecord');self.assertEqual(links(),1)
+        graph=dispatch(self.m,'memory_get',{'view':'graph','id':report['id']})
+        self.assertIn((report['id'],'depends_on',research['id']),[(e['from'],e['type'],e['to']) for e in graph['edges']])
 
     def test_mcp_process_restart_preserves_idempotent_capture(self):
         request={'jsonrpc':'2.0','id':1,'method':'tools/call','params':{'name':'memory_write','arguments':{

@@ -207,6 +207,8 @@ class FailureRecoveryTests(unittest.TestCase):
         thread = threading.Thread(target=serve,daemon=True)
         with patch.object(Path,'open',measured):
             thread.start();server = ready.get(timeout=3)
+            # Check project files on every request here; the default interval of 5 seconds is tested in test_api.
+            server.tree_interval = 0
             url = f'http://127.0.0.1:{server.server_port}/test-token/api/health'
             def get(tag=None):
                 try:

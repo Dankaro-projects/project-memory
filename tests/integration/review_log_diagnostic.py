@@ -2,7 +2,7 @@
 import argparse
 import json
 from pathlib import Path
-from memory_module.review_logs import ReviewLog
+from memory_module.hosts import RunLog
 
 
 def main():
@@ -13,7 +13,7 @@ def main():
     results=[]
     for folder in args.run_directories:
         snapshot=json.loads((folder/'input.json').read_text())
-        metrics=ReviewLog(folder).read(final=True)
+        metrics=RunLog(folder).read(final=True)
         results.append({'run':folder.name,'recorded_task_checklist_count':len(snapshot.get('checklist',[])),
                         'project_requirement_count':len(snapshot.get('requirements',[])),
                         'separate_constraint_count':len(snapshot['constraints']) if 'constraints' in snapshot else None,

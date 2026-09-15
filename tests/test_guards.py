@@ -341,12 +341,17 @@ class GuardHistoryTests(Fixture):
 
     def test_mcp_accepts_new_fields(self):
         lesson = self.lesson()
-        review = dispatch(self.m, 'memory_write', {'operation': 'record', 'request_key': 'mcp-review', 'data': {
-            'episode_id': self.lessons, 'kind': 'lesson_review', 'expected_version': self.version(self.lessons),
-            'actor': 'assistant', 'evidence': self.evidence,
-            'links': [{'event_id': lesson, 'reason': 'This review assesses the lesson.'}],
-            'payload': {'lesson_id': lesson, 'status': 'accepted', 'reason': 'Reviewed.', 'paths': ['src'], 'keywords': []}}})
-        self.assertFalse(review['duplicate'])
+        review = {'episode_id': self.lessons, 'kind': 'lesson_review', 'expected_version': self.version(self.lessons),
+                  'actor': 'assistant', 'evidence': self.evidence,
+                  'links': [{'event_id': lesson, 'reason': 'This review assesses the lesson.'}],
+                  'payload': {'lesson_id': lesson, 'status': 'accepted', 'reason': 'Reviewed.', 'paths': ['src'], 'keywords': []}}
+        # Only the user accepts lessons, so MCP rejects the review; the control panel records it as the user.
+        with self.assertRaises(InvalidRecord):
+            dispatch(self.m, 'memory_write', {'operation': 'record', 'request_key': 'mcp-review', 'data': review})
+        self.assertEqual(guards.active_guards(self.m), [])
+        accepted = self.m.record(review['episode_id'], 'lesson_review', review['payload'], expected_version=review['expected_version'],
+                                 actor='workspace-user', evidence=review['evidence'], links=review['links'], request_key='panel-review')
+        self.assertFalse(accepted['duplicate'])
         result = dispatch(self.m, 'memory_write', {'operation': 'plan', 'request_key': 'mcp-plan', 'data': {
             'title': 'Parser', 'objective': 'Repair the parser.', 'criterion': 'The fixture passes.', 'subject': 'code',
             'actor': 'assistant', 'evidence': self.evidence,

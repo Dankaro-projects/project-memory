@@ -5,7 +5,9 @@ import unittest
 
 from memory_module import Memory
 from memory_module.install import setup
-from memory_module.live import row, latest_decisions, page
+import json
+
+from memory_module.api import row, latest_decisions, page
 from memory_module.planning import board
 from memory_module.workspace import action
 
@@ -92,6 +94,21 @@ class ViewerUsabilityTests(unittest.TestCase):
                 self.assertEqual(result['counts']['in_progress'],1)
                 self.assertEqual(sum(result['counts'].values()),result['total'])
                 self.assertNotIn('groups',board(m,limit=3))
+
+
+    def test_snapshot_embeds_the_latest_choice_and_both_outcomes(self):
+        with tempfile.TemporaryDirectory() as folder:
+            info=fixture(Path(folder))
+            text=(Path(folder)/'snapshot.html').read_text().split('<script id="memory-data" type="application/json">')[1].split('</script>')[0]
+            responses=json.loads(text)['responses']
+            latest=responses['now']['latest_decisions']
+            self.assertEqual([d['id'] for d in latest],[info['revised']])
+            self.assertEqual(latest[0]['outcome']['assessment'],'good')
+            self.assertEqual(responses['records?limit=100&view=decisions']['total'],2)
+            self.assertEqual(responses['record?id='+info['old']]['record']['outcome']['id'],info['failed'])
+            self.assertEqual(responses['now']['counts']['blocked'],1)
+            self.assertIn('lineage?id='+info['revised'],responses)
+            self.assertIn('Encoding contract',responses['record?body_offset=0&id='+info['source']]['record']['detail']['body'])
 
 
 if __name__=='__main__':unittest.main()
