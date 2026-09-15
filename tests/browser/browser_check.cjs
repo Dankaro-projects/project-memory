@@ -4,6 +4,11 @@ const fs=require('node:fs'),path=require('node:path'),os=require('node:os');
 const {execFileSync}=require('node:child_process');
 const {pathToFileURL}=require('node:url');
 const assert=require('node:assert/strict');
+const {navigate}=require('./navigation.cjs');
+async function tableView(page,view) {
+ await navigate(page,view);
+ if(await page.locator('#presentation').isVisible() && await page.locator('#presentation option[value=table]').count()) await page.locator('#presentation').selectOption('table');
+}
 (async()=>{
  const root=path.resolve(__dirname,'../..'),browserOutput=process.env.MEMORY_BROWSER_OUTPUT||path.join(root,'results/viewer-v3'),temp=fs.mkdtempSync(path.join(os.tmpdir(),'memory-viewer-'));
  let browser;
@@ -43,8 +48,9 @@ with Memory.create(root/'memory.sqlite','Browser fixture',['Plain English.']) as
   await page.getByText('Using this workspace',{exact:true}).click();
   assert.match(await page.locator('#workspace-help').textContent(),/offline snapshot.*does not update/);
   await page.locator('#about-close').click();
+  await tableView(page,'episodes');
   assert.equal(await page.locator('#rows tr').count(),2);
-  await page.locator('[data-view=events]').click();
+  await tableView(page,'events');
   assert.equal(await page.locator('#rows tr').count(),25);
   await page.locator('#next').click();assert.equal(await page.locator('#rows tr').count(),8);
   assert.equal(await page.locator('#page').textContent(),'Page 2 of 2');
@@ -58,10 +64,10 @@ with Memory.create(root/'memory.sqlite','Browser fixture',['Plain English.']) as
   await page.keyboard.press('Escape');
   await page.locator('#clear').click();await page.locator('#subject').selectOption('code');
   await page.locator('#from').fill('2099-01-01');assert.equal(await page.locator('#rows tr').count(),0);
-  await page.locator('#clear').click();await page.locator('[data-view=sources]').click();
+  await page.locator('#clear').click();await tableView(page,'sources');
   await page.locator('.row-open').first().click();assert.match(await page.locator('#detail-body').textContent(),/Exact evidence text/);
   await page.keyboard.press('Escape');
-  await page.locator('[data-view=documents]').click();assert.equal(await page.locator('#rows tr').count(),1);
+  await tableView(page,'documents');assert.equal(await page.locator('#rows tr').count(),1);
   await page.locator('.row-open').click();assert.match(await page.locator('#detail-body').textContent(),/File changed/);
   assert.equal(await page.locator('#detail-body .document h1').textContent(),'Product vision');
   assert.equal(await page.locator('#detail-body .document table tbody tr').count(),2);
@@ -79,7 +85,7 @@ with Memory.create(root/'memory.sqlite','Browser fixture',['Plain English.']) as
   await page.locator('#detail-body .references button').first().click();assert.match(await page.locator('#detail-body').textContent(),/Needs review/);
   await page.locator('#detail-back').click();assert.equal(await page.locator('#detail-body .document h1').textContent(),'Product vision');
   await page.keyboard.press('Escape');
-  await page.locator('[data-view=corrections]').click();await page.locator('.row-open').click();
+  await tableView(page,'corrections');await page.locator('.row-open').click();
   const correction=await page.locator('#detail-body').textContent();
   assert(correction.indexOf('Original wording')<correction.indexOf('Corrected wording'));
   assert.match(correction,/The feature improves accuracy\./);
@@ -87,7 +93,7 @@ with Memory.create(root/'memory.sqlite','Browser fixture',['Plain English.']) as
   fs.mkdirSync(browserOutput,{recursive:true});
   await page.screenshot({path:path.join(browserOutput,'correction-detail.png')});
   await page.keyboard.press('Escape');await page.locator('#subject').selectOption('code');
-  await page.locator('[data-view=episodes]').click();await page.locator('.row-open').click();
+  await tableView(page,'episodes');await page.getByRole('button',{name:'Open Code episode',exact:true}).click();
   await page.getByRole('button',{name:'Show episode events'}).click();
   assert.equal(await page.locator('#rows tr').count(),25);
   await page.locator('#order').selectOption('title');
@@ -97,7 +103,7 @@ with Memory.create(root/'memory.sqlite','Browser fixture',['Plain English.']) as
   fs.mkdirSync(browserOutput,{recursive:true});
   if(fs.existsSync(demo)){
    await page.goto(pathToFileURL(demo).href);await page.screenshot({path:path.join(browserOutput,'viewer-desktop.png'),fullPage:true});
-   await page.locator('[data-view=pending]').click();assert.equal(await page.locator('#rows tr').count(),1);
+   await tableView(page,'pending');assert.equal(await page.locator('#rows tr').count(),1);
    await page.locator('.row-open').click();assert.match(await page.locator('#detail-body').textContent(),/execution_unconfirmed|Execution not confirmed/);
    await page.keyboard.press('Escape');
    await page.setViewportSize({width:390,height:844});
@@ -109,11 +115,11 @@ with Memory.create(root/'memory.sqlite','Browser fixture',['Plain English.']) as
   if(fs.existsSync(projectViewer)){
    await page.setViewportSize({width:1440,height:1000});await page.goto(pathToFileURL(projectViewer).href);
    for(const view of ['decisions','research','corrections','patterns','drift','captures']){
-    await page.locator(`[data-view=${view}]`).click();assert((await page.locator('#rows tr').count())>0,view+' must contain project evidence');
+    await tableView(page,view);assert((await page.locator('#rows tr').count())>0,view+' must contain project evidence');
    }
-   await page.locator('[data-view=decisions]').click();await page.locator('.row-open').first().click();
-   assert.match(await page.locator('#detail-body').textContent(),/Decision basis/);
-   assert.match(await page.locator('#detail-body').textContent(),/Actions, outcomes and revisions/);
+   await tableView(page,'decisions');await page.locator('.row-open').first().click();
+   assert.match(await page.locator('#detail-body').textContent(),/Evidence for this decision/);
+   assert.match(await page.locator('#detail-body').textContent(),/Decision history/);
    await page.keyboard.press('Escape');
    await page.screenshot({path:path.join(browserOutput,'project-desktop.png'),fullPage:true});
    await page.setViewportSize({width:390,height:844});await page.screenshot({path:path.join(browserOutput,'project-mobile.png'),fullPage:true});
@@ -124,7 +130,7 @@ with Memory.create(root/'memory.sqlite','Browser fixture',['Plain English.']) as
   execFileSync(process.env.MEMORY_PYTHON||'python',['-m','tests.integration.planning_case','--project',planning,'--extra','26'],{cwd:root});
   await page.setViewportSize({width:1440,height:1000});
   await page.goto(pathToFileURL(path.join(planning,'board.html')).href);
-  await page.locator('[data-view=board]').click();
+  await tableView(page,'board');
   assert.equal(await page.locator('.work-card').count(),25);
   assert.equal(await page.locator('#from').isVisible(),false);
   await page.locator('#next').click();assert.equal(await page.locator('.work-card').count(),4);
@@ -132,7 +138,7 @@ with Memory.create(root/'memory.sqlite','Browser fixture',['Plain English.']) as
   await page.locator('.work-card').click();
   assert.match(await page.locator('#detail-body').textContent(),/Work scope/);
   assert.match(await page.locator('#detail-body').textContent(),/Latin-1/);
-  assert.match(await page.locator('#detail-body').textContent(),/Decision history/);
+  assert.match(await page.locator('#detail-body').textContent(),/Activity and decisions/);
   await page.keyboard.press('Escape');await page.locator('#clear').click();
   const sprint=JSON.parse(fs.readFileSync(path.join(planning,'fixture.json'),'utf8')).sprint.episode_id;
   await page.locator('#sprint').selectOption(sprint);
@@ -144,8 +150,8 @@ with Memory.create(root/'memory.sqlite','Browser fixture',['Plain English.']) as
   await page.locator('#show-empty').uncheck();
   await page.setViewportSize({width:390,height:844});
   await page.locator('#menu-toggle').click();assert.equal(await page.locator('#menu-toggle').getAttribute('aria-expanded'),'true');
-  await page.locator('[data-view=decisions]').click();assert.equal(await page.locator('#menu-toggle').getAttribute('aria-expanded'),'false');
-  await page.locator('#menu-toggle').click();await page.locator('[data-view=board]').click();
+  await tableView(page,'decisions');assert.equal(await page.locator('#menu-toggle').getAttribute('aria-expanded'),'false');
+  await page.locator('#menu-toggle').click();await tableView(page,'board');
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth),true);
   await page.screenshot({path:path.join(browserOutput,'work-board-mobile.png'),fullPage:true});
   optionalChecks.push('work board pagination','board search','sprint selection','intent and scope detail','board hides irrelevant filters','board mobile width','optional empty columns','mobile sidebar navigation','document headings, tables, lists and code','exact original source text','safe Markdown links','embedded Manrope font','side panel back navigation','document width at 320/390/768/1440px');

@@ -57,9 +57,14 @@ def row(memory, rid, *, body_offset=None):
                       body_more=body_offset+12000<len(body),next_offset=min(body_offset+12000,len(body)))
     payload=detail.get('payload',{})
     title=detail['title'] if source else next((payload[k] for k in ['decision','summary','observed','question','do','text','reason','action'] if k in payload),detail['kind'])
-    return {'id':rid,'kind':detail['kind'],'subject':detail['subject'],'status':detail['status'],
+    result = {'id':rid,'kind':detail['kind'],'subject':detail['subject'],'status':detail['status'],
             'title':title,'date':detail.get('checked_at',detail.get('created_at','')),
             'episode_id':detail.get('episode_id',''),'detail':detail}
+    if detail['kind']=='decision':
+        result['episode_title']=memory.episode(detail['episode_id'])['title']
+        outcome=memory.db.execute("SELECT id FROM events WHERE kind='outcome' AND decision_id=? ORDER BY seq DESC LIMIT 1",(rid,)).fetchone()
+        result['outcome']=row(memory,outcome[0]) if outcome else None
+    return result
 
 
 def page(memory, params):
@@ -146,6 +151,7 @@ class Viewer(HTTPServer):
     allow_reuse_address=True
     def __init__(self, path, token, port=0):
         self.memory=Memory(path,read_only=True);self.token=token;self.boot=uuid.uuid4().hex
+        self.memory._review_tree_cache={}
         self.csrf=secrets.token_urlsafe(24)
         self.last_access=time.monotonic();self.version=None;self.paths=[];self.next_review=None;self.due_count=0;self.db_identity=Path(path).stat().st_ino
         super().__init__(('127.0.0.1',port),Handler)
@@ -163,12 +169,10 @@ class Viewer(HTTPServer):
             self.due_count,self.next_review=self.memory.db.execute('SELECT count(CASE WHEN review_after<=? THEN 1 END),min(CASE WHEN review_after>? THEN review_after END) FROM sources',(now,now)).fetchone()
             self.paths=[path for r in self.memory.db.execute('SELECT DISTINCT source_key FROM sources WHERE source_key LIKE ?',(PREFIX+'%',)) if (path:=document_path(r[0])) is not None]
             self.version=version
-        stats=[]
-        marker=self.memory.path.with_suffix('.capture-error.json')
-        try:
-            st=marker.stat();stats.append(('capture_failure',st.st_mtime_ns,st.st_size))
-        except FileNotFoundError:
-            pass
+        from .skills import signature
+        stats=[("project_skills", signature(self.memory))]
+        from .capture_errors import signature as failure_signature
+        stats.append(('capture_failures',failure_signature(self.memory.path)))
         for p in self.paths:
             try:st=p.stat();stats.append((str(p),st.st_mtime_ns,st.st_size,st.st_ino))
             except OSError:stats.append((str(p),None))
@@ -176,7 +180,7 @@ class Viewer(HTTPServer):
         config=configured(self.memory)
         if config and exists(self.memory) and self.memory.db.execute('SELECT 1 FROM review_runs LIMIT 1').fetchone():
             # Unregistered project files and expired workers can invalidate a result without a database write.
-            try:stats.append(('review_project',tree_signature(config['project'])))
+            try:stats.append(('review_project',tree_signature(config['project'],cache=self.memory._review_tree_cache)))
             except (OSError,subprocess.SubprocessError) as exc:stats.append(('review_project_unavailable',str(exc)))
             from datetime import datetime, timezone
             expired=[r['id'] for r in self.memory.db.execute("SELECT id,updated_at FROM review_runs WHERE state IN ('queued','running','cancelling')")
@@ -201,7 +205,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_error(403);return
         try:
             size=int(self.headers.get('Content-Length','0'))
-            if not 0<size<=100000:raise InvalidRecord('Workspace actions must be JSON smaller than 100 KB.')
+            if not 0<size<=2_000_000:raise InvalidRecord('Workspace actions must be JSON smaller than 2 MB.')
             data=json.loads(self.rfile.read(size))
             if not isinstance(data,dict):raise InvalidRecord('The action must be an object.')
             endpoint=path[len(prefix):]
@@ -241,9 +245,9 @@ class Handler(BaseHTTPRequestHandler):
         endpoint=target.path[len(prefix):]
         try:
             if endpoint=='':body=html();mime='text/html; charset=utf-8';etag=None
-            elif endpoint in {'api/health','api/records','api/record','api/board','api/sprints','api/reviews','api/coverage'}:
+            elif endpoint in {'api/health','api/records','api/record','api/board','api/sprints','api/reviews','api/coverage','api/skills','api/skill','api/skill-selections','api/map','api/relationships','api/direction','api/overview'}:
                 revision=self.server.revision();etag='"'+hashlib.sha256((revision+target.path+target.query).encode()).hexdigest()+'"'
-                if self.headers.get('If-None-Match')==etag:
+                if endpoint not in {'api/skills','api/skill','api/skill-selections'} and self.headers.get('If-None-Match')==etag:
                     self.send_response(304);self.send_header('ETag',etag);self.end_headers();return
                 memory=self.server.memory
                 if endpoint=='api/health':
@@ -252,6 +256,27 @@ class Handler(BaseHTTPRequestHandler):
                            'review_host':configured(memory),'interactive':True,
                            'episodes':[dict(r) for r in memory.db.execute('SELECT id,title FROM episodes ORDER BY created_at DESC LIMIT 1000')],
                            'episodes_more':memory.db.execute('SELECT count(*) FROM episodes').fetchone()[0]>1000}
+                elif endpoint=='api/overview':
+                    from .planning import board
+                    value={'work':board(memory,limit=3,grouped=True),
+                           'decisions':page(memory,{'view':'decisions','limit':'4'}),
+                           'lessons':page(memory,{'view':'lessons','status':'proposed','limit':'3'})}
+                elif endpoint in {'api/skills', 'api/skill', 'api/skill-selections'}:
+                    from . import skills
+                    if endpoint == 'api/skills':
+                        value = skills.catalog(memory, int(params.get('limit', '25')), int(params.get('offset', '0')), params.get('query', ''))
+                    elif endpoint == 'api/skill-selections':
+                        value = {'selections': skills.selections(memory, params['episode'])}
+                    else:
+                        value = skills.read(memory, params['id'], params.get('file'), int(params.get('offset', '0')))
+                elif endpoint == 'api/map':
+                    from .maps import model
+                    value = model(memory, params['episode'], params.get('mode', 'workflow'))
+                elif endpoint == 'api/relationships':
+                    from .maps import relationships
+                    value = relationships(memory, params['id'], int(params.get('limit', '40')), int(params.get('depth', '1')))
+                elif endpoint == 'api/direction':
+                    value = memory.direction()
                 elif endpoint=='api/coverage':
                     from .coverage import inspect as session_coverage, sessions
                     limit=int(params.get('limit','10'));offset=int(params.get('offset','0'))
@@ -259,6 +284,9 @@ class Handler(BaseHTTPRequestHandler):
                 elif endpoint=='api/reviews':
                     from .reviews import listing, current
                     value=listing(memory,params.get('episode'),int(params.get('limit','10')),int(params.get('offset','0')))
+                    for run in value['runs']:
+                        snapshot=json.loads(memory.db.execute('SELECT snapshot FROM review_runs WHERE id=?',(run['id'],)).fetchone()[0])
+                        run['conditions']={c['id']:c['condition'] for c in snapshot.get('checklist',[])+snapshot.get('constraints',[])}
                     value['current']=current(memory,params.get('episode'))
                 elif endpoint in {'api/board','api/sprints'}:
                     from .planning import board, sprints
@@ -279,7 +307,7 @@ class Handler(BaseHTTPRequestHandler):
                     finally:memory.db.rollback()
                 body=dumps(value).encode();mime='application/json; charset=utf-8'
             else:self.send_error(404);return
-        except (MemoryError,ValueError,sqlite3.Error,OSError) as exc:
+        except (MemoryError,ValueError,TypeError,KeyError,sqlite3.Error,OSError) as exc:
             body=dumps({'error':type(exc).__name__,'message':str(exc)}).encode();mime='application/json';etag=None
             self.send_response(400)
         else:self.send_response(200)

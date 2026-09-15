@@ -32,7 +32,10 @@ with tempfile.TemporaryDirectory(prefix='project-memory-installed-') as director
     child=subprocess.run(installed['launcher']+['doctor','--project',str(project)],check=True,capture_output=True,text=True,cwd=project,env=env)
     assert json.loads(child.stdout)['mcp_process_verified']
     view=run('view','--output',str(project/'view.html'),'--no-open','--include-bodies');assert Path(view['path']).is_file()
-    assert 'Keep data local unless' in Path(view['path']).read_text(encoding='utf-8')
+    html=Path(view['path']).read_text(encoding='utf-8')
+    assert 'Keep data local unless' in html
+    assert 'function renderMap()' in html and 'function renderSkills()' in html and '__WORKSPACE_JS__' not in html
+    assert 'function renderOverview()' in html and 'function decisionPage(' in html
     live=run('view','--no-open')
     try:
         from urllib.request import urlopen
@@ -42,10 +45,19 @@ with tempfile.TemporaryDirectory(prefix='project-memory-installed-') as director
         from urllib.parse import urlsplit
         body={'operation':'plan','request_key':'installed-plan','data':{'title':'Inspect installed behaviour','objective':'Verify the packaged workspace.','criterion':'The live API stores this plan.','subject':'code','payload':{'state':'ready','scope':'Inspect the installed package.','next_action':'Read the saved plan.','autonomy':'suggest','reason':'The installed smoke check requests it.'}}}
         headers={'Content-Type':'application/json','Origin':'http://'+urlsplit(live['url']).netloc,'X-Project-Memory':health['csrf']}
-        with urlopen(Request(live['url']+'api/actions',data=json.dumps(body).encode(),headers=headers),timeout=5) as response:assert json.load(response)['episode_id']
+        with urlopen(Request(live['url']+'api/actions',data=json.dumps(body).encode(),headers=headers),timeout=5) as response:episode=json.load(response)['episode_id']
+        with urlopen(live['url']+'api/overview',timeout=5) as response:overview=json.load(response)
+        assert any(card['id']==episode for cards in overview['work']['groups'].values() for card in cards)
+        assert all(len(cards)<=3 for cards in overview['work']['groups'].values())
+        import base64
+        skill_text='---\nname: installed-check\ndescription: Inspect the installed package.\n---\nRead the original evidence before making a claim.'
+        body={'operation':'skill_import','request_key':'installed-skill','data':{'expected_version':0,'files':[{'path':'SKILL.md','content':base64.b64encode(skill_text.encode()).decode()}]}}
+        with urlopen(Request(live['url']+'api/actions',data=json.dumps(body).encode(),headers=headers),timeout=5) as response:skill=json.load(response)['skill']
+        with urlopen(live['url']+'api/skill?id='+skill['id']+'&file=SKILL.md',timeout=5) as response:assert json.load(response)['text']==skill_text
+        with urlopen(live['url']+'api/relationships?id='+episode,timeout=5) as response:assert json.load(response)['focus']==episode
     finally:
         import signal
         os.kill(live['pid'],signal.SIGTERM)
     backup=project/'backup.sqlite';run('backup',str(backup));assert backup.is_file()
     run('uninstall');assert Path(first['database']).is_file()
-    print(json.dumps({'passed':True,'wheel':wheel.name,'checks':['fresh wheel installation','CLI entry point','persistent installed launcher','three bundled agent roles','idempotent setup and capture','separate MCP process handshake and read','packaged offline HTML viewer','packaged live HTTP viewer','authenticated workspace write','SQLite backup','uninstall preserves data'],'runtime_dependencies':0},indent=2))
+    print(json.dumps({'passed':True,'wheel':wheel.name,'checks':['fresh wheel installation','CLI entry point','persistent installed launcher','three bundled agent roles','idempotent setup and capture','separate MCP process handshake and read','packaged offline HTML viewer','packaged live HTTP viewer','authenticated workspace write','packaged bounded overview and decision reader','packaged skill import and original read','packaged relationship API','SQLite backup','uninstall preserves data'],'runtime_dependencies':0},indent=2))

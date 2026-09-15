@@ -86,7 +86,9 @@ class ProductTests(unittest.TestCase):
             self.assertEqual(m.read(decision['id'])['payload']['project_revision'],0)
             self.assertEqual(m.record(ep['id'],'decision',payload,expected_version=0,actor='test',evidence=[{'source_id':source['id'],'reason':'Consider a policy revision.'}],request_key='decision')['id'],decision['id'])
             history=dispatch(m,'memory_get',{'view':'direction'})['revisions']
-            self.assertEqual([r['version'] for r in history],[1,0]);self.assertEqual(history[1]['requirements'],['Keep data locally.'])
+            self.assertEqual([r['version'] for r in history],[1,0])
+            original=dispatch(m,'memory_get',history[1]['read_requirements_with'])
+            self.assertEqual([r['text'] for r in original['items']],['Keep data locally.'])
             with self.assertRaises(sqlite3.IntegrityError):m.db.execute('DELETE FROM project_revisions')
             m.export_html(self.project/'view.html')
             self.assertIn('Project requirements, version 1',(self.project/'view.html').read_text())

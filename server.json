@@ -7,12 +7,12 @@
     "url": "https://github.com/Dankaro-projects/project-memory",
     "source": "github"
   },
-  "version": "0.5.0b8",
+  "version": "0.5.0b9",
   "packages": [
     {
       "registryType": "pypi",
       "identifier": "project-memory-mcp",
-      "version": "0.5.0b8",
+      "version": "0.5.0b9",
       "runtimeHint": "uvx",
       "packageArguments": [
         {

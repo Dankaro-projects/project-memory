@@ -41,15 +41,26 @@ for tool in TOOLS:
 TOOLS[1]['description'] += ' Use next with an episode id and session_id to recover intent, scope, dependencies and the next action before continuing; board and sprints expose planned work. Queued work is not permission to change objectives.'
 TOOLS[2]['description'] += ' plan and sprint create an episode and its plan atomically or revise an existing plan at expected_version; read their schema first. A plan preserves scope and next action; it does not prove execution or authorise host tools.'
 TOOLS[0]['description'] += ' For continuing a named work item, begin with memory_get next; use this context search when additional evidence is needed. Omit max_chars to use the default, or use 500–20000.'
-TOOLS[1]['description'] += ' Begin a named work continuation with next. Omit max_chars to use 6000; the allowed range is 500–20000. Use schema id plan to update a work_plan through operation plan, which handles revision links at the supplied version.'
+TOOLS[1]['description'] += ' Begin a named work continuation with next. Omit max_chars to use 6000; the allowed range is 500–20000. Read schema id progress for routine state or next-action changes; plan revises intent at the supplied version.'
 TOOLS[1]['inputSchema']['properties']['view']['enum'].append('reviews')
+TOOLS[1]['inputSchema']['properties']['version']={'type':'integer','minimum':0}
+TOOLS[1]['description'] += ' direction returns revision metadata and pointers. requirements accepts an optional version to page exact current or historical text and approval evidence without duplicating it in history.'
 TOOLS[2]['inputSchema']['properties']['operation']['enum'].append('review')
+TOOLS[2]['inputSchema']['properties']['operation']['enum'].append('progress')
+TOOLS[2]['description'] += ' progress updates state or next_action with a reason and expected_version while preserving scope and evidence; use plan only for an intentional plan revision.'
 TOOLS[1]['inputSchema']['properties']['view']['enum'].append('coverage')
 TOOLS[2]['inputSchema']['properties']['operation']['enum'].append('checkpoint')
 TOOLS[1]['description'] += ' coverage with session_id lists unassessed requests, unassigned activity, missing outcomes and capture gaps.'
 TOOLS[2]['description'] += ' checkpoint explicitly assesses observed prompt IDs; read schema id checkpoint. Bundle it as data.checkpoint on a plan or record write to avoid another call.'
 TOOLS[1]['description'] += ' reviews with the work episode id returns agent checks, findings and measured usage.'
 TOOLS[2]['description'] += ' review requests a bounded read-only host check (episode_id, role outcome/intent/recovery, optional retry). Complete outcomes start a check when configured; Done requires its current pass. Wait without repeated model calls using project-memory review --wait CHECK_ID.'
+
+
+TOOLS[2]['inputSchema']['properties']['operation']['enum'].extend(['skill_import', 'skill_selection', 'map'])
+TOOLS[2]['description'] += ' skill_import stores a package without activation. skill_selection and map require actor and evidence; agent-authored changes remain proposed. Read their schema first.'
+TOOLS[1]['inputSchema']['properties']['view']['enum'].extend(['skills', 'skill', 'skill_selections', 'map', 'relationships'])
+TOOLS[1]['inputSchema']['properties'].update({'file': S, 'mode': {'enum': ['workflow', 'architecture']}, 'depth': {'type': 'integer', 'minimum': 1, 'maximum': 3}})
+TOOLS[1]['description'] += ' skills lists project-local methods; skill with id and optional file reads one package on demand. skill_selections uses a work id. map reads an authored workflow or architecture for a work id. relationships expands recorded links around an id. Selection and reading do not prove skill use.'
 
 
 def tool_result(value, error=False):
@@ -64,6 +75,19 @@ def bounded(value, budget):
 
 
 def schema(kind):
+    if kind=='progress':
+        return {'operation':'progress','required':['episode_id','expected_version','payload','actor'],
+                'payload':{'state':'Optional work state.','next_action':'Optional complete sentence.','reason':'Required explanation.'},
+                'rules':'Provide state or next_action. This preserves scope, autonomy, dependencies and evidence. Pass session_id when claiming agent work. Use plan for intentional scope changes; progress cannot waive completion checks.'}
+    if kind in {'skill_import', 'skill_selection', 'map'}:
+        fields = {'skill_import': ['files or archive', 'expected_version (0 for new; replacement also needs replace_skill_id)'],
+                  'skill_selection': ['episode_id', 'expected_version', 'skill_id', 'revision', 'state', 'reason', 'actor', 'evidence'],
+                  'map': ['episode_id', 'expected_version', 'mode', 'map_version', 'nodes', 'edges', 'reason', 'actor', 'evidence']}
+        return {'operation': kind, 'required': fields[kind], 'skill_files': '[{path, content: base64}] or archive: base64 ZIP; 100 files and 1 MB maximum. Import does not activate instructions.',
+                'selection_states': ['selected', 'released', 'reported_use'],
+                'node': {'id': 'node_ followed by a generated identifier', 'title': 'text', 'kind': 'system/component/process/deliverable/work', 'description': 'text', 'reference': 'existing record id or empty string', 'status': 'proposed/confirmed/retired'},
+                'edge': {'id': 'generated identifier', 'from': 'node id', 'to': 'node id', 'type': 'depends_on/precedes/uses/produces/contains/implements', 'reason': 'text', 'status': 'proposed/confirmed/retired'},
+                'rules': 'Read current versions first. An agent cannot confirm new or changed diagram items. Skill use is a report supported by evidence, not inferred from selection. Diagrams do not schedule tools.'}
     if kind=='reconcile':
         return {'operation':'reconcile','required':['receipt_id','resolution','reason','evidence'],
                 'resolutions':['completed','failed','not_run','unknown'],
@@ -151,6 +175,21 @@ def write(memory, operation, request_key, data, session_id=None, receipt_ids=Non
                     result=memory.record(request_key=request_key,**data)
                 if kind=='decision' and session_id:
                     codex_host.bind(memory,session_id,result['id'],request_key)
+            elif operation in {'skill_import', 'skill_selection', 'map'}:
+                from . import skills, maps
+                actor = data.pop('actor', 'assistant')
+                if actor == 'workspace-user':
+                    raise InvalidRecord('MCP records must identify the assistant; workspace-user is reserved for the local UI.')
+                evidence = data.pop('evidence', None)
+                if operation == 'skill_import':
+                    result = skills.import_package(memory, data, request_key, actor=actor)
+                elif operation == 'skill_selection':
+                    result = skills.select(memory, data, request_key, actor=actor, evidence=evidence)
+                else:
+                    result = maps.save(memory, data, request_key, actor=actor, evidence=evidence)
+            elif operation=='progress':
+                from .planning import progress
+                result=progress(memory,request_key=request_key,session_id=session_id,**data)
             elif operation in {'plan','sprint'}:
                 from .planning import save
                 result=save(memory,'work_plan' if operation=='plan' else 'sprint',request_key=request_key,session_id=session_id,**data)
@@ -218,6 +257,37 @@ def dispatch(memory, name, arguments):
     view=args.pop('view');rid=args.pop('id',None);limit=args.pop('limit',10);offset=args.pop('offset',0)
     if type(limit) is not int or not 1<=limit<=100 or type(offset) is not int or offset<0: raise InvalidRecord('Invalid limit or offset.')
     if view=='schema': result=schema(rid)
+    elif view in {'skills', 'skill', 'skill_selections'}:
+        from . import skills
+        if view == 'skills':
+            result = skills.catalog(memory, limit, offset, args.get('query', ''))
+            while len(result['skills']) > 1 and len(dumps(tool_result(result))) > budget:
+                result['skills'].pop(); result['next_offset'] -= 1; result['more'] = True
+        elif view == 'skill_selections':
+            items = skills.selections(memory, rid)
+            result = {'selections': items[offset:offset + limit], 'total': len(items), 'next_offset': min(offset + limit, len(items)), 'more': offset + limit < len(items)}
+            while len(result['selections']) > 1 and len(dumps(tool_result(result))) > budget:
+                result['selections'].pop(); result['next_offset'] -= 1; result['more'] = True
+        else:
+            result = skills.read(memory, rid, args.get('file'), offset, min(12000, max(1, budget // 2)))
+    elif view in {'map', 'relationships'}:
+        from .maps import model, relationships
+        if view == 'map':
+            full = model(memory, rid, args.get('mode', 'workflow'))
+            size = limit
+            def page():
+                total = max(len(full['nodes']), len(full['edges']))
+                return {**full, 'nodes': full['nodes'][offset:offset + size], 'edges': full['edges'][offset:offset + size],
+                        'reference_status': {node['reference']: full['reference_status'][node['reference']] for node in full['nodes'][offset:offset + size] if node['reference']},
+                        'node_count': len(full['nodes']), 'edge_count': len(full['edges']),
+                        'offset': offset, 'next_offset': min(offset + size, total), 'more': offset + size < total}
+            result = page()
+            while size > 1 and len(dumps(tool_result(result))) > budget:
+                size -= 1; result = page()
+        else:
+            result = relationships(memory, rid, limit, args.get('depth', 1))
+            while limit > 1 and len(dumps(tool_result(result))) > budget:
+                limit -= 1; result = relationships(memory, rid, limit, args.get('depth', 1))
     elif view=='reviews':
         from .reviews import listing
         result=listing(memory,rid,limit,offset)
@@ -247,10 +317,14 @@ def dispatch(memory, name, arguments):
         result=sync(memory,limit=limit,offset=offset,check=True)
     elif view=='requirements':
         from .direction import items
-        result=items(memory,limit,offset)
+        result=items(memory,limit,offset,args.get('version'))
+        while limit>1 and len(dumps(tool_result(result)))>budget:
+            limit-=1; result=items(memory,limit,offset,args.get('version'))
     elif view=='direction':
-        from .direction import history
-        result={'current':memory.direction(),**history(memory,limit,offset)}
+        from .direction import overview
+        result=overview(memory,limit,offset)
+        while limit>1 and len(dumps(tool_result(result)))>budget:
+            limit-=1; result=overview(memory,limit,offset)
     elif view=='metrics': result=memory.metrics()
     elif view=='status':
         result={'host':codex_host.status(memory,args.get('session_id'),limit,offset),'pending':memory.pending(limit=limit,offset=offset),'due':memory.due(limit=limit)}
@@ -326,7 +400,7 @@ def serve(memory, incoming, outgoing):
             elif method=='tools/list': result={'tools':TOOLS}
             elif method=='tools/call':
                 try: result=tool_result(dispatch(memory,params['name'],params.get('arguments',{})))
-                except (MemoryError,ValueError,TypeError,KeyError,sqlite3.Error) as exc:
+                except (MemoryError,OSError,ValueError,TypeError,KeyError,sqlite3.Error) as exc:
                     result=tool_result({'error':type(exc).__name__,'message':str(exc),**getattr(exc,'details',{})},True)
             else:
                 outgoing.write(dumps({'jsonrpc':'2.0','id':request['id'],'error':{'code':-32601,'message':'Method not found'}})+'\n');outgoing.flush();continue

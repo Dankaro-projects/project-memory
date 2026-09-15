@@ -69,7 +69,8 @@ def main(argv=None):
         elif name=='review':
             p.add_argument('--wait');p.add_argument('--episode');p.add_argument('--role',choices=['outcome','intent','recovery'],default='outcome')
             p.add_argument('--cancel');p.add_argument('--retry',action='store_true')
-            p.add_argument('--max-seconds',type=int,default=300)
+            p.add_argument('--max-seconds',type=int,help='Execution limit; with --wait, legacy alias for --wait-seconds.')
+            p.add_argument('--wait-seconds',type=int,help='Stop waiting after this many seconds without cancelling the review (default: 60).')
         elif name=='backup':p.add_argument('destination')
     hook=sub.add_parser('hook');hook.add_argument('--db');hook.add_argument('--host',choices=sorted(codex_host.HOSTS),default='codex')
     hook.add_argument('--if-unmanaged',action='store_true')
@@ -96,18 +97,25 @@ def main(argv=None):
         elif args.command=='doctor':result=doctor(database(args),install_state(args).get('client'),args.project)
         elif args.command=='review':
             from . import reviews
-            import time, uuid
+            import uuid
+            if sum(bool(x) for x in (args.cancel,args.wait,args.episode))!=1:
+                raise ValueError('Select exactly one of --episode, --wait or --cancel.')
+            if args.wait_seconds is not None and not args.wait:
+                raise ValueError('--wait-seconds requires --wait.')
+            if args.wait and args.wait_seconds is not None and args.max_seconds is not None:
+                raise ValueError('Use --wait-seconds alone when waiting.')
+            if args.cancel and (args.max_seconds is not None or args.retry):
+                raise ValueError('Cancellation does not accept execution limits or retry.')
+            if args.wait and args.retry:
+                raise ValueError('--retry starts a review with --episode; it cannot be used with --wait.')
             with Memory(database(args)) as memory:
                 if args.cancel:result=reviews.cancel(memory,args.cancel)
                 elif args.wait:
-                    deadline=time.monotonic()+905
-                    while True:
-                        result=reviews.read(memory,args.wait)
-                        if result['state'] not in reviews.ACTIVE or time.monotonic()>deadline:break
-                        time.sleep(.5)
+                    seconds=args.wait_seconds if args.wait_seconds is not None else args.max_seconds if args.max_seconds is not None else 60
+                    result=reviews.wait(memory,args.wait,seconds)
                 else:
                     if not args.episode:raise ValueError('Select --episode, --wait or --cancel.')
-                    result=reviews.request(memory,args.episode,args.role,request_key='cli:'+uuid.uuid4().hex,retry=args.retry,max_seconds=args.max_seconds)
+                    result=reviews.request(memory,args.episode,args.role,request_key='cli:'+uuid.uuid4().hex,retry=args.retry,max_seconds=args.max_seconds if args.max_seconds is not None else 300)
                     reviews.launch(memory,result)
                 result.pop('snapshot',None)
         elif args.command=='view' and not args.output:

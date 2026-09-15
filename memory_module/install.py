@@ -193,6 +193,8 @@ def setup(project, *, client='mcp', database=None, requirements=None, documents=
             for path in (config,hooks_path,mcp_path,settings_path):
                 if path.exists():shutil.copy2(path,backup_dir/path.name)
             backups=[str(backup_dir)]
+        with memory._write():
+            memory.db.execute("INSERT OR REPLACE INTO settings VALUES ('workspace_project',?)", (json.dumps(str(project)),))
         initialize(memory)
         if client in {'codex','claude'}:
             from .reviews import configure

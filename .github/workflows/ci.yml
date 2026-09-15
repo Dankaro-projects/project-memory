@@ -45,3 +45,5 @@ jobs:
       - run: python -m tests.integration.host_example --output results/host-example
       - run: node tests/browser/browser_check.cjs
       - run: node tests/browser/workspace_browser.cjs
+      - run: node tests/browser/knowledge_browser.cjs
+      - run: node tests/browser/usability_browser.cjs

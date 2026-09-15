@@ -37,7 +37,8 @@ def inspect(path, kind):
                 members[entry.filename] = archive.read(entry)
     for name, body in members.items():
         check_member(name, body, kind)
-    for name in ('memory_module/viewer.html',
+    ui_files = ('state.js', 'records.js', 'api.js', 'sync.js', 'navigation.js', 'board.js', 'editor.js', 'reviews.js', 'approvals.js', 'skills.js', 'map.js', 'boot.js', 'workspace.css')
+    for name in tuple('memory_module/ui/' + name for name in ui_files) + ('memory_module/viewer.html',
                  'memory_module/assets/manrope-latin-400.woff2',
                  'memory_module/assets/manrope-latin-700.woff2'):
         if name not in members:

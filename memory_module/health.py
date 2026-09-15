@@ -13,8 +13,8 @@ def inspect(memory):
     direction = memory.direction()
     installed = codex_host.exists(memory)
     last = memory.db.execute('SELECT created_at FROM host_receipts ORDER BY rowid DESC LIMIT 1').fetchone() if installed else None
-    failure_path = memory.path.with_suffix('.capture-error.json')
-    failure = json.loads(failure_path.read_text()) if failure_path.exists() else None
+    from .capture_errors import summary
+    failure = summary(memory.path)
     from .coverage import sessions
     coverage = sessions(memory,limit=5) if installed else {'sessions':[],'more':False}
     counts = {r[0]: r[1] for r in memory.db.execute('SELECT event_name,count(*) FROM host_receipts GROUP BY event_name')} if installed else {}

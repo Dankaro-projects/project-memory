@@ -6,7 +6,7 @@ from .planning import latest
 
 
 def action(memory, operation, data, request_key):
-    if operation not in {'plan','sprint','comment'}:
+    if operation not in {'plan','sprint','comment','requirements','lesson_review','skill_import','skill_selection','map'}:
         raise InvalidRecord('Unknown workspace action.')
     if not isinstance(data,dict): raise InvalidRecord('Action data must be an object.')
     _text(request_key,'request_key',180)
@@ -16,6 +16,38 @@ def action(memory, operation, data, request_key):
         if prior:
             if prior['signature']!=signature: raise Conflict('This action key was already used for different changes.')
             return json.loads(prior['result'])
+        if operation in {'requirements', 'lesson_review', 'skill_import', 'skill_selection', 'map'}:
+            if operation == 'requirements':
+                if set(data) != {'requirements', 'reason', 'expected_version'}:
+                    raise InvalidRecord('Provide the complete requirements, reason and current version.')
+                source = memory.source('workspace:' + request_key, 'The user approves project requirements',
+                                       data['reason'], dumps(data), 'user')
+                result = memory.approve_requirements(**data, actor='workspace-user', request_key=request_key + ':approval',
+                    evidence=[{'source_id': source['id'], 'reason': 'The user explicitly approves this complete requirement revision.'}])
+            elif operation == 'lesson_review':
+                if set(data) != {'lesson_id', 'expected_version', 'status', 'reason'}:
+                    raise InvalidRecord('Select a lesson, status, reason and current episode version.')
+                lesson = memory.read(data['lesson_id'])
+                if lesson['kind'] != 'lesson':
+                    raise InvalidRecord('Select a lesson to review.')
+                source = memory.source('workspace:' + request_key, 'The user reviews a proposed lesson',
+                                       data['reason'], dumps(data), 'user', subject=lesson['subject'])
+                result = memory.record(lesson['episode_id'], 'lesson_review',
+                    {k: data[k] for k in ('lesson_id', 'status', 'reason')}, expected_version=data['expected_version'],
+                    actor='workspace-user', request_key=request_key + ':review',
+                    evidence=[{'source_id': source['id'], 'reason': 'The user explicitly reviews this lesson.'}],
+                    links=[{'event_id': lesson['id'], 'reason': data['reason']}])
+            elif operation == 'skill_import':
+                from .skills import import_package
+                result = import_package(memory, data, request_key)
+            elif operation == 'skill_selection':
+                from .skills import select
+                result = select(memory, data, request_key)
+            else:
+                from .maps import save
+                result = save(memory, data, request_key)
+            memory.db.execute('INSERT INTO adapter_requests VALUES (?,?,?)', (request_key, signature, dumps(result)))
+            return result
         allowed={'episode_id','expected_version','title','objective','criterion','subject','payload'}
         if operation=='comment': allowed={'episode_id','expected_version','text'}
         if set(data)-allowed: raise InvalidRecord('The workspace action contains unsupported fields.')

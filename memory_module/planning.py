@@ -169,6 +169,21 @@ def save(memory, kind, *, payload, actor, evidence, episode_id=None, expected_ve
     return {**result, 'episode_id': episode_id}
 
 
+def progress(memory, *, episode_id, expected_version, payload, actor, request_key, session_id=None):
+    """Append status changes without replacing scope or its supporting evidence."""
+    from .core import InvalidRecord
+    if not isinstance(payload,dict) or not {'reason'}<=payload.keys() or not payload.keys()<={'state','next_action','reason'} or not ({'state','next_action'}&payload.keys()):
+        raise InvalidRecord('Progress requires reason and state or next_action. Use plan for an intentional scope revision.')
+    previous = latest(memory,episode_id,'work_plan')
+    if not previous:
+        raise InvalidRecord('Record a plan before updating progress.')
+    record = memory.read(previous['id'])
+    evidence = [{'source_id':e['source_id'],'reason':e['reason']} for e in record['evidence']]
+    return save(memory,'work_plan',episode_id=episode_id,expected_version=expected_version,
+                payload={**record['payload'],**payload},actor=actor,evidence=evidence,
+                request_key=request_key,session_id=session_id,links=record['links'])
+
+
 def card(memory, episode_id):
     episode = memory.episode(episode_id)
     plan = latest(memory, episode_id, 'work_plan')
@@ -223,20 +238,20 @@ def card(memory, episode_id):
             'outcome': {'id': outcome['id'], 'assessment': outcome['assessment'], 'completion': outcome.get('completion')} if outcome else None}
 
 
-def board(memory, *, limit=25, offset=0, sprint_id=None, subject=None, query='', state=None, episode_id=None):
+def board(memory, *, limit=25, offset=0, sprint_id=None, subject=None, query='', state=None, episode_id=None, grouped=False):
     from .reviews import configured, exists, tree_signature
     from subprocess import SubprocessError
     config=configured(memory)
     cache=config and exists(memory) and memory.db.execute('SELECT 1 FROM review_runs LIMIT 1').fetchone()
     if cache:
-        try:memory._review_tree=tree_signature(config['project'])
+        try:memory._review_tree=tree_signature(config['project'],cache=getattr(memory,'_review_tree_cache',None))
         except (OSError,SubprocessError):cache=False
-    try:return _board(memory,limit=limit,offset=offset,sprint_id=sprint_id,subject=subject,query=query,state=state,episode_id=episode_id)
+    try:return _board(memory,limit=limit,offset=offset,sprint_id=sprint_id,subject=subject,query=query,state=state,episode_id=episode_id,grouped=grouped)
     finally:
         if cache:del memory._review_tree
 
 
-def _board(memory, *, limit=25, offset=0, sprint_id=None, subject=None, query='', state=None, episode_id=None):
+def _board(memory, *, limit=25, offset=0, sprint_id=None, subject=None, query='', state=None, episode_id=None, grouped=False):
     from .core import InvalidRecord
     if type(limit) is not int or not 1 <= limit <= 100 or type(offset) is not int or offset < 0:
         raise InvalidRecord('Use limit 1–100 and a nonnegative offset.')
@@ -259,14 +274,18 @@ def _board(memory, *, limit=25, offset=0, sprint_id=None, subject=None, query=''
         sql += " AND instr(lower(ep.title||' '||ep.objective||' '||coalesce(p.payload,'')),lower(?))>0"; args.append(query)
     sql += " ORDER BY CASE json_extract(p.payload,'$.priority') WHEN 'high' THEN 0 WHEN 'low' THEN 2 ELSE 1 END,ep.created_at,ep.id"
     records, counts, total = [], dict.fromkeys(STATES, 0), 0
+    groups = {state:[] for state in STATES} if grouped else None
     for row in memory.db.execute(sql, args):
         item = card(memory, row[0])
         counts[item['state']] += 1
+        if grouped and len(groups[item['state']])<limit:
+            groups[item['state']].append(item)
         if state and item['state'] != state:
             continue
         if offset <= total < offset+limit:
             records.append(item)
         total += 1
+    if grouped: return {'groups':groups,'counts':counts,'total':total}
     return {'cards': records, 'counts': counts, 'total': total, 'offset': offset, 'more': offset+len(records)<total,
             'note': 'State is checked against recorded evidence. This view does not run work or grant permission.'}
 
@@ -325,11 +344,13 @@ def next_work(memory, *, episode_id=None, session_id=None, limit=5, offset=0, su
             action, reason = 'continue', 'Continue only within the recorded scope and the current user authorisation.'
     update = None
     if plan:
-        update = {'tool':'memory_write','operation':'plan','episode_id':episode_id,'expected_version':item['version'],
-                  'schema':{'view':'schema','id':'plan'},
-                  'evidence':[dict(r) for r in memory.db.execute('SELECT source_id,reason FROM dependencies WHERE event_id=? ORDER BY source_id',(plan['id'],))],
-                  'note':'Supply actor, evidence and the complete work.plan payload except id. Pass this host session_id for in_progress. This operation preserves the previous plan automatically; do not guess supersedes or a later version.'}
+        update = {'tool':'memory_write','operation':'progress','episode_id':episode_id,'expected_version':item['version'],
+                  'schema':{'view':'schema','id':'progress'},
+                  'note':'Supply actor and payload with reason and state or next_action. Pass this host session_id for in_progress. Progress preserves scope, dependencies, links and evidence. Use plan only for an intentional scope revision.'}
+    selected_skills = memory.db.execute("SELECT count(*) FROM sources s WHERE source_key LIKE ? AND version=(SELECT max(version) FROM sources WHERE source_key=s.source_key) AND json_extract(body,'$.state') != 'released'", ('workspace-skill-selection:' + episode_id + ':%',)).fetchone()[0]
     return {'work': item, 'action': action, 'reason': reason, 'update':update,
+            'skills': {'selected': selected_skills, 'read_with': {'view': 'skill_selections', 'id': episode_id},
+                       'note': 'Read selected versions and conditions before using them. Selection is not execution evidence.'},
             'unconfirmed': state['unconfirmed'] if state and action == 'reconcile' else [],
             'recent_execution': state['recent'] if state and action == 'inspect_execution' else [],
             'requirements': {'version': memory.direction()['version'], 'read_with': 'memory_get requirements'},

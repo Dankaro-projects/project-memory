@@ -62,6 +62,9 @@ class PublicationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             members = {'memory_module/viewer.html': b'<html></html>'}
+            from memory_module.viewer import UI_SCRIPTS
+            for name in (*UI_SCRIPTS, 'workspace.css'):
+                members['memory_module/ui/' + name] = b'/* public fixture */'
             for weight in (400, 700):
                 members[f'memory_module/assets/manrope-latin-{weight}.woff2'] = b'wOF2fixture'
             for name in ('fixture.whl', 'fixture.mcpb'):

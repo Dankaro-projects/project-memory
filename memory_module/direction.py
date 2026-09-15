@@ -5,17 +5,19 @@ from .core import InvalidRecord, Conflict, _text, _digest, dumps
 PLACEHOLDER = 'No project-specific requirements have been approved. Obtain agreement before making material project decisions.'
 
 
-def items(memory, limit=10, offset=0):
+def items(memory, limit=10, offset=0, version=None):
     """Page complete requirements without treating captured documents as approval."""
-    revision = current(memory)
+    revision = current(memory) if version is None else revision_at(memory,version)
     requirements = revision['requirements']
+    evidence = revision['evidence']
+    total = max(len(requirements),len(evidence))
     signature = _digest(dumps([revision['version'], requirements, revision.get('status', 'current')]))
     return {'version': revision['version'], 'signature': signature,
             'status': 'not_established' if requirements == [PLACEHOLDER] else revision.get('status', 'current'),
             'items': [{'id': f"requirement_{revision['version']}_{i+1}", 'text': text}
                       for i, text in enumerate(requirements) if offset <= i < offset + limit],
-            'evidence': revision['evidence'], 'total': len(requirements), 'offset': offset,
-            'more': offset + limit < len(requirements), 'next_offset': min(offset + limit, len(requirements)),
+            'evidence': evidence[offset:offset+limit], 'evidence_total':len(evidence), 'total': len(requirements), 'offset': offset,
+            'more': offset + limit < total, 'next_offset': min(offset + limit, total),
             'note': 'These are the recorded governing requirements, not proof of complete product coverage. Only reuse the signature after reading every item. Captured source capabilities and proposals remain evidence until explicitly approved.'}
 
 SCHEMA = ['''
@@ -39,6 +41,39 @@ def current(memory):
             value['status']='current' if all(memory.source_status(r['source_id'])=='current_copy' for r in value['evidence']) else 'needs_review'
             return value
     return {'version':0,'requirements':memory.initial_requirements,'reason':'Initial project settings.','evidence':[]}
+
+
+def revision_at(memory, version):
+    if type(version) is not int or version<0:
+        raise InvalidRecord('Select a nonnegative direction version.')
+    if version==0:
+        return {'version':0,'requirements':memory.initial_requirements,'reason':'Initial project settings.','evidence':[]}
+    row = memory.db.execute('SELECT name FROM sqlite_master WHERE name=\'project_revisions\'').fetchone()
+    row = memory.db.execute('SELECT * FROM project_revisions WHERE version=?',(version,)).fetchone() if row else None
+    if not row: raise InvalidRecord('The direction version was not found.')
+    value = dict(row)
+    for key in ('requirements','evidence'): value[key] = json.loads(value[key])
+    for key in ('request_key','signature'): value.pop(key)
+    value['status'] = 'current' if all(memory.source_status(e['source_id'])=='current_copy' for e in value['evidence']) else 'needs_review'
+    return value
+
+
+def overview(memory, limit=10, offset=0):
+    """Return approval metadata once; page complete text at its immutable version."""
+    current_revision = current(memory)
+    def metadata(value):
+        return {**{k:v for k,v in value.items() if k not in {'requirements','evidence'}},
+                'requirement_count':len(value['requirements']), 'evidence_count':len(value['evidence']),
+                'read_requirements_with':{'view':'requirements','version':value['version'],'offset':0}}
+    result = history(memory,limit,offset)
+    result['revisions'] = [metadata(r) for r in result['revisions']]
+    result['current'] = metadata(current_revision)
+    # The current reason is already present in the current metadata.
+    for entry in result['revisions']:
+        if entry['version']==current_revision['version']:
+            entry.pop('reason',None)
+    result.setdefault('next_offset',offset+len(result['revisions']))
+    return result
 
 
 def approve(memory, requirements, reason, actor, evidence, expected_version, request_key):

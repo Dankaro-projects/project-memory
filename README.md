@@ -1,6 +1,6 @@
 # Project Memory
 
-Project Memory keeps decisions, evidence, outcomes and reviewed lessons in a local SQLite database. Your assistant retrieves relevant records through three MCP tools. You follow the same work in a live workspace with a sprint board, decision history and searchable documents.
+Project Memory keeps decisions, evidence, outcomes and reviewed lessons in a local SQLite database. Your assistant retrieves relevant records through three MCP tools. You follow the same work in a live workspace with a project overview, sprint board, decision history and readable documents.
 
 **Public beta.** Python 3.11+ is required. The runtime has no third-party dependencies, telemetry or hosted database. Optional reviewer agents use your installed Codex or Claude Code account.
 
@@ -11,7 +11,7 @@ Project Memory keeps decisions, evidence, outcomes and reviewed lessons in a loc
 Install [uv](https://docs.astral.sh/uv/getting-started/installation/), then run this inside the project you want to remember:
 
 ```sh
-uvx project-memory-mcp@0.5.0b8 setup --client codex --trust
+uvx project-memory-mcp@0.5.0b9 setup --client codex --trust
 ```
 
 For Claude Code, replace `--client codex` with `--client claude`. Setup preserves existing records and settings, connects MCP and lifecycle hooks, and opens the workspace. `--trust` enables the project integration; omit it to review trust in your client. Start a new assistant session afterwards. Add `--no-view` for headless setup.
@@ -19,7 +19,7 @@ For Claude Code, replace `--client codex` with `--client claude`. Setup preserve
 For a permanent CLI:
 
 ```sh
-uv tool install project-memory-mcp==0.5.0b8
+uv tool install project-memory-mcp==0.5.0b9
 project-memory doctor
 project-memory view
 ```
@@ -33,7 +33,8 @@ Ask your assistant:
 > Capture VISION.md and our decision log. Separate evidence, proposals and agreed requirements. Before choosing an approach, retrieve relevant decisions and check whether their evidence is still current.
 
 - Decisions retain their evidence, alternatives, uncertainty, expected consequences and revisions.
-- The work board connects actions and sprints to decisions, outcomes and dependencies.
+- The overview shows current work and items that need attention. The board connects actions and sprints to decisions, outcomes and dependencies.
+- Skills link reusable methods to work; project maps show recorded relationships, workflows and architecture.
 - Selected Markdown files refresh through hooks. Earlier versions remain available and changed evidence is flagged.
 - Code reviews, writing corrections and research remain separate, with explicit dependencies between them.
 - Successes, failures and recoveries can produce proposed lessons. Acceptance remains an explicit review.
@@ -50,4 +51,4 @@ Hooks capture events mechanically. The assistant still needs to record meaning, 
 - [Workspace interface](docs/workspace-ui.md)
 - [Contributing and tests](CONTRIBUTING.md), [security](SECURITY.md) and [releasing](docs/releasing.md)
 
-Packages are available through [PyPI](https://pypi.org/project/project-memory-mcp/), [GitHub Releases](https://github.com/Dankaro-projects/project-memory/releases), the [MCP Registry](https://registry.modelcontextprotocol.io/v0.1/servers/io.github.Dankaro-projects%2Fproject-memory/versions/0.5.0b8), [Smithery](https://smithery.ai/servers/msuteu/project-memory) and [Glama](https://glama.ai/mcp/servers/Dankaro-projects/project-memory). Directory availability does not establish compatibility with every client.
+Packages are available through [PyPI](https://pypi.org/project/project-memory-mcp/), [GitHub Releases](https://github.com/Dankaro-projects/project-memory/releases), the [MCP Registry](https://registry.modelcontextprotocol.io/v0.1/servers/io.github.Dankaro-projects%2Fproject-memory/versions/0.5.0b9), [Smithery](https://smithery.ai/servers/msuteu/project-memory) and [Glama](https://glama.ai/mcp/servers/Dankaro-projects/project-memory). Directory availability does not establish compatibility with every client.

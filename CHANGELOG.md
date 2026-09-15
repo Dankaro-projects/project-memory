@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.5.0b9 — 15 September 2026
+
+The viewer opens on a project overview with current work, attention items and recent decisions. Five primary sections expose contextual views and filters. Work supports Board and List formats; record summaries retain a Table option. Expanded reading, document outlines and decision pages make the evidence easier to follow. Expected and observed consequences remain tied to the exact decision, including earlier failures, later revisions and stale evidence. No data migration, model call or runtime dependency is added.
+
+Capture failures remain separate across sessions and recover once after interrupted cleanup, including legacy failure files. File-access errors return an MCP tool error without closing the connection. The viewer keeps failed detail and history refreshes visible and retries them. Unchanged viewer requests reuse content hashes; review creation and completion still check fresh files. Direction retrieval pages complete versioned requirements and approval evidence instead of duplicating them in its overview. Continuation guidance uses progress updates that preserve scope and evidence.
+
+Agent reviews separate task acceptance from project constraints, with explicit applicability and preserved exceptions. Evidence manifests support selective reads. The wait command now honours its own limit. Review status preserves child activity, timeout diagnostics and available partial reports and usage without granting approval. A progress operation updates status without rewriting scope or its evidence.
+
+The workspace adds project skills, explicit human requirement and lesson reviews, a Needs attention view, and a project map with recorded relationships, workflows and architecture. Skill selections preserve exact package versions, including supporting files; changed local files appear without a rebuild. Diagram changes preserve their reasons and earlier versions. Import does not activate instructions or execute scripts, and a skill-use report is distinct from a selection.
+
+Frontend responsibilities now live in separate source files assembled into the existing self-contained viewer. The package still requires no runtime dependencies or frontend build command. Bundle validation checks the complete viewer assets. New browser cases cover product and consulting work, evidence links, skill drift and conflict recovery.
+
 ## 0.5.0b8 — 14 September 2026
 
 Board refreshes preserve keyboard focus on the same action. A delayed-response browser case reproduces the focus loss and verifies the correction. Beta 7 was withheld after the browser gate exposed this race; all six operating-system and Python combinations passed.

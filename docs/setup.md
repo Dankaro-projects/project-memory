@@ -16,7 +16,7 @@ Select **Work board** to see sprint work, blockers and decision history. The [wo
 
 Repeated setup does not duplicate hooks or unchanged source versions. Source documents remain in place. If the project has no agreed requirements, setup stores an explicit statement that none have been approved. You can supply already agreed text using repeated `--requirement` arguments. Changing existing requirements requires a separate, evidenced approval, not a setup flag.
 
-The assistant can capture another selected file using `memory_write document`. It should use `memory_get direction` before an explicitly authorised `approve_requirements` operation. That operation requires complete requirement sentences, an approval reason, actor, evidence references and the current version. File capture and approval are different actions.
+The assistant can capture another selected file using `memory_write document`. It should use `memory_get direction` before an explicitly authorised `approve_requirements` operation. Direction returns approval metadata and versioned read pointers. Follow `read_requirements_with` to retrieve the complete requirements and approval evidence; `memory_get requirements` accepts `version` for an earlier revision, including the original version zero. Follow `more` and `next_offset` until all requirements and evidence have been read. The approval operation requires complete requirement sentences, an approval reason, actor, evidence references and the current version. File capture and approval are different actions.
 
 ## Claude Code
 
@@ -72,8 +72,8 @@ The destination must be new. SQLite's backup API provides a consistent database 
 Upgrade by running the current version's setup command inside the intended project:
 
 ```sh
-uvx project-memory-mcp@0.5.0b8 setup --client codex --trust
-uvx project-memory-mcp@0.5.0b8 doctor
+uvx project-memory-mcp@0.5.0b9 setup --client codex --trust
+uvx project-memory-mcp@0.5.0b9 doctor
 ```
 
 Use `--client claude --trust` for Claude Code, or `--client mcp` for another local MCP client. The recorded launcher is versioned; setup updates its configuration and verifies new Codex host hashes. Start a new task after an upgrade. A configuration edit within the managed block produces a conflict rather than overwriting it. If you use the optional plugin, update it through the host's plugin manager as well; an already running task retains its loaded tool schemas.
@@ -136,4 +136,4 @@ When upgrading, setup checks the version of a running viewer. If it belongs to a
 
 ## Interactive workspace and agents
 
-Version `0.5.0b8` adds the interactive workspace and agent checks. The commands above install it. See [workspace and agents](workspace-agents.md) for controls and limits. Connecting Codex or Claude in beta 5 enables conditional model reviews through that installed host and account. These reviews consume provider usage. Generic MCP setup does not enable a reviewer.
+Version `0.5.0b9` includes the interactive workspace and agent checks. The commands above install it. See [workspace and agents](workspace-agents.md) for controls and limits. Connecting Codex or Claude in beta 5 enables conditional model reviews through that installed host and account. These reviews consume provider usage. Generic MCP setup does not enable a reviewer.

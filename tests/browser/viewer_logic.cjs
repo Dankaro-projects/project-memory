@@ -1,6 +1,6 @@
 // Runs the actual HTML filter/pagination functions. Does not render a browser.
 const fs=require('node:fs'),path=require('node:path'),vm=require('node:vm'),assert=require('node:assert/strict'),crypto=require('node:crypto');
-const root=path.resolve(__dirname,'../..'),template=fs.readFileSync(path.join(root,'memory_module/viewer.html'),'utf8');
+const root=path.resolve(__dirname,'../..'),template=require('node:child_process').execFileSync(process.env.MEMORY_PYTHON||'python',['-c','from memory_module.viewer import html_template; print(html_template())'],{cwd:root,encoding:'utf8'});
 const logic=template.split('// Pure view logic.')[1].split('// End pure view logic.')[0];
 const sandbox={};vm.createContext(sandbox);vm.runInContext(logic,sandbox);
 new vm.Script(template.split('<script>')[1].split('</script>')[0]);

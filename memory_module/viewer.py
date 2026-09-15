@@ -6,9 +6,16 @@ from pathlib import Path
 from .core import InvalidRecord, Conflict, dumps, _time
 
 
+UI_SCRIPTS = ('state.js', 'records.js', 'api.js', 'sync.js', 'navigation.js',
+              'board.js', 'editor.js', 'reviews.js', 'approvals.js', 'skills.js', 'map.js', 'reading.js', 'overview.js', 'boot.js')
+
+
 def html_template():
     root = Path(__file__).parent
     template = (root / 'viewer.html').read_text(encoding='utf-8')
+    template = template.replace('__WORKSPACE_CSS__', (root / 'ui/workspace.css').read_text(encoding='utf-8'))
+    script = '\n'.join((root / 'ui' / name).read_text(encoding='utf-8') for name in UI_SCRIPTS)
+    template = template.replace('__WORKSPACE_JS__', script)
     # Opening the source file shows launch instructions; rendered pages reveal the workspace.
     template = template.replace('<div id="workspace-app" hidden>', '<div id="workspace-app">')
     for weight in (400, 700):
@@ -78,7 +85,8 @@ def export_html(memory, destination, *, episode_id=None, subject=None, since=Non
                                                                 (*source_args, max_records+1)))
         if len(events) + len(episodes) + len(source_ids) > max_records:
             raise InvalidRecord('Export exceeds max_records including episodes and evidence. Narrow its scope.')
-        sources = [memory.read(sid, detail=include_bodies) for sid in sorted(source_ids)]
+        sources = [memory.read(sid, detail=include_bodies and not memory.db.execute(
+            'SELECT source_key FROM sources WHERE id=?', (sid,)).fetchone()[0].startswith(('workspace-skill:', 'workspace-skill-snapshot:'))) for sid in sorted(source_ids)]
         selected = {e['id'] for e in events}
         pending = [r for r in memory.pending(episode_id, limit=max_records)['decisions'] if r['id'] in selected]
         rows = []
@@ -127,9 +135,14 @@ def export_html(memory, destination, *, episode_id=None, subject=None, since=Non
         work = [card(memory, ep['id']) for ep in episodes if ep['task_type']!='sprint']
         sprints = [{'id':ep['id'],'title':ep['title'],'intent':ep['objective'],'version':ep['version'],
                     'schedule':latest(memory,ep['id'],'sprint')} for ep in episodes if ep['task_type']=='sprint']
+        from .maps import model
+        maps = [{'episode_id': ep['id'], 'mode': mode, **model(memory, ep['id'], mode)}
+                for ep in episodes for mode in ('workflow', 'architecture')
+                if memory.db.execute('SELECT 1 FROM sources WHERE source_key=?',
+                    ('workspace-map:' + ep['id'] + ':' + mode,)).fetchone()]
         snapshot = {'project': memory.project, 'exported_at': memory.now(), 'requirements': memory.requirements,
                     'scope': {'episode_id': episode_id, 'subject': subject, 'since': since, 'until': until},
-                    'source_bodies_included': include_bodies, 'records': rows, 'pending': pending, 'work':work, 'sprints':sprints}
+                    'source_bodies_included': include_bodies, 'maps': maps, 'records': rows, 'pending': pending, 'work':work, 'sprints':sprints}
         encoded = dumps(snapshot).replace('&', '\\u0026').replace('<', '\\u003c').replace('>', '\\u003e')
         template = html_template()
         html = template.replace('__MEMORY_DATA__', encoded)

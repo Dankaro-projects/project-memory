@@ -6,7 +6,7 @@ The local package contains the SQLite database interface, MCP adapter, hooks and
 | --- | --- |
 | [PyPI](https://pypi.org/project/project-memory-mcp/) | Use the versioned setup command in the README. |
 | [GitHub Releases](https://github.com/Dankaro-projects/project-memory/releases) | Download the wheel or MCPB desktop bundle. |
-| [MCP Registry](https://registry.modelcontextprotocol.io/v0.1/servers/io.github.Dankaro-projects%2Fproject-memory/versions/0.5.0b8) | Discover the versioned PyPI/stdio record. |
+| [MCP Registry](https://registry.modelcontextprotocol.io/v0.1/servers/io.github.Dankaro-projects%2Fproject-memory/versions/0.5.0b9) | Discover the versioned PyPI/stdio record. |
 | [Smithery](https://smithery.ai/servers/msuteu/project-memory) | Install the local server bundle. |
 | [Glama](https://glama.ai/mcp/servers/Dankaro-projects/project-memory) | Inspect the listed tools; use local setup for project memory. |
 

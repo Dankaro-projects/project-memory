@@ -2,7 +2,6 @@
 import argparse
 import hashlib
 import json
-from pathlib import Path
 import re
 import sqlite3
 import sys
@@ -302,19 +301,16 @@ def main():
     parser=argparse.ArgumentParser(description=__doc__);parser.add_argument('--db',required=True)
     parser.add_argument('--host',choices=sorted(HOSTS),default='codex')
     args=parser.parse_args()
+    event = {}
     try:
         raw=sys.stdin.buffer.read(2_000_001)
         if len(raw)>2_000_000: raise InvalidRecord('Hook payload exceeds 2 MB; capture failed.')
         event=json.loads(raw)
+        if not isinstance(event,dict): raise InvalidRecord('Hook payload must be an object.')
         with Memory(args.db) as memory:
             memory.db.execute('PRAGMA busy_timeout=750')
-            marker = Path(args.db).with_suffix('.capture-error.json')
-            if marker.exists():
-                gap = json.loads(marker.read_text())
-                with memory._write():
-                    receipt(memory, session_id=gap['session_id'], event_name='CaptureRecovered', payload=gap,
-                            key='capture-gap:'+dumps(gap))
-                marker.unlink()
+            from .capture_errors import recover
+            recover(memory)
             result=capture(memory,event,host=args.host)
             from .coverage import hook as coverage_hook, inspect as coverage_state
             check=coverage_hook(memory,event)
@@ -331,14 +327,9 @@ def main():
     except (OSError,ValueError,TypeError,KeyError,sqlite3.Error,InvalidRecord,Conflict) as exc:
         # A sidecar remains observable when SQLite itself cannot accept a receipt.
         try:
-            from .install import atomic
-            from datetime import datetime, timezone
-            marker = Path(args.db).with_suffix('.capture-error.json')
-            if not marker.exists():
-                atomic(marker, dumps({'session_id':event.get('session_id','unknown'),
-                    'event_name':event.get('hook_event_name','unknown'), 'error':type(exc).__name__,
-                    'created_at':datetime.now(timezone.utc).isoformat()}))
-        except (OSError,UnboundLocalError,AttributeError):
+            from .capture_errors import record
+            record(args.db,event,exc)
+        except OSError:
             pass  # stderr remains the host-visible failure channel if the directory is unwritable.
         # Exit 2 blocks supported pre-tool calls and reports post-capture failures.
         print(f'Memory capture failed ({type(exc).__name__}). Inspect the database and host result before retrying.',file=sys.stderr)

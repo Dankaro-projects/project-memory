@@ -6,6 +6,8 @@ results/
 .memory/
 .codex/
 *.sqlite*
+*.capture-errors/
+*.capture-error.json
 *.db*
 *.jsonl
 *.mcpb

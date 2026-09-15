@@ -2,7 +2,7 @@
 
 The canonical repository is `Dankaro-projects/project-memory`. GitHub Releases distribute the wheel and source archive. PyPI uses a project-scoped Trusted Publisher for `project-memory-mcp`, owner `Dankaro-projects`, repository `project-memory`, workflow `release.yml`, environment `pypi`. Enable the repository variable `PYPI_PUBLISH_ENABLED=true` only after that publisher exists.
 
-Update `pyproject.toml`, `memory_module.__version__`, the Codex plugin version, `server.json`, the release commands and changelog together. Python uses `0.5.0b8`; plugin metadata uses its SemVer form `0.5.0-beta.8`. The CLI constructs the versioned GitHub wheel URL from the Python version.
+Update `pyproject.toml`, `memory_module.__version__`, the Codex plugin version, `server.json`, the release commands and changelog together. Python uses `0.5.0b9`; plugin metadata uses its SemVer form `0.5.0-beta.9`. The CLI constructs the versioned GitHub wheel URL from the Python version.
 
 Use targeted local checks during iteration. Full verification runs automatically as a release gate; do not run the same matrix manually immediately before tagging. For verification outside a release, use Actions > Verify > Run workflow. Run `python scripts/check_publication.py` before committing, then `python scripts/check_artifacts.py dist` after building. Review their output and the diff. The source distribution uses an explicit allowlist; the wheel includes only runtime files and package metadata. Operational databases, transcripts and generated viewers must remain excluded. Do not publish the old private prototype ZIP.
 
@@ -18,7 +18,7 @@ Smithery CLI 1.2.0 copies MCPB tool summaries into an API field that requires co
 
 ```sh
 npm exec --yes --package smithery@1.2.0 -- smithery auth login
-python scripts/publish_smithery.py dist/project-memory-0.5.0-beta.8.mcpb --name YOUR_NAMESPACE/project-memory
+python scripts/publish_smithery.py dist/project-memory-0.5.0-beta.9.mcpb --name YOUR_NAMESPACE/project-memory
 ```
 
 This development-only script uses the existing CLI login without printing its credential, runs the trusted release bundle in a temporary project, and submits the bundle with its real tool schemas. It creates the named server only if Smithery reports that it is missing. Check the result, public metadata and downloaded bundle hash before marking publication verified. Do not rerun a deployment after an ambiguous network response without inspecting its release status first. Set the server's description, repository, homepage and licence in the provider listing when creating a new listing.

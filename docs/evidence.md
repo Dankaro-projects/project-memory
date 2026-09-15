@@ -21,7 +21,38 @@ python -m tests.integration.context_audit results/live-interruption
 
 Codex capture, interruption recovery and compaction have been exercised in a live macOS host. Claude Code has a bounded live CLI check for applicable lifecycle events; live Claude interruption and compaction remain unverified. See [compatibility](distribution.md) for the tested scope. Payload simulations do not substitute for host execution.
 
+## Automatic review diagnostics
+
+The focused regressions exercise real local child processes for timeouts, cancellation, partial reports, usage retention and wait limits. They also check complete task criteria, explicit constraint applicability and scope-preserving progress updates. These subprocess fixtures do not call a model.
+
+```sh
+python -m unittest tests.test_review_diagnostics -v
+python -m tests.integration.completeness_review --project .memory/review-case --host codex
+python -m tests.integration.completeness_review --project .memory/claude-review-case --host claude
+```
+
+Each native command runs two reviews through the authenticated host: one with a missing tagged decoding exception, then its repair. Use a new fixture directory. These commands consume host usage; the reviewer reads existing results rather than rerunning the application. The JSON output preserves verdicts, diagnostics and available provider counters. Count invalid reports and timeouts as unresolved, even when their underlying assessment appears correct.
+
+Inspect existing logs without starting another review:
+
+```sh
+python -m tests.integration.review_log_diagnostic /absolute/path/to/.memory/agent-runs/CHECK_ID
+```
+
+This reads local events and timestamps. No recorded host error does not prove uninterrupted connectivity. A smaller initial packet does not establish lower aggregate usage. See [review controls and limits](workspace-agents.md#control-and-recovery) for execution versus wait deadlines, applicability checks and retained reports.
+
 ## Evaluation requirements
+
+The viewer usability reproduction uses the same synthetic failed choice, successful revision, documented exception and work items across runtime versions. `node tests/browser/usability_browser.cjs` reports completion and click counts for two reading journeys, then checks planning, exact source text, stale evidence, failed-refresh recovery, table access and mobile widths. The other browser suites retain editing, approvals, skills, diagrams and offline coverage. See [workspace verification](workspace-ui.md#local-verification) for the baseline option. Scripted timings do not measure human task time or model-token savings.
+
+The deterministic failure regressions run without a model or GitHub Actions:
+
+```sh
+python -m unittest tests.test_failure_recovery -v
+node tests/browser/workspace_browser.cjs
+```
+
+The Python cases exercise concurrent failed hook processes against a locked SQLite database, legacy and interrupted recovery, an unreadable document over real MCP followed by a ping, complete versioned requirement paging, and conditional HTTP requests with measured file reads. The file-permission case requires an unprivileged POSIX process and is skipped where those permissions cannot reproduce the failure. The browser case injects detail and history failures into a real workspace, checks that warnings survive healthy polling, and restores each endpoint without another database write. Playwright is a development tool only; configure it as described in [workspace verification](workspace-ui.md#local-verification). These checks establish specific recovery behaviour, not general productivity or provider token savings.
 
 Compare the same task, constraints and acceptance checks before and after a change. Include successes, failures and recoveries. Do not exclude difficult or abandoned work to improve a ratio.
 
