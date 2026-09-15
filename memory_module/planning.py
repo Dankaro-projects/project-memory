@@ -307,12 +307,13 @@ def completion_guidance(memory, item):
 
 def board(memory, *, limit=25, offset=0, sprint_id=None, subject=None, query='', state=None, episode_id=None, grouped=False):
     from .reviews import configured, exists, tree_signature
+    from .core import InvalidRecord
     from subprocess import SubprocessError
     config=configured(memory)
     cache=config and exists(memory) and memory.db.execute('SELECT 1 FROM review_runs LIMIT 1').fetchone()
     if cache:
         try:memory._review_tree=tree_signature(config['project'],cache=getattr(memory,'_review_tree_cache',None))
-        except (OSError,SubprocessError):cache=False
+        except (OSError,SubprocessError,InvalidRecord):cache=False
     try:return _board(memory,limit=limit,offset=offset,sprint_id=sprint_id,subject=subject,query=query,state=state,episode_id=episode_id,grouped=grouped)
     finally:
         if cache:del memory._review_tree

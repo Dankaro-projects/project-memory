@@ -189,7 +189,7 @@ class Viewer(HTTPServer):
         if config and exists(self.memory) and self.memory.db.execute('SELECT 1 FROM review_runs LIMIT 1').fetchone():
             # Unregistered project files and expired workers can invalidate a result without a database write.
             try:stats.append(('review_project',tree_signature(config['project'],cache=self.memory._review_tree_cache)))
-            except (OSError,subprocess.SubprocessError) as exc:stats.append(('review_project_unavailable',str(exc)))
+            except (OSError,subprocess.SubprocessError,InvalidRecord) as exc:stats.append(('review_project_unavailable',str(exc)))
             from datetime import datetime, timezone
             expired=[r['id'] for r in self.memory.db.execute("SELECT id,updated_at FROM review_runs WHERE state IN ('queued','running','cancelling')")
                      if (datetime.now(timezone.utc)-datetime.fromisoformat(r['updated_at'])).total_seconds()>30]

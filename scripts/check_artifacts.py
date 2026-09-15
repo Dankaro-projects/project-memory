@@ -1,4 +1,4 @@
-"""Check the actual wheel, source archive and desktop bundle before publishing."""
+"""Check the actual wheel and source archive before publishing."""
 import hashlib
 import json
 from pathlib import Path, PurePosixPath
@@ -50,7 +50,7 @@ def inspect(path, kind):
 def main():
     root = Path(sys.argv[1] if len(sys.argv) > 1 else 'dist')
     report = []
-    for pattern, kind in (('*.whl', 'wheel'), ('*.tar.gz', 'sdist'), ('*.mcpb', 'bundle')):
+    for pattern, kind in (('*.whl', 'wheel'), ('*.tar.gz', 'sdist')):
         paths = list(root.glob(pattern))
         if len(paths) != 1:
             raise ValueError(f'Expected exactly one {kind} in {root}.')

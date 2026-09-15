@@ -42,13 +42,11 @@ only-include = [
     "docs/work-board.md",
     "docs/workspace-agents.md",
     "docs/workspace-ui.md",
-    "bundle",
     "README.md",
     "LICENSE",
     "SECURITY.md",
     "CONTRIBUTING.md",
     "CHANGELOG.md",
-    "server.json",
     "pyproject.toml",
 ]
 exclude = ["**/__pycache__", "**/*.pyc", "**/*.sqlite", "**/*.jsonl", "**/results", "**/.codex", "**/.memory"]

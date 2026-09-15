@@ -7,7 +7,7 @@ import subprocess
 
 ROOT_FILES = {
     '.gitignore', 'README.md', 'CHANGELOG.md', 'CONTRIBUTING.md', 'LICENSE',
-    'SECURITY.md', 'pyproject.toml', 'server.json', 'glama.json',
+    'SECURITY.md', 'pyproject.toml',
 }
 DOCS = {
     'distribution.md', 'evidence.md', 'record-fields.md', 'releasing.md',
@@ -17,7 +17,7 @@ DOCS = {
 FIXED_FILES = {
     '.agents/plugins/marketplace.json', '.claude-plugin/marketplace.json',
     '.github/ISSUE_TEMPLATE/bug_report.yml', '.github/workflows/ci.yml',
-    '.github/workflows/release.yml', 'bundle/manifest.json', 'bundle/server.py',
+    '.github/workflows/release.yml',
     'plugins/project-memory/.claude-plugin/plugin.json',
     'plugins/project-memory/.codex-plugin/plugin.json',
     'plugins/project-memory/.mcp.json', 'plugins/project-memory/claude-hooks.json',
@@ -45,10 +45,8 @@ PRIVATE_PATTERNS = {
 
 def runtime_file(name):
     path = PurePosixPath(name)
-    return name in RUNTIME_ASSETS or (path.parent.as_posix() == 'memory_module/ui'
-        and path.name in {'workspace.css', 'state.js', 'records.js', 'api.js', 'sync.js',
-                          'navigation.js', 'board.js', 'editor.js', 'reviews.js', 'boot.js',
-                          'skills.js', 'map.js', 'dependencies.js', 'approvals.js', 'reading.js', 'overview.js'}) or (
+    return name in RUNTIME_ASSETS or (path.parent.as_posix() in {'memory_module/ui', 'memory_module/vendor'}
+        and path.suffix in {'.js', '.css'}) or (
         path.parent.as_posix() == 'memory_module' and path.suffix in {'.py', '.html'})
 
 
@@ -72,8 +70,6 @@ def check_member(name, body, kind='source'):
                     and '/'.join(path.parts[1:]) in {
                         'METADATA', 'WHEEL', 'entry_points.txt', 'RECORD', 'licenses/LICENSE'})
         allowed = runtime_file(name) or metadata
-    elif kind == 'bundle':
-        allowed = runtime_file(name) or name in {'manifest.json', 'server.py', 'LICENSE'}
     else:
         allowed = source_file(name) or (kind == 'sdist' and name == 'PKG-INFO')
     if not allowed:
