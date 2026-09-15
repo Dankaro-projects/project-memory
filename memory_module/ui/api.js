@@ -28,7 +28,7 @@ function disconnected(error) {
 }
 async function loadPage() {
   if (view === "overview") return renderOverview();
-  if (["skills", "map", "attention"].includes(view)) return renderExtension();
+  if (["skills", "map", "attention", "dependencies"].includes(view)) return renderExtension();
   if (view === "board") return renderBoard();
   const request = ++renderVersion,
     size = Number(el("page-size").value);

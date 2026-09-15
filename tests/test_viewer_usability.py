@@ -5,7 +5,7 @@ import unittest
 
 from memory_module import Memory
 from memory_module.install import setup
-from memory_module.live import row
+from memory_module.live import row, latest_decisions, page
 from memory_module.planning import board
 from memory_module.workspace import action
 
@@ -55,6 +55,17 @@ def fixture(root):
 
 
 class ViewerUsabilityTests(unittest.TestCase):
+    def test_overview_shows_latest_choice_and_keeps_prior_history(self):
+        with tempfile.TemporaryDirectory() as folder:
+            info=fixture(Path(folder))
+            with Memory(info['database']) as m:
+                result=latest_decisions(m)
+                self.assertEqual(result['total'],1)
+                self.assertEqual([r['id'] for r in result['records']],[info['revised']])
+                self.assertEqual(result['records'][0]['outcome']['id'],info['good'])
+                self.assertEqual(page(m,{'view':'decisions'})['total'],2)
+                self.assertEqual(row(m,info['old'])['outcome']['id'],info['failed'])
+
     def test_projection_keeps_the_failed_and_revised_outcomes_separate(self):
         with tempfile.TemporaryDirectory() as folder:
             info=fixture(Path(folder))

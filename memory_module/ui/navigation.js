@@ -1,6 +1,6 @@
 const sectionViews = {
   overview: ["overview", "attention"],
-  work: ["board", "episodes", "pending", "map"],
+  work: ["board", "episodes", "pending", "map", "dependencies"],
   decisions: ["decisions", "drift"],
   knowledge: [
     "documents",
@@ -214,7 +214,7 @@ const viewStatuses = {
 function setBoardVisibility() {
   const board = view === "board",
     overview = view === "overview";
-  const extension = ["map", "skills", "attention", "overview"].includes(view);
+  const extension = ["map", "skills", "attention", "overview", "dependencies"].includes(view);
   const section = Object.keys(sectionViews).find((key) =>
     sectionViews[key].includes(view),
   );
@@ -226,11 +226,13 @@ function setBoardVisibility() {
     button.setAttribute("aria-pressed", String(button.dataset.view === view));
   el("extension-view").hidden = !extension;
   document.querySelector(".filters").hidden = [
+    "dependencies",
     "map",
     "attention",
     "overview",
   ].includes(view);
   document.querySelector(".pager").hidden = [
+    "dependencies",
     "map",
     "attention",
     "overview",

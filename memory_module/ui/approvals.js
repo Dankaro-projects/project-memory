@@ -127,6 +127,7 @@ function lessonControl(parent, record) {
   parent.prepend(button);
 }
 async function renderExtension() {
+  if (view === "dependencies") return renderDependencies();
   if (!data.live && view !== "map") {
     el("extension-view").textContent =
       "Open the live workspace to manage skills and approvals.";
@@ -164,7 +165,7 @@ async function renderExtension() {
       line.append(actionButton(card.title, () => openWork(card.id)));
       const p = document.createElement("p");
       p.textContent =
-        card.issues.map((i) => i.reason).join(" ") || card.plan?.reason || "";
+        card.completion_next?.reason || card.issues.map((i) => i.reason).join(" ") || card.plan?.reason || "";
       line.append(p);
       group.append(line);
     }

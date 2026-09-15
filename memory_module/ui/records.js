@@ -81,7 +81,7 @@ function render() {
     renderOverview().catch(disconnected);
     return;
   }
-  if (["skills", "map", "attention"].includes(view)) {
+  if (["skills", "map", "attention", "dependencies"].includes(view)) {
     renderExtension().catch(disconnected);
     return;
   }

@@ -239,12 +239,31 @@ async function openWork(id, refresh = false) {
     const dl = document.createElement("dl");
     dl.className = "work-reading";
     body.append(dl);
-    if (work.plan?.next_action) field(dl, "next_action", work.plan.next_action);
+    if (work.completion_next && work.state !== "done") {
+      field(dl, "Next step", work.completion_next.reason);
+      const read = work.completion_next.read_with;
+      if (read?.view === "record")
+        dl.lastElementChild.append(actionButton(
+          work.completion_next.action === "refresh_evidence" ? "Inspect evidence" : "Read outcome",
+          () => open(read.id),
+        ));
+      else if (read?.view === "reviews")
+        dl.lastElementChild.append(actionButton("Inspect review", () => {
+          const checks = body.querySelector(".agent-checks");
+          if (checks) { checks.open = true; checks.scrollIntoView({block: "start"}); }
+        }));
+    }
+    if (work.plan?.next_action)
+      field(dl, work.completion_next ? "Planned next action" : "next_action", work.plan.next_action);
     field(dl, "done_when", work.done_when);
     const properties = document.createElement("dl");
     properties.className = "work-properties";
     body.append(properties);
     field(properties, "status", labels(work.state));
+    if (work.outcome)
+      field(properties, "Recorded result", labels(work.outcome.assessment) + " · " + labels(work.outcome.completion || "Unmeasured"));
+    if (work.agent_check)
+      field(properties, "Outcome review", labels(work.agent_check.state));
     if (work.recorded_state !== work.state)
       field(properties, "Recorded state", labels(work.recorded_state));
     if (work.plan) {

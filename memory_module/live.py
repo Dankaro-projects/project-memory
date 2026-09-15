@@ -147,6 +147,14 @@ def html():
     return content.encode()
 
 
+def latest_decisions(memory, limit=3):
+    """The overview shows one current choice per work item; history stays in records."""
+    selection = "FROM events e WHERE e.kind='decision' AND NOT EXISTS (SELECT 1 FROM events n WHERE n.kind='decision' AND n.episode_id=e.episode_id AND n.seq>e.seq)"
+    total = memory.db.execute('SELECT count(*) '+selection).fetchone()[0]
+    ids = memory.db.execute('SELECT e.id '+selection+' ORDER BY e.created_at DESC,e.rowid DESC LIMIT ?', (limit,)).fetchall()
+    return {'records':[row(memory, item[0]) for item in ids], 'total':total}
+
+
 class Viewer(HTTPServer):
     allow_reuse_address=True
     def __init__(self, path, token, port=0):
@@ -225,7 +233,7 @@ class Handler(BaseHTTPRequestHandler):
         except (MemoryError,ValueError,TypeError,KeyError,sqlite3.Error,OSError) as exc:
             from .core import Conflict
             status=409 if isinstance(exc,Conflict) else 400
-            value={'error':type(exc).__name__,'message':str(exc)}
+            value={'error':type(exc).__name__,'message':str(exc),**getattr(exc,'details',{})}
         body=dumps(value).encode();self.send_response(status)
         self.send_header('Content-Type','application/json; charset=utf-8');self.send_header('Content-Length',str(len(body)))
         self.send_header('Cache-Control','no-store');self.send_header('Referrer-Policy','no-referrer');self.send_header('X-Content-Type-Options','nosniff')
@@ -245,9 +253,9 @@ class Handler(BaseHTTPRequestHandler):
         endpoint=target.path[len(prefix):]
         try:
             if endpoint=='':body=html();mime='text/html; charset=utf-8';etag=None
-            elif endpoint in {'api/health','api/records','api/record','api/board','api/sprints','api/reviews','api/coverage','api/skills','api/skill','api/skill-selections','api/map','api/relationships','api/direction','api/overview'}:
+            elif endpoint in {'api/health','api/records','api/record','api/board','api/sprints','api/reviews','api/coverage','api/skills','api/skill','api/skill-selections','api/map','api/relationships','api/direction','api/overview','api/dependencies'}:
                 revision=self.server.revision();etag='"'+hashlib.sha256((revision+target.path+target.query).encode()).hexdigest()+'"'
-                if endpoint not in {'api/skills','api/skill','api/skill-selections'} and self.headers.get('If-None-Match')==etag:
+                if endpoint not in {'api/skills','api/skill','api/skill-selections','api/dependencies'} and self.headers.get('If-None-Match')==etag:
                     self.send_response(304);self.send_header('ETag',etag);self.end_headers();return
                 memory=self.server.memory
                 if endpoint=='api/health':
@@ -256,10 +264,13 @@ class Handler(BaseHTTPRequestHandler):
                            'review_host':configured(memory),'interactive':True,
                            'episodes':[dict(r) for r in memory.db.execute('SELECT id,title FROM episodes ORDER BY created_at DESC LIMIT 1000')],
                            'episodes_more':memory.db.execute('SELECT count(*) FROM episodes').fetchone()[0]>1000}
+                elif endpoint=='api/dependencies':
+                    from .project_dependencies import inventory
+                    value=inventory(memory)
                 elif endpoint=='api/overview':
                     from .planning import board
                     value={'work':board(memory,limit=3,grouped=True),
-                           'decisions':page(memory,{'view':'decisions','limit':'4'}),
+                           'decisions':latest_decisions(memory),
                            'lessons':page(memory,{'view':'lessons','status':'proposed','limit':'3'})}
                 elif endpoint in {'api/skills', 'api/skill', 'api/skill-selections'}:
                     from . import skills
@@ -282,12 +293,11 @@ class Handler(BaseHTTPRequestHandler):
                     limit=int(params.get('limit','10'));offset=int(params.get('offset','0'))
                     value=session_coverage(memory,params['session_id'],limit,offset) if params.get('session_id') else sessions(memory,limit,offset)
                 elif endpoint=='api/reviews':
-                    from .reviews import listing, current
+                    from .reviews import listing
                     value=listing(memory,params.get('episode'),int(params.get('limit','10')),int(params.get('offset','0')))
                     for run in value['runs']:
                         snapshot=json.loads(memory.db.execute('SELECT snapshot FROM review_runs WHERE id=?',(run['id'],)).fetchone()[0])
                         run['conditions']={c['id']:c['condition'] for c in snapshot.get('checklist',[])+snapshot.get('constraints',[])}
-                    value['current']=current(memory,params.get('episode'))
                 elif endpoint in {'api/board','api/sprints'}:
                     from .planning import board, sprints
                     limit,offset=int(params.get('limit','25')),int(params.get('offset','0'))

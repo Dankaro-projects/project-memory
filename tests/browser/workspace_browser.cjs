@@ -185,6 +185,56 @@ print('{}')`);
   assert.ok(failedDetails>=2);assert.ok(failedHistory>=2);
   await page.screenshot({path:path.join(output,'refresh-recovered.png'),fullPage:true});
   await page.keyboard.press('Escape');
+  const reviewFixture=run(`import sys,json
+from pathlib import Path
+from memory_module import Memory,reviews
+from memory_module.planning import latest
+with Memory(Path(sys.argv[1])/'.memory/project.sqlite') as m:
+ ep=m.db.execute("SELECT id FROM episodes WHERE title='Preserve encoding paths'").fetchone()[0]
+ plan=m.read(latest(m,ep,'work_plan')['id'])
+ source=m.source('review-experience','Measured result','Both cases pass.','Both declared encoding paths were checked.','tool')
+ evidence=[{'source_id':source['id'],'reason':'This fixture supplies the measured result.'}]
+ d=m.record(ep,'decision',{'decision':'Preserve both paths.','why':'The user requires the exception.','expected':'Both cases pass.','uncertainty':'This is a browser fixture.','alternatives':['Drop the exception.'],'reconsider_when':'Evidence changes.'},expected_version=m.episode(ep)['version'],request_key='browser-result-decision',actor='fixture',evidence=evidence)
+ a=m.record(ep,'action',{'action':'Inspect the two fixture cases.'},expected_version=d['version'],request_key='browser-result-action',actor='fixture',decision_id=d['id'])
+ m.record(ep,'outcome',{'observed':'Both cases pass.','assessment':'good','assessment_reason':'Both fixture cases were checked.','severity':'none','attribution':'The fixture preserves both paths.','completion':'complete'},expected_version=a['version'],request_key='browser-result-outcome',actor='fixture',decision_id=d['id'],evidence=evidence)
+ check=reviews.request(m,ep,request_key='browser-active-review')
+ print(json.dumps({'episode':ep,'check':check['id']}))`);
+  await page.getByRole('button',{name:'Open work Preserve encoding paths'}).click();
+  await page.getByText(/Wait for this existing check; the recorded implementation is complete/).waitFor();
+  assert.match(await page.locator('.work-properties').textContent(),/Recorded result.*Good.*Complete.*Outcome review.*Queued/);
+  run(`import sys,json
+from pathlib import Path
+from memory_module import Memory
+with Memory(Path(sys.argv[1])/'.memory/project.sqlite') as m:
+ with m._write(): m.db.execute("UPDATE review_runs SET state='pass' WHERE request_key='browser-active-review'")
+print('{}')`);
+  await page.getByText('The recorded result and required review are current. Mark the work Done without repeating completed actions.',{exact:true}).waitFor();
+  assert.match(await page.locator('.work-properties').textContent(),/Outcome review.*Pass/);
+  run(`import sys,json
+from pathlib import Path
+from memory_module import Memory
+with Memory(Path(sys.argv[1])/'.memory/project.sqlite') as m:
+ m.source('review-experience','Measured result','The result changed.','The exception needs fresh evidence.','tool')
+print('{}')`);
+  await page.getByText('Inspect the changed evidence listed below and record its reassessment. Waiting for a review will not refresh evidence.',{exact:true}).waitFor();
+  assert.match(await page.locator('.work-properties').textContent(),/Recorded result.*Good.*Complete.*Outcome review.*Stale/);
+  if(!await page.locator('.agent-checks').evaluate(e=>e.open))await page.locator('.agent-checks > summary').click();
+  await page.getByText('Recorded check: Passed. Current evidence has changed.',{exact:true}).waitFor();
+  await page.getByRole('button',{name:'Edit plan',exact:true}).click();
+  await page.locator('#edit-state').selectOption('done');
+  const rejected=page.waitForResponse(r=>r.url().includes('/api/actions')&&r.status()===400);
+  await page.locator('#editor-save').click();
+  const rejection=await (await rejected).json();
+  assert.equal(rejection.next_step.action,'refresh_evidence');
+  assert.equal(rejection.next_step.read_with.view,'record');
+  assert.ok(!('wait_command' in rejection.next_step));
+  assert.match(await page.locator('#editor-error').textContent(),/Waiting for a review will not refresh evidence/);
+  await page.keyboard.press('Escape');
+  await page.screenshot({path:path.join(output,'review-next-step.png'),fullPage:true});
+  await page.getByRole('button',{name:'Inspect evidence',exact:true}).click();
+  await page.getByRole('button',{name:'Read original text',exact:true}).click();
+  assert.match(await page.locator('[data-field=body] pre').textContent(),/Both declared encoding paths were checked/);
+  await page.keyboard.press('Escape');
   await page.setViewportSize({width:390,height:844});await page.locator('#new-work').click();
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
   await page.screenshot({path:path.join(output,'workspace-editor-mobile.png'),fullPage:true});
@@ -192,6 +242,7 @@ print('{}')`);
   const report={passed:true,browser:await browser.version(),initial_ready_ms:readyMs,checks:['create sprint','create action','structured sprint assignment','inspect intent and lineage','navigate while inspecting','Escape closes the inspector','restore focus to the current action','retain keyboard focus during a delayed board refresh','add comment','reject unsupported Done','preserve draft on concurrent edit','reload current version','save revised plan','sprint filtering','original text across source pagination','mobile form width','recording gaps appear without reload','inspect recording gaps','resolved recording gaps and open inspector update without reload','timeout diagnostics are visible','retained report cannot imply approval','constraint conditions remain readable','no external requests','no JavaScript errors']};
   report.checks.push('failed detail refresh remains visible across polls','nested history failure remains visible across polls','detail and history recover without another database change','unsaved editor defers recovery without hiding the failure');
   report.injected_failures={detail:failedDetails,history:failedHistory};
+  report.checks.push('active review points to the existing check','finished current review is ready to complete','stale evidence retains historical pass without approving current work','HTTP Done rejection names evidence recovery without waiting');
   fs.writeFileSync(path.join(output,'browser-validation.json'),JSON.stringify(report,null,2)+'\n');console.log(JSON.stringify(report));
  }finally{if(browser)await browser.close();if(server)try{process.kill(server.pid);}catch(error){if(error.code!=='ESRCH')throw error;}fs.rmSync(temp,{recursive:true,force:true});}
 })().catch(error=>{console.error(error);process.exitCode=1;});

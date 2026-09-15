@@ -79,6 +79,170 @@ class CodexTests(unittest.TestCase):
         values=[json.loads(s) for s in out.getvalue().splitlines()]
         self.assertEqual(len(values),4);self.assertEqual(values[0]['error']['code'],-32700)
         self.assertTrue(values[2]['result']['isError']);self.assertEqual(len(values[3]['result']['tools']),3)
+    def test_schema_rejection_names_missing_unexpected_and_nested_fields(self):
+        cases=[('memory_context',{'query':'test','session_id':'unsupported'},
+                {'arguments.subject':'missing','arguments.session_id':'unexpected'}),
+               ('memory_get',{'view':'records','ids':['source',3]}, {'arguments.ids[1]':'wrong_type'}),
+               ('memory_write',{'operation':'source','request_key':'rejected','data':{
+                   'source_key':'key','title':'Title','summary':'Summary','origin':'tool','unexpected':'value'}},
+                {'arguments.data.body':'missing','arguments.data.unexpected':'unexpected'}),
+               ('memory_write',{'operation':'record','request_key':'rejected','data':{'payload':{'alternatives':'not a list'}}},
+                {'arguments.data.payload.alternatives':'wrong_type'}),
+               ('memory_get',{'view':'board','limit':True},{'arguments.limit':'wrong_type'}),
+               ('memory_get',{'view':'board','limit':0},{'arguments.limit':'minimum'})]
+        before=self.m.db.total_changes
+        for name,args,expected in cases:
+            with self.subTest(name=name,args=args),self.assertRaises(InvalidRecord) as caught:
+                dispatch(self.m,name,args)
+            details=caught.exception.details
+            self.assertEqual({e['field']:e['problem'] for e in details['field_errors']},expected)
+            self.assertEqual(details['execution'],'not_started')
+            self.assertEqual(details['next_step']['action'],'correct_arguments')
+        self.assertEqual(self.m.db.total_changes,before)
+
+    def test_real_mcp_process_recovers_from_rejected_write_without_duplicate_effects(self):
+        data={'source_key':'corrected','title':'Corrected request','summary':'Protocol recovery fixture.',
+              'body':'The exception remains unchanged.','origin':'tool'}
+        args={'operation':'source','request_key':'corrected-once','data':data}
+        invalid={**args,'data':{**data,'extra_field':'unsupported'}}
+        requests=[{'jsonrpc':'2.0','id':i,'method':'tools/call','params':{'name':'memory_write','arguments':value}}
+                  for i,value in enumerate([invalid,args,args],1)]
+        requests.insert(0,{'jsonrpc':'2.0','id':0,'method':'initialize','params':{'protocolVersion':'2025-11-25'}})
+        run=subprocess.run([sys.executable,'-m','memory_module.mcp','--db',str(self.m.path)],
+            input='\n'.join(dumps(r) for r in requests)+'\n',text=True,capture_output=True,check=True,
+            cwd=Path(__file__).resolve().parent.parent)
+        results=[json.loads(line)['result'] for line in run.stdout.splitlines()][1:]
+        error=json.loads(results[0]['content'][0]['text'])
+        self.assertTrue(results[0]['isError']);self.assertEqual(error['execution'],'not_started')
+        self.assertIn('arguments.data.extra_field',error['message'])
+        self.assertEqual(error['next_step']['read_with'],{'view':'schema','id':'source'})
+        self.assertFalse(results[1]['isError']);self.assertFalse(results[2]['isError'])
+        self.assertEqual(results[1],results[2])
+        self.assertEqual(self.m.db.execute("SELECT count(*) FROM sources WHERE source_key='corrected'").fetchone()[0],1)
+        with self.assertRaises(Conflict):dispatch(self.m,'memory_write',{**args,'data':{**data,'body':'Changed content.'}})
+
+    def test_nested_record_and_review_schema_recovery_in_a_real_mcp_process(self):
+        episode=self.m.start('Review fixture','Verify recovery.','test','Preserve the source.',subject='code')
+        source=self.m.source('review-contract','Contract','Preserve the exception.','The exception remains supported.','user')
+        evidence=[{'source_id':source['id'],'reason':'The recorded contract governs this code review.'}]
+        note={'operation':'record','request_key':'nested-note','data':{'episode_id':episode['id'],'kind':'note',
+            'expected_version':0,'actor':'fixture','payload':{'text':'Example'}}}
+        review={'operation':'record','request_key':'code-review','data':{'episode_id':episode['id'],'kind':'review',
+            'expected_version':1,'actor':'fixture','evidence':evidence,
+            'payload':{'target':'Parser','revision':'fixture','summary':'The exception is retained.','findings':[]}}}
+        bad_note={**note,'data':{**note['data'],'payload':{'text':'Example','unexpected':True}}}
+        bad_review={**review,'data':{k:v for k,v in review['data'].items() if k!='actor'}}
+        wrong_type={**review,'data':{**review['data'],'actor':3}}
+        nested_review={**review,'data':{**review['data'],'payload':{**review['data']['payload'],
+            'findings':[{'location':'parser.py','issue':'Inspect the exception.','severity':'minor','extra':True}]}}}
+        calls=[bad_note,note,note,bad_review,wrong_type,nested_review,review,review]
+        requests=[{'jsonrpc':'2.0','id':0,'method':'initialize','params':{'protocolVersion':'2025-11-25'}}]
+        requests.extend({'jsonrpc':'2.0','id':i,'method':'tools/call','params':{'name':'memory_write','arguments':value}}
+                        for i,value in enumerate(calls,1))
+        result=subprocess.run([sys.executable,'-m','memory_module.mcp','--db',str(self.m.path)],
+            input='\n'.join(dumps(r) for r in requests)+'\n',text=True,capture_output=True,check=True,
+            cwd=Path(__file__).resolve().parent.parent)
+        responses=[json.loads(line)['result'] for line in result.stdout.splitlines()][1:]
+        for index,field,schema_id in [(0,'arguments.data.payload.unexpected','note'),(3,'arguments.data.actor','review'),
+                                      (4,'arguments.data.actor','review'),(5,'arguments.data.payload.findings[0].extra','review')]:
+            error=json.loads(responses[index]['content'][0]['text'])
+            self.assertTrue(responses[index]['isError']);self.assertEqual(error['execution'],'not_started')
+            self.assertEqual(error['field_errors'][0]['field'],field)
+            self.assertEqual(error['next_step']['read_with'],{'view':'schema','id':schema_id})
+            metadata=dispatch(self.m,'memory_get',error['next_step']['read_with'])
+            self.assertEqual(metadata['kind'],schema_id)
+        for index in [1,2,6,7]:self.assertFalse(responses[index]['isError'],responses[index])
+        self.assertEqual(responses[1],responses[2]);self.assertEqual(responses[6],responses[7])
+        self.assertEqual(self.m.db.execute('SELECT count(*) FROM events WHERE episode_id=?',(episode['id'],)).fetchone()[0],2)
+        with self.assertRaises(InvalidRecord) as caught:
+            dispatch(self.m,'memory_write',{'operation':'review','request_key':'agent-check','data':{}})
+        self.assertEqual(caught.exception.details['next_step']['read_with'],{'view':'schema','id':'agent_check'})
+
+    def test_nested_map_fields_are_rejected_before_writing_and_corrected_once(self):
+        episode=self.m.start('Architecture','Record the component.','test','Keep the proposal.',subject='code')
+        source=self.m.source('map-contract','Architecture request','Record a proposed component.','The user requests a diagram.','user')
+        node={'id':'node_component','title':'Parser','kind':'component','description':'Preserves the encoding exception.','reference':'','status':'proposed'}
+        args={'operation':'map','request_key':'map-recovery','data':{'episode_id':episode['id'],'expected_version':0,
+            'map_version':0,'mode':'architecture','nodes':[node],'edges':[],'reason':'Record the proposed component.',
+            'evidence':[{'source_id':source['id'],'reason':'The user requests this diagram.'}]}}
+        for bad in [{**node,'unexpected':True},{**node,'title':3}]:
+            with self.assertRaises(InvalidRecord) as caught:
+                dispatch(self.m,'memory_write',{**args,'data':{**args['data'],'nodes':[bad]}})
+            details=caught.exception.details
+            self.assertEqual(details['execution'],'not_started')
+            self.assertTrue(details['field_errors'][0]['field'].startswith('arguments.data.nodes[0].'))
+            self.assertEqual(details['next_step']['read_with'],{'view':'schema','id':'map'})
+        self.assertEqual(self.m.episode(episode['id'])['version'],0)
+        result=dispatch(self.m,'memory_write',args)
+        self.assertEqual(dispatch(self.m,'memory_write',args),result)
+        self.assertEqual(result['map']['version'],1)
+        self.assertEqual(self.m.episode(episode['id'])['version'],1)
+
+    def test_every_advertised_write_operation_rejects_unknown_fields_at_protocol_boundary(self):
+        from memory_module.mcp import TOOLS
+        operations=next(t for t in TOOLS if t['name']=='memory_write')['inputSchema']['properties']['operation']['enum']
+        requests=[{'jsonrpc':'2.0','id':0,'method':'initialize','params':{'protocolVersion':'2025-11-25'}}]
+        requests.extend({'jsonrpc':'2.0','id':i,'method':'tools/call','params':{'name':'memory_write','arguments':{
+            'operation':op,'request_key':'reject-'+op,'data':{'unexpected':True}}}} for i,op in enumerate(operations,1))
+        before={table:self.m.db.execute('SELECT count(*) FROM '+table).fetchone()[0] for table in ['sources','events','episodes','adapter_requests']}
+        process=subprocess.run([sys.executable,'-m','memory_module.mcp','--db',str(self.m.path)],
+            input='\n'.join(dumps(r) for r in requests)+'\n',text=True,capture_output=True,check=True,
+            cwd=Path(__file__).resolve().parent.parent)
+        responses=[json.loads(line)['result'] for line in process.stdout.splitlines()][1:]
+        self.assertEqual(len(responses),len(operations))
+        for op,result in zip(operations,responses):
+            with self.subTest(operation=op):
+                self.assertTrue(result['isError'])
+                error=json.loads(result['content'][0]['text'])
+                self.assertEqual(error['execution'],'not_started')
+                self.assertIn({'field':'arguments.data.unexpected','problem':'unexpected'},
+                    [{k:e[k] for k in ['field','problem']} for e in error['field_errors']])
+                self.assertEqual(error['next_step']['read_with'],{'view':'schema','id':'agent_check' if op=='review' else op})
+                metadata=dispatch(self.m,'memory_get',error['next_step']['read_with'])
+                if op=='record':self.assertIn('record_kinds',metadata)
+                elif op in {'start','source','document'}:self.assertIn('fields',metadata)
+                else:self.assertEqual(metadata['operation'],op)
+                if op=='sync':self.assertEqual(set(metadata['fields']),{'limit','offset','check'})
+                if op=='approve_requirements':self.assertEqual(set(metadata['required']),{'requirements','reason','actor','evidence','expected_version'})
+        self.assertEqual(before,{table:self.m.db.execute('SELECT count(*) FROM '+table).fetchone()[0] for table in before})
+
+    def test_skill_schema_correction_and_replay_preserve_import_and_selection_counts(self):
+        from tests.test_workspace_knowledge import files
+        from memory_module import skills
+        episode=self.m.start('Skill selection','Select a method.','test','Preserve its revision.',subject='code')
+        source=self.m.source('skill-request','Skill request','Inspect this method.','The user requests a skill selection.','user')
+        evidence=[{'source_id':source['id'],'reason':'The user requests this selection.'}]
+        def call(args):
+            requests=[{'jsonrpc':'2.0','id':0,'method':'initialize','params':{'protocolVersion':'2025-11-25'}},
+                      {'jsonrpc':'2.0','id':1,'method':'tools/call','params':{'name':'memory_write','arguments':args}}]
+            result=subprocess.run([sys.executable,'-m','memory_module.mcp','--db',str(self.m.path)],
+                input='\n'.join(dumps(r) for r in requests)+'\n',text=True,capture_output=True,check=True,
+                cwd=Path(__file__).resolve().parent.parent)
+            reply=json.loads(result.stdout.splitlines()[-1])['result']
+            return reply['isError'],json.loads(reply['content'][0]['text'])
+        imported={'operation':'skill_import','request_key':'skill-import-once','data':{'files':files(),'expected_version':0}}
+        bad={**imported,'data':{**imported['data'],'unexpected':True}}
+        failed,error=call(bad);self.assertTrue(failed);self.assertEqual(error['execution'],'not_started')
+        self.assertEqual(error['next_step']['read_with'],{'view':'schema','id':'skill_import'})
+        failed,result=call(imported);self.assertFalse(failed,result)
+        self.assertEqual(call(imported),(False,result));skill=result['skill']
+        self.assertEqual(self.m.db.execute("SELECT count(*) FROM sources WHERE source_key LIKE ?",(skills.PREFIX+'%',)).fetchone()[0],1)
+        selection={'operation':'skill_selection','request_key':'skill-select-once','data':{
+            'episode_id':episode['id'],'expected_version':0,'skill_id':skill['id'],'revision':skill['revision'],
+            'state':'selected','reason':'Inspect this method.','evidence':evidence}}
+        failed,error=call({**selection,'data':{**selection['data'],'unexpected':True}})
+        self.assertTrue(failed);self.assertEqual(error['execution'],'not_started')
+        self.assertEqual(error['next_step']['read_with'],{'view':'schema','id':'skill_selection'})
+        failed,result=call(selection);self.assertFalse(failed,result)
+        self.assertEqual(call(selection),(False,result));self.assertEqual(self.m.episode(episode['id'])['version'],1)
+        self.assertEqual(len(skills.selections(self.m,episode['id'])),1)
+        failed,conflict=call({**selection,'data':{**selection['data'],'reason':'Changed request.'}})
+        self.assertTrue(failed);self.assertEqual(conflict['error'],'Conflict');self.assertNotIn('execution',conflict)
+        for data in [{'expected_version':0},{'expected_version':0,'files':files(),'archive':'encoded'},
+                     {'expected_version':0,'files':[{'path':'SKILL.md','content':3}]}]:
+            failed,error=call({**imported,'data':data});self.assertTrue(failed)
+            self.assertEqual(error['execution'],'not_started')
+
     def test_mcp_process_restart_preserves_idempotent_capture(self):
         request={'jsonrpc':'2.0','id':1,'method':'tools/call','params':{'name':'memory_write','arguments':{
             'operation':'source','request_key':'restart-source','data':{'source_key':'restart','title':'Restart evidence','summary':'The same request is replayed after restart.','body':'The fixture uses the same request key and content.','origin':'tool'}}}}

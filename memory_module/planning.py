@@ -137,7 +137,9 @@ def validate_event(memory, episode, kind, payload, evidence):
         if found:
             raise InvalidRecord('Work dependencies cannot contain a cycle.')
     if payload['state'] == 'done' and not completion(memory, episode['id']):
-        raise InvalidRecord('Done requires a current, evidenced good outcome, no unresolved execution and a passing outcome agent check when configured. Read memory_get reviews; wait with project-memory review --wait CHECK_ID.')
+        step = completion_guidance(memory, card(memory, episode['id']))
+        raise InvalidRecord('Done requires current completion evidence. '+step['reason'],
+                            episode_id=episode['id'], next_step=step)
     if payload['state']=='done':
         prior=latest(memory,episode['id'],'work_plan')
         if prior and any(prior.get(k,[] if k=='depends_on' else None)!=payload.get(k,[] if k=='depends_on' else None) for k in ('scope','autonomy','depends_on')):
@@ -202,8 +204,11 @@ def card(memory, episode_id):
         for ref in plan.get('depends_on', []):
             if not completion(memory, ref['episode_id']):
                 problems.append({'type': 'dependency', **ref})
+    outcome_row = memory.db.execute("SELECT id,payload FROM events WHERE kind='outcome' AND decision_id=? ORDER BY seq DESC LIMIT 1",
+                                    (decision['id'],)).fetchone() if decision else None
+    outcome = {'id': outcome_row['id'], **json.loads(outcome_row['payload'])} if outcome_row else None
     if decision:
-        for reason in memory.review_reasons(decision['id']):
+        for reason in memory.review_reasons(outcome['id'] if outcome else decision['id']):
             problems.append({'type': 'evidence_review', **reason})
     from .coverage import work_issues
     problems.extend(work_issues(memory,episode_id))
@@ -218,9 +223,6 @@ def card(memory, episode_id):
             state = 'blocked'
         elif problems and recorded not in {'backlog', 'blocked'}:
             state = 'review'
-    outcome_row = memory.db.execute("SELECT id,payload FROM events WHERE kind='outcome' AND decision_id=? ORDER BY seq DESC LIMIT 1",
-                                    (decision['id'],)).fetchone() if decision else None
-    outcome = {'id': outcome_row['id'], **json.loads(outcome_row['payload'])} if outcome_row else None
     from .reviews import required, current
     check = current(memory,episode_id) if required(memory,episode_id) else None
     if check and check['state']!='pass' and recorded!='cancelled' and (recorded=='done' or outcome and outcome.get('completion')=='complete'):
@@ -231,11 +233,76 @@ def card(memory, episode_id):
         check={k:v for k,v in check.items() if k!='report'}
         if report:check['summary']=report['summary']
         if check.get('id'):check['read_full_with']={'view':'record','id':check['id'],'max_chars':20000}
-    return {'id': episode_id, 'title': episode['title'], 'subject': episode['subject'], 'date': episode['created_at'],
+    item = {'id': episode_id, 'title': episode['title'], 'subject': episode['subject'], 'date': episode['created_at'],
             'version': episode['version'], 'intent': episode['objective'], 'done_when': episode['criterion'],
             'state': state, 'recorded_state': recorded, 'plan': plan, 'issues': problems,
             'decision_id': decision['id'] if decision else None, **({'agent_check':check} if check else {}),
             'outcome': {'id': outcome['id'], 'assessment': outcome['assessment'], 'completion': outcome.get('completion')} if outcome else None}
+    if outcome and outcome.get('completion')=='complete' or recorded=='done':
+        item['completion_next'] = completion_guidance(memory, item)
+    return item
+
+
+def completion_guidance(memory, item):
+    """Explain completion gates without granting permission or changing records."""
+    from .reviews import ACTIVE, wait_command
+    ep = item['id']
+    issues = item['issues']
+    if item['state']=='cancelled':
+        return {'action':'stop', 'reason':'This work is cancelled.'}
+    for kinds, action, reason in (
+        ({'execution_unconfirmed'}, 'reconcile', 'Inspect actual tool effects and reconcile uncertain execution before any retry.'),
+        ({'intent_unassessed','capture_gap'}, 'assess_coverage', 'Assess the unrecorded request or capture gap before completing this work.'),
+        ({'intent_review','evidence_review'}, 'refresh_evidence', 'Inspect the changed evidence listed below and record its reassessment. Waiting for a review will not refresh evidence.'),
+        ({'dependency'}, 'inspect_dependency', 'Inspect the unfinished prerequisite before completing this work.'),
+        ({'sprint_closed'}, 'review_plan', 'Reassign unfinished work from the closed sprint.'),
+    ):
+        blockers = [i for i in issues if i['type'] in kinds]
+        if blockers:
+            first = blockers[0]
+            read = {'view':'next', 'id':ep}
+            if first.get('source_id') or first.get('record_id'):
+                read = {'view':'record', 'id':first.get('source_id') or first['record_id']}
+            elif first['type']=='dependency':
+                read = {'view':'next', 'id':first['episode_id']}
+            elif action in {'reconcile','assess_coverage'}:
+                session = (item['plan'] or {}).get('session_id')
+                if not session:
+                    row = memory.db.execute("SELECT session_id FROM host_receipts WHERE episode_id=? AND event_name='DecisionBound' ORDER BY rowid DESC LIMIT 1", (ep,)).fetchone()
+                    session = row[0] if row else None
+                if session: read = {'view':'coverage', 'session_id':session}
+            return {'action':action, 'reason':reason, 'blockers':blockers, 'read_with':read}
+    outcome = item['outcome']
+    if not item['decision_id'] or not outcome:
+        return {'action':'assess_outcome', 'reason':'Inspect existing work and record the decision and evidenced outcome before completing it. Do not repeat completed actions.',
+                'read_with':{'view':'episode','id':ep}}
+    if outcome['assessment']!='good' or outcome['completion']!='complete':
+        return {'action':'review_outcome', 'reason':'The recorded outcome does not establish a good, complete result. Inspect its findings and remaining work.',
+                'read_with':{'view':'record','id':outcome['id']}}
+    if memory.pending(ep,limit=1)['total']:
+        return {'action':'assess_outcome', 'reason':'An earlier decision still has an unresolved outcome. Inspect its existing execution before recording an assessment.',
+                'read_with':{'view':'episode','id':ep}}
+    check = item.get('agent_check')
+    if check and check['state']!='pass':
+        state = check['state']
+        step = {'read_with':{'view':'reviews','id':ep}, 'check_id':check.get('id'), 'review_state':state}
+        if state in ACTIVE:
+            step.update(action='wait_review', reason='The outcome review is '+state+'. Wait for this existing check; the recorded implementation is complete.',
+                        wait_command=wait_command(memory,check['id']))
+        elif state=='stale':
+            step.update(action='refresh_review', reason='The previous review no longer covers current evidence or project files. Inspect the changes and reassess the outcome before requesting a new check.')
+        elif state=='missing':
+            step.update(action='request_review', reason='The complete outcome has no required agent check. Request an outcome review without repeating implementation.',
+                        schema={'view':'schema','id':'agent_check'})
+        elif state in {'changes_required','uncertain'}:
+            step.update(action='review_findings', reason='Inspect the review findings and missing evidence before deciding what work or reassessment is needed.')
+        else:
+            step.update(action='inspect_review', reason='The review '+state.replace('_',' ')+'. Inspect its retained report and execution before explicitly retrying the check. Do not repeat implementation because a review stopped.')
+        return step
+    if completion(memory,ep):
+        return {'action':'finalize', 'reason':'The recorded result and required review are current. Mark the work Done without repeating completed actions.'}
+    return {'action':'inspect_completion', 'reason':'Inspect the recorded decisions and completion evidence before marking this work Done.',
+            'read_with':{'view':'episode','id':ep}}
 
 
 def board(memory, *, limit=25, offset=0, sprint_id=None, subject=None, query='', state=None, episode_id=None, grouped=False):
@@ -324,7 +391,8 @@ def next_work(memory, *, episode_id=None, session_id=None, limit=5, offset=0, su
     elif any(p['type'] == 'execution_unconfirmed' for p in item['issues']):
         action, reason = 'reconcile', 'This work contains unconfirmed execution from a host session.'
     elif item['issues'] and plan:
-        action, reason = 'review', 'Resolve the listed evidence or dependency issues before continuing.'
+        step = completion_guidance(memory,item)
+        action, reason = step['action'], step['reason']
     elif plan:
         if plan['state'] in {'done', 'cancelled'}:
             action, reason = 'stop', 'This work has no pending continuation.'
@@ -348,7 +416,9 @@ def next_work(memory, *, episode_id=None, session_id=None, limit=5, offset=0, su
                   'schema':{'view':'schema','id':'progress'},
                   'note':'Supply actor and payload with reason and state or next_action. Pass this host session_id for in_progress. Progress preserves scope, dependencies, links and evidence. Use plan only for an intentional scope revision.'}
     selected_skills = memory.db.execute("SELECT count(*) FROM sources s WHERE source_key LIKE ? AND version=(SELECT max(version) FROM sources WHERE source_key=s.source_key) AND json_extract(body,'$.state') != 'released'", ('workspace-skill-selection:' + episode_id + ':%',)).fetchone()[0]
+    step = completion_guidance(memory,item) if action in {'reconcile','refresh_evidence','assess_coverage','inspect_dependency','review_plan','wait_review','refresh_review','request_review','review_findings','inspect_review','finalize'} else None
     return {'work': item, 'action': action, 'reason': reason, 'update':update,
+            **({'next_step':step} if step and step['action']==action else {}),
             'skills': {'selected': selected_skills, 'read_with': {'view': 'skill_selections', 'id': episode_id},
                        'note': 'Read selected versions and conditions before using them. Selection is not execution evidence.'},
             'unconfirmed': state['unconfirmed'] if state and action == 'reconcile' else [],

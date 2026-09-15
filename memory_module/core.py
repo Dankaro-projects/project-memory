@@ -28,7 +28,9 @@ class Conflict(MemoryError):
 
 
 class InvalidRecord(MemoryError):
-    pass
+    def __init__(self, message, **details):
+        super().__init__(message)
+        self.details = details
 
 
 class BudgetTooSmall(MemoryError):

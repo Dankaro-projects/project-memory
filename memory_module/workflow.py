@@ -142,9 +142,19 @@ class Workflow:
                                for key in ('scope','autonomy','depends_on')):
                 reasons.append({'reason':'The work scope or prerequisites changed after this decision.','record_id':choice['id'],
                                 'used_plan_id':choice['plan_id'],'current_plan_id':current['id']})
-        rows = self.db.execute(ancestors + 'SELECT DISTINCT d.source_id FROM dependencies d JOIN ancestors a ON d.event_id=a.id', (event_id,))
+        direct = {row['id']: row['source_key'] for row in self.db.execute(
+            'SELECT s.id,s.source_key FROM sources s JOIN dependencies d ON d.source_id=s.id WHERE d.event_id=?',
+            (event_id,))}
+        # A corrected outcome explicitly reassesses the current source. Its
+        # decision retains the older evidence that prompted the correction.
+        reassessed = {key for source_id, key in direct.items() if self.source_status(source_id)=='current_copy'} \
+            if self._event(event_id)['kind']=='outcome' else set()
+        rows = self.db.execute(ancestors + '''SELECT DISTINCT s.id,s.source_key FROM dependencies d
+            JOIN ancestors a ON d.event_id=a.id JOIN sources s ON s.id=d.source_id''', (event_id,))
         for row in rows:
             state=self.source_status(row[0])
+            if state=='superseded' and row[0] not in direct and row['source_key'] in reassessed:
+                continue
             if state!='current_copy':reasons.append({'reason':'Referenced evidence changed or requires a check.','source_id':row[0],'status':state})
         return reasons
 

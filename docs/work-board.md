@@ -45,6 +45,8 @@ Without an explicit episode or an active decision bound to this session, `next` 
 
 Startup and continuation hooks point to the next-work view for an active planned decision. In the development version, verified hooks conditionally start a read-only intent, outcome or recovery agent. They do not execute planned implementation work, schedule future sessions, accept lessons or declare success. New work in a project with agent checks enabled also requires a current passing outcome check. Done requires an evidenced good outcome with `completion: complete`, current supporting evidence, and no unresolved execution or consequence. Changed evidence can put a previously completed card back into Review without overwriting its historical state. Failed outcomes remain visible in the timeline and existing metrics.
 
+A corrected outcome can explicitly cite the current version of evidence inherited from its decision. This reassesses that source for the outcome and current work state; the original decision and its older source stay unchanged. Direct stale citations, later source changes, revised requirements or scope, unresolved execution and stale or failing outcome reviews still prevent Done.
+
 ## Storage and compatibility
 
 Plans and sprints use existing event and episode tables. No runtime dependency or task service is added. On the first plan write to an older version-2 database, the transaction extends its event-type validation trigger; all other checks and existing rows remain intact. Read-only operations do not change the schema. Keep a normal SQLite backup before upgrading; older releases cannot author the new record kinds.

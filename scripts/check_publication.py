@@ -48,7 +48,7 @@ def runtime_file(name):
     return name in RUNTIME_ASSETS or (path.parent.as_posix() == 'memory_module/ui'
         and path.name in {'workspace.css', 'state.js', 'records.js', 'api.js', 'sync.js',
                           'navigation.js', 'board.js', 'editor.js', 'reviews.js', 'boot.js',
-                          'skills.js', 'map.js', 'approvals.js', 'reading.js', 'overview.js'}) or (
+                          'skills.js', 'map.js', 'dependencies.js', 'approvals.js', 'reading.js', 'overview.js'}) or (
         path.parent.as_posix() == 'memory_module' and path.suffix in {'.py', '.html'})
 
 

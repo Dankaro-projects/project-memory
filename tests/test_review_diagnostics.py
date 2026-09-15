@@ -11,6 +11,7 @@ import unittest
 from unittest.mock import patch
 
 from memory_module import Memory, InvalidRecord, Conflict, reviews
+from memory_module.core import dumps
 from memory_module.cli import main
 from memory_module.install import setup
 from memory_module.mcp import write
@@ -97,6 +98,50 @@ class ReviewDiagnosticsTests(unittest.TestCase):
         self.assertEqual(checks['minItems'],checks['maxItems'])
         self.assertEqual(schema['properties']['constraint_checks']['items']['properties']['constraint']['enum'],['S001','P001','P002'])
         self.assertNotIn('enum',reviews.REPORT_SCHEMA['properties']['checks']['items']['properties']['criterion'])
+
+    def test_report_budget_scales_to_many_constraints_without_removing_checks(self):
+        snapshot,_ = reviews.snapshot(self.m,self.ep,'outcome')
+        snapshot['checklist'] = [{'id':f'C{i:03}', 'condition':'Preserve the tagged exception.'} for i in range(1,7)]
+        snapshot['constraints'] = [{'id':f'P{i:03}', 'condition':'Preserve the stated project constraint.'} for i in range(1,26)]
+        schema = reviews.report_schema(snapshot)
+        checks = schema['properties']['checks']
+        constraints = schema['properties']['constraint_checks']
+        self.assertEqual(checks['minItems'],6)
+        self.assertEqual(constraints['minItems'],25)
+        limit = checks['items']['properties']['evidence']['maxLength']
+        report = self.report(snapshot)
+        report['summary'] = 's' * schema['properties']['summary']['maxLength']
+        for item in report['checks']:
+            item['evidence'] = 'e' * limit
+        for item in report['constraint_checks']:
+            for field in ('reason','evidence'):
+                self.assertEqual(constraints['items']['properties'][field]['maxLength'],limit)
+                item[field] = 'e' * limit
+        report['findings'] = ['f' * 1900]
+        self.assertLessEqual(len(dumps(report)),reviews.REPORT_MAX_CHARACTERS)
+        reviews.validate_report(report,snapshot['checklist'],snapshot['constraints'])
+        self.assertNotIn('maxLength',reviews.REPORT_SCHEMA['properties']['checks']['items']['properties']['evidence'])
+
+    def test_report_limit_counts_serialized_characters_and_preserves_the_boundary(self):
+        snapshot,_ = reviews.snapshot(self.m,self.ep,'outcome')
+        report = self.report(snapshot)
+        report['findings'] = ['f'*5000, 'é'*5000, '\\"'*1000]
+        report['findings'].append('x'*(reviews.REPORT_MAX_CHARACTERS-len(dumps(report))-3))
+        self.assertEqual(len(dumps(report)),reviews.REPORT_MAX_CHARACTERS)
+        reviews.validate_report(report,snapshot['checklist'],snapshot['constraints'])
+        report['findings'][-1] += 'x'
+        with self.assertRaisesRegex(InvalidRecord,'exceeds 16,000 characters'):
+            reviews.validate_report(report,snapshot['checklist'],snapshot['constraints'])
+
+    def test_every_review_role_receives_the_complete_report_budget(self):
+        for role in reviews.ROLES:
+            run = reviews.request(self.m,self.ep,role,request_key='budget:'+role)
+            with patch.object(reviews,'command',return_value=[sys.executable,'-c','pass']) as command:
+                reviews.execute(self.m,run['id'],timeout=3)
+            prompt = command.call_args.args[3]
+            self.assertIn('16,000 characters',prompt)
+            self.assertIn('12,000 characters',prompt)
+            self.assertIn('shorten wording, not coverage',prompt)
 
     def test_progress_preserves_scope_evidence_and_outcome_signature(self):
         _,signature = reviews.snapshot(self.m,self.ep,'outcome')

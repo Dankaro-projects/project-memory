@@ -4,6 +4,12 @@ The live workspace uses the existing SQLite database. Create an action with its 
 
 The browser saves through a small loopback API. Every save checks the current episode version. A concurrent update leaves the draft visible and offers **Reload saved version**. Moving to Done cannot manufacture a successful outcome. The same domain checks apply to browser, MCP and CLI records. Offline HTML remains an inspectable snapshot.
 
+## Completion and recovery
+
+Work details show the recorded result separately from the current outcome review. The next step identifies an active check to wait for, changed evidence to reassess, findings to inspect, or a current result ready for Done. A retained passing report can become stale; waiting does not refresh its evidence. These explanations preserve the existing completion gates and do not repeat implementation.
+
+MCP argument validation reports missing, unexpected and wrongly typed fields with `execution: not_started`. Correct the listed fields and resubmit the rejected request. This says nothing about earlier calls with uncertain effects. Completion rejections return `next_step` with the relevant record or review reference; `wait_command` is supplied only for an active check. Wait expiry leaves the same check running. Read current status before reporting that a review is pending.
+
 ## Agent responsibilities
 
 | Agent | Mechanical trigger | Judgment it supplies |
@@ -35,6 +41,8 @@ project-memory review --episode EPISODE_ID --role outcome --retry --max-seconds 
 Waiting defaults to 60 seconds and returns `wait_expired: true` with the current state if the review is still active. It never extends the execution deadline or cancels the reviewer. `--wait --max-seconds N` remains a supported alias for `--wait-seconds N`; conflicting wait limits are rejected. `--max-seconds` on a new review controls execution, not waiting. A retry reviews current evidence, so it is not an identical-input replay.
 
 A timed-out or cancelled run retains any valid report and provider usage already received, but cannot approve work. Missing usage remains unavailable. `execution_deadline`, `host_exit`, `host_error`, `invalid_report`, `worker_error` and `cancelled` distinguish termination causes from an agent verdict of `changes_required`. Status reports observed host-error events and stderr volume, not an inferred transport diagnosis. Raw evidence and logs stay under the private `.memory/agent-runs/` directory.
+
+The complete serialized review report has a 16,000-character limit. Reviewers receive a 12,000-character drafting target and shorter evidence-field limits as the number of required checks grows. Every criterion and constraint must still appear exactly once, with conditions and exceptions preserved. Oversized reports remain invalid; the worker does not truncate them or automatically repeat the review.
 
 MCP still exposes three tools. Use `memory_get` with `view: "schema", id: "agent_check"` for the review request shape; `id: "review"` retains the existing code-review record schema. Retrieve a bounded review list with `view: "reviews", id: EPISODE_ID`, then read a full check by its ID.
 

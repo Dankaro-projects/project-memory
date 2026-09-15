@@ -29,7 +29,7 @@ function setPresentationVisibility() {
   el("reading-view").hidden = !reading;
   el("record-table").hidden =
     reading ||
-    ["overview", "board", "map", "skills", "attention"].includes(view);
+    ["overview", "board", "map", "skills", "attention", "dependencies"].includes(view);
   el("board-grid").classList.toggle(
     "work-list",
     view === "board" && format === "list",

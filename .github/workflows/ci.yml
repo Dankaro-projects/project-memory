@@ -46,4 +46,5 @@ jobs:
       - run: node tests/browser/browser_check.cjs
       - run: node tests/browser/workspace_browser.cjs
       - run: node tests/browser/knowledge_browser.cjs
+      - run: node tests/browser/dependencies_browser.cjs
       - run: node tests/browser/usability_browser.cjs

@@ -97,11 +97,18 @@ async function showChecks(parent, work) {
         " · " +
         run.host;
       article.append(status);
+      if (result.current?.id === run.id && result.current.state === "stale") {
+        const previous = document.createElement("p");
+        previous.textContent = "Recorded check: " + labels(run.state) + ". Current evidence has changed.";
+        article.append(previous);
+      }
       const p = document.createElement("p");
       p.textContent =
         run.error ||
         run.report?.summary ||
-        "The agent is checking the recorded evidence.";
+        (["queued", "running", "cancelling"].includes(run.state)
+          ? "The agent is checking the recorded evidence."
+          : "No report was recorded for this check.");
       article.append(p);
       if (["queued", "running", "cancelling"].includes(run.state)) {
         start.disabled = true;

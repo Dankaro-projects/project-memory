@@ -67,6 +67,158 @@ def tool_result(value, error=False):
     return {'content':[{'type':'text','text':dumps(value)}],'isError':error}
 
 
+def argument_issues(value, rule, path='arguments'):
+    kinds = rule.get('type',[])
+    if isinstance(kinds,str): kinds = [kinds]
+    types = {'string':str,'integer':int,'object':dict,'array':list,'boolean':bool,'null':type(None)}
+    if kinds and not any(type(value) is types[kind] for kind in kinds):
+        return [{'field':path,'problem':'wrong_type','expected':' or '.join(kinds)}]
+    if 'enum' in rule and value not in rule['enum']:
+        return [{'field':path,'problem':'invalid_choice','allowed':rule['enum']}]
+    issues = []
+    if isinstance(value,dict):
+        properties = rule.get('properties',{})
+        for key in sorted(set(rule.get('required',[]))-value.keys()):
+            issues.append({'field':path+'.'+key,'problem':'missing'})
+        for key, child in value.items():
+            field = path+'.'+str(key)
+            if key in properties:
+                issues.extend(argument_issues(child,properties[key],field))
+            elif rule.get('additionalProperties') is False:
+                issues.append({'field':field,'problem':'unexpected','allowed':sorted(properties)})
+            elif isinstance(rule.get('additionalProperties'),dict):
+                issues.extend(argument_issues(child,rule['additionalProperties'],field))
+    if isinstance(value,list):
+        for limit, test in [('minItems',len(value)<rule.get('minItems',0)),('maxItems',len(value)>rule.get('maxItems',len(value)))]:
+            if test: issues.append({'field':path,'problem':limit,'limit':rule[limit]})
+        for i, child in enumerate(value):
+            if 'items' in rule: issues.extend(argument_issues(child,rule['items'],f'{path}[{i}]'))
+    if type(value) is int:
+        for limit, test in [('minimum',value<rule.get('minimum',value)),('maximum',value>rule.get('maximum',value))]:
+            if test: issues.append({'field':path,'problem':limit,'limit':rule[limit]})
+    return issues
+
+
+def reject_arguments(name, issues, schema_id=None):
+    messages = []
+    for issue in issues[:20]:
+        detail = issue['problem'].replace('_',' ')
+        if 'expected' in issue: detail += '; expected '+issue['expected']
+        if 'allowed' in issue: detail += '; allowed: '+', '.join(issue['allowed'])
+        if 'limit' in issue: detail += ' '+str(issue['limit'])
+        messages.append(issue['field']+': '+detail)
+    recovery = {'action':'correct_arguments','tool':name,
+                'reason':'This call was rejected before execution. Correct the listed fields and resubmit the intended request. This does not establish the result of earlier calls; inspect uncertain effects before replaying them.'}
+    if schema_id:
+        recovery['read_with'] = {'view':'schema','id':schema_id}
+    raise InvalidRecord('Invalid tool arguments. '+'; '.join(messages)+'.',
+                        field_errors=issues[:20], omitted_errors=max(0,len(issues)-20),
+                        execution='not_started', next_step=recovery)
+
+
+def payload_rule(kind):
+    metadata = schema(kind)
+    required, optional = metadata.get('payload_required',[]), metadata.get('payload_optional',[])
+    properties = {key:S for key in required+optional}
+    if kind=='decision': properties.update(project_revision={'type':'integer','minimum':0},work_plan_id=S)
+    for key in {'tokens','human_corrections','duration_ms','context_characters','research_calls','repeated_research','maintenance_ms'} & properties.keys():
+        properties[key] = {'type':'integer','minimum':0}
+    for key in {'queries','assumptions','alternatives'} & properties.keys():
+        properties[key] = {'type':'array','items':S,'maxItems':30}
+    if kind=='review':
+        properties['findings'] = {'type':'array','maxItems':100,'items':obj({'location':S,'issue':S,'severity':{'enum':['minor','major','unknown']}},['location','issue','severity'])}
+    if 'depends_on' in properties:
+        properties['depends_on'] = {'type':'array','maxItems':30,'items':obj({'episode_id':S,'reason':S},['episode_id','reason'])}
+    if 'sprint_id' in properties: properties['sprint_id'] = {'type':['string','null']}
+    for key, rule in properties.items():
+        choices = metadata.get('choices',{})
+        allowed = choices.get(kind+'.'+key,choices.get(key))
+        if allowed: properties[key] = {**rule,'enum':allowed}
+    return obj(properties,required)
+
+
+def validate_write_fields(memory, args):
+    from . import planning, reviews, coverage, documents, direction
+    operation, data = args['operation'], args['data']
+    if operation in {'skill_import','skill_selection'}:
+        from . import skills
+        reference = {'type':['array','null'],'items':obj({'source_id':S,'reason':S},['source_id','reason'])}
+        if operation=='skill_import':
+            properties = {'files':{'type':'array','minItems':1,'maxItems':skills.MAX_FILES,'items':obj({'path':S,'content':S},['path','content'])},
+                          'archive':S,'expected_version':{'type':'integer','minimum':0},
+                          'replace_skill_id':{'type':['string','null']},'actor':S,'evidence':reference}
+            required = ['expected_version']
+        else:
+            metadata = schema(operation)
+            properties = {key:S for key in metadata['required']}
+            properties.update(expected_version={'type':'integer','minimum':0},evidence=reference,
+                              state={'enum':metadata['selection_states']})
+            required = [key for key in metadata['required'] if key!='actor']
+        issues = argument_issues(data,obj(properties,required),'arguments.data')
+        if operation=='skill_import' and ('files' in data)==('archive' in data):
+            issues.append({'field':'arguments.data','problem':'exactly_one','expected':'files or archive'})
+        if issues: reject_arguments('memory_write',issues,operation)
+        return
+    if operation=='map':
+        from . import maps
+        metadata = schema('map')
+        properties = {key:S for key in metadata['required']}
+        for key in ('expected_version','map_version'): properties[key] = {'type':'integer','minimum':0}
+        properties['mode'] = {'enum':['workflow','architecture']}
+        properties['evidence'] = {'type':'array','items':obj({'source_id':S,'reason':S},['source_id','reason'])}
+        for key, descriptor, limit in [('nodes','node',100),('edges','edge',200)]:
+            fields = {field:S for field in metadata[descriptor]}
+            fields['status'] = {'enum':['proposed','confirmed','retired']}
+            fields['kind' if key=='nodes' else 'type'] = {'enum':list(maps.KINDS if key=='nodes' else maps.RELATIONS)}
+            properties[key] = {'type':'array','maxItems':limit,'items':obj(fields,list(fields))}
+        issues = argument_issues(data,obj(properties,[key for key in metadata['required'] if key!='actor']),'arguments.data')
+        if issues: reject_arguments('memory_write',issues,'map')
+        return
+    target = {'start':memory.start,'source':memory.source,'document':memory.document,
+              'record':memory.record,'plan':planning.save,'sprint':planning.save,
+              'progress':planning.progress,'review':reviews.request,'checkpoint':coverage.assess,
+              'reconcile':codex_host.reconcile,'approve_requirements':direction.approve,
+              'sync':documents.sync}.get(operation)
+    if target is None: raise InvalidRecord('This write operation has no argument schema.')
+    parameters = inspect.signature(target).parameters
+    injected = {'self','memory','request_key','session_id'}
+    if operation in {'plan','sprint'}: injected.add('kind')
+    properties = {key:S for key in parameters if key not in injected}
+    for key in {'expected_version','limit','offset','max_seconds'} & properties.keys():
+        properties[key] = {'type':'integer','minimum':0}
+    for key in {'retry','check'} & properties.keys(): properties[key] = {'type':'boolean'}
+    for key in {'requirements','prompt_ids','gap_ids'} & properties.keys(): properties[key] = {'type':'array','items':S}
+    for key, reference in [('evidence','source_id'),('links','event_id')]:
+        if key in properties:
+            properties[key] = {'type':['array','null'] if parameters[key].default is None else 'array',
+                               'items':obj({reference:S,'reason':S},[reference,'reason'])}
+    schema_id = 'agent_check' if operation=='review' else operation
+    if operation=='record':
+        from .core import KINDS
+        properties['kind'] = {'type':'string','enum':sorted(KINDS)}
+        kind = data.get('kind')
+        if isinstance(kind,str) and kind in KINDS:
+            properties['payload'] = payload_rule(kind)
+            schema_id = kind
+        else: properties['payload'] = {'type':'object'}
+    elif operation in {'plan','sprint'}:
+        properties['payload'] = payload_rule(operation)
+    elif operation=='progress':
+        properties['payload'] = obj({'state':S,'next_action':S,'reason':S},['reason'])
+    for key,p in parameters.items():
+        if key in properties and p.default is None and properties[key].get('type')=='string':
+            properties[key] = {'type':['string','null']}
+    if operation in {'plan','record'}:
+        checkpoint = schema('checkpoint')
+        fields = {key:S for key in checkpoint['required']+checkpoint['optional']}
+        for key in ('prompt_ids','requirements','gap_ids'): fields[key] = {'type':'array','items':S}
+        fields['effect'] = {'enum':checkpoint['effects']}
+        properties['checkpoint'] = obj(fields,checkpoint['required'])
+    required = [key for key,p in parameters.items() if key in properties and p.default is inspect.Parameter.empty]
+    issues = argument_issues(data,obj(properties,required),'arguments.data')
+    if issues: reject_arguments('memory_write',issues,schema_id)
+
+
 def bounded(value, budget):
     needed = len(dumps(tool_result(value)))
     if needed>budget:
@@ -75,6 +227,14 @@ def bounded(value, budget):
 
 
 def schema(kind):
+    if kind=='sync':
+        return {'operation':'sync','fields':{'limit':100,'offset':0,'check':False},
+                'rules':'Refresh previously selected Markdown. Use limit 1–1000, a nonnegative offset and a boolean check. check inspects changes without capturing new versions.'}
+    if kind=='approve_requirements':
+        return {'operation':'approve_requirements','required':['requirements','reason','actor','evidence','expected_version'],
+                'types':{'requirements':'List of 1–100 complete requirements.','reason':'Text.','actor':'Text.',
+                         'evidence':'[{source_id, reason}]','expected_version':'Current nonnegative direction version.'},
+                'rules':'Read memory_get direction first. Append only explicitly approved requirements with current approval evidence; this schema does not grant approval.'}
     if kind=='progress':
         return {'operation':'progress','required':['episode_id','expected_version','payload','actor'],
                 'payload':{'state':'Optional work state.','next_action':'Optional complete sentence.','reason':'Required explanation.'},
@@ -220,7 +380,7 @@ def write(memory, operation, request_key, data, session_id=None, receipt_ids=Non
                 result={**result,'checkpoint':assess(memory,session_id=session_id,request_key=request_key,**checkpoint)}
             memory.db.execute('INSERT INTO adapter_requests VALUES (?,?,?)',(request_key,signature,dumps(result)))
     if operation=='record' and data.get('kind')=='outcome' and data.get('payload',{}).get('completion')=='complete':
-        from .reviews import configured, request, launch
+        from .reviews import configured, request, launch, wait_command
         from .planning import latest
         if configured(memory) and latest(memory,data['episode_id'],'work_plan'):
             try:
@@ -230,7 +390,9 @@ def write(memory, operation, request_key, data, session_id=None, receipt_ids=Non
                         return {**result,'agent_check':{'state':'needs_assessment','read_with':{'view':'coverage','session_id':session_id}}}
                 run=request(memory,data['episode_id'],request_key='outcome:'+result['id'],session_id=session_id or '')
                 launch(memory,run)
-                result={**result,'agent_check':{'id':run['id'],'state':run['state'],'wait_command':'project-memory review --db '+str(memory.path)+' --wait '+run['id']}}
+                result={**result,'agent_check':{'id':run['id'],'state':run['state'],
+                    'read_with':{'view':'next','id':data['episode_id']},
+                    **({'wait_command':wait_command(memory,run['id'])} if run['state'] in {'queued','running','cancelling'} else {})}}
             except (MemoryError,OSError,ValueError,subprocess.SubprocessError) as exc:
                 result={**result,'agent_check':{'state':'unavailable','error':str(exc),'note':'The outcome is recorded. Its check is unresolved.'}}
     return result
@@ -239,19 +401,18 @@ def write(memory, operation, request_key, data, session_id=None, receipt_ids=Non
 def dispatch(memory, name, arguments):
     spec=next((t for t in TOOLS if t['name']==name),None)
     if not spec: raise InvalidRecord('Unknown memory tool.')
-    if not isinstance(arguments,dict): raise InvalidRecord('Tool arguments must be an object.')
-    if set(arguments)-spec['inputSchema']['properties'].keys() or set(spec['inputSchema']['required'])-arguments.keys():
-        raise InvalidRecord('Arguments do not match this tool schema.')
-    for key,value in arguments.items():
-        rule=spec['inputSchema']['properties'][key]
-        expected={'string':str,'integer':int,'object':dict,'array':list,'boolean':bool}.get(rule.get('type'))
-        if expected and type(value) is not expected:
-            raise InvalidRecord(f'{key} has the wrong type.')
-        if 'enum' in rule and value not in rule['enum']:
-            raise InvalidRecord(f'{key} must be one of {rule["enum"]}.')
+    issues = argument_issues(arguments,spec['inputSchema'])
+    if issues:
+        operation = arguments.get('operation') if isinstance(arguments,dict) else None
+        schema_id = 'agent_check' if operation=='review' else operation
+        if operation=='record' and isinstance(arguments.get('data'),dict) and isinstance(arguments['data'].get('kind'),str):
+            schema_id = arguments['data']['kind']
+        reject_arguments(name,issues,schema_id)
     args=dict(arguments);budget=args.pop('max_chars',6000)
     if type(budget) is not int or not 500<=budget<=20000: raise InvalidRecord('max_chars must be 500–20000.')
-    if name=='memory_write': return write(memory,**args)
+    if name=='memory_write':
+        validate_write_fields(memory,args)
+        return write(memory,**args)
     if name=='memory_context':
         return memory.context(**args,budget=budget,count_characters=lambda s:len(dumps(tool_result(json.loads(s)))))
     view=args.pop('view');rid=args.pop('id',None);limit=args.pop('limit',10);offset=args.pop('offset',0)
@@ -291,8 +452,8 @@ def dispatch(memory, name, arguments):
     elif view=='reviews':
         from .reviews import listing
         result=listing(memory,rid,limit,offset)
-        for run in result['runs']:
-            if run['report']:run['report']={'verdict':run['report']['verdict'],'summary':run['report']['summary'],'read_full_with':{'view':'record','id':run['id'],'max_chars':20000}}
+        for run in result['runs']+([result['current']] if result.get('current') else []):
+            if run.get('report'):run['report']={'verdict':run['report']['verdict'],'summary':run['report']['summary'],'read_full_with':{'view':'record','id':run['id'],'max_chars':20000}}
         while len(result['runs'])>1 and len(dumps(tool_result(result)))>budget:
             result['runs'].pop();result['next_offset']-=1;result['more']=True
     elif view in {'board','sprints','next'}:

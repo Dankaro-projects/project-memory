@@ -7,7 +7,7 @@ from .core import InvalidRecord, Conflict, dumps, _time
 
 
 UI_SCRIPTS = ('state.js', 'records.js', 'api.js', 'sync.js', 'navigation.js',
-              'board.js', 'editor.js', 'reviews.js', 'approvals.js', 'skills.js', 'map.js', 'reading.js', 'overview.js', 'boot.js')
+              'board.js', 'editor.js', 'reviews.js', 'approvals.js', 'skills.js', 'map.js', 'dependencies.js', 'reading.js', 'overview.js', 'boot.js')
 
 
 def html_template():
@@ -140,7 +140,10 @@ def export_html(memory, destination, *, episode_id=None, subject=None, since=Non
                 for ep in episodes for mode in ('workflow', 'architecture')
                 if memory.db.execute('SELECT 1 FROM sources WHERE source_key=?',
                     ('workspace-map:' + ep['id'] + ':' + mode,)).fetchone()]
+        from .project_dependencies import inventory
         snapshot = {'project': memory.project, 'exported_at': memory.now(), 'requirements': memory.requirements,
+                    'dependencies': inventory(memory, episode_ids={ep['id'] for ep in episodes},
+                                              source_ids=source_ids if include_bodies else set()),
                     'scope': {'episode_id': episode_id, 'subject': subject, 'since': since, 'until': until},
                     'source_bodies_included': include_bodies, 'maps': maps, 'records': rows, 'pending': pending, 'work':work, 'sprints':sprints}
         encoded = dumps(snapshot).replace('&', '\\u0026').replace('<', '\\u003c').replace('>', '\\u003e')
