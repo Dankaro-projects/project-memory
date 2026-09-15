@@ -10,13 +10,13 @@ The local package contains the SQLite database interface, MCP adapter, hooks and
 | [Smithery](https://smithery.ai/servers/msuteu/project-memory) | Install the local server bundle. |
 | [Glama](https://glama.ai/mcp/servers/Dankaro-projects/project-memory) | Inspect the listed tools; use local setup for project memory. |
 
-GitHub, PyPI, the registry, Smithery and Glama publication were checked for beta 8 on 14 September 2026. Provider availability and imported listings can change independently of a release.
+GitHub, PyPI, the registry, Smithery and Glama publication were checked for beta 9 on 15 September 2026. Provider availability and imported listings can change independently of a release.
 
 ## Tested clients
 
 | Client | Verified boundary and limitation |
 | --- | --- |
-| Codex | Native MCP and hook capture passed on beta 8. Earlier live macOS checks exercised all nine lifecycle events, interruption recovery and compaction on Codex 0.153.4; those cases were not all repeated in beta 8. |
+| Codex | Native MCP and hook capture passed on beta 9 in two existing projects. A fresh beta 9 session was interrupted after a checked write, resumed without repeating it and retained the unknown process outcome. Earlier macOS checks exercised all nine lifecycle events and compaction on Codex 0.153.4; the complete lifecycle suite was not repeated in beta 9. |
 | Claude Code | A live 2.1.270 CLI session exercised native retrieval, capture and six applicable lifecycle event types. Simulated payloads cover the other events. Live interruption and compaction remain unverified. |
 | Other local MCP clients | Generic stdio and the actual bundled entry point are tested. Installation inside each desktop client remains unverified. |
 

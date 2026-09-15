@@ -1,6 +1,6 @@
 # Testing and limitations
 
-The regression suite checks immutable history, evidence freshness, subject boundaries, interruption receipts, recovery, setup, packaging and the interactive workspace. The [beta 8 release workflow](https://github.com/Dankaro-projects/project-memory/actions/runs/34884312832) passed 184 Python tests across Windows, macOS and Linux on Python 3.11 and 3.14, plus installed-wheel and browser checks. A passing suite does not establish daily productivity.
+The regression suite checks immutable history, evidence freshness, subject boundaries, interruption receipts, recovery, setup, packaging and the interactive workspace. The [beta 9 release workflow](https://github.com/Dankaro-projects/project-memory/actions/runs/34960179332) passed 228 Python tests across Windows, macOS and Linux on Python 3.11 and 3.14, plus installed-wheel and browser checks. A passing suite does not establish daily productivity.
 
 [Contributing](../CONTRIBUTING.md) provides the local test commands. `tests/integration/` contains synthetic document, failure, recovery and native-host cases. Generated results, databases, screenshots and host logs stay in ignored local directories. They are not public product documentation or release inputs.
 
@@ -11,13 +11,13 @@ These opt-in cases use the signed-in Codex account and consume model usage. Run 
 ```sh
 project-memory setup --project "$TEST_PROJECT" --client codex --trust --no-view
 python -m tests.integration.codex_documents --project "$TEST_PROJECT" --output results/live-documents
-python -m tests.integration.codex_interrupt --project "$TEST_PROJECT" --output results/live-interruption
+python -m tests.integration.codex_interrupt --project "$TEST_PROJECT" --output results/live-interruption --planned
 python -m tests.integration.codex_lifecycle --project "$TEST_PROJECT" --output results/live-lifecycle
 project-memory doctor --project "$TEST_PROJECT"
 python -m tests.integration.context_audit results/live-interruption
 ```
 
-`TEST_PROJECT` must name an absolute path to an empty test directory. The interruption case verifies an actual side effect, stops the host and recovers through another host process. Unknown process completion remains unknown. Inspect existing output and side effects before retrying an interrupted run.
+`TEST_PROJECT` must name an absolute path to an empty test directory outside another configured project, so parent hooks do not overlap the fixture hooks. The interruption case verifies an actual side effect, stops the host and recovers through another host process. Unknown process completion remains unknown. Inspect existing output and side effects before retrying an interrupted run.
 
 Codex capture, interruption recovery and compaction have been exercised in a live macOS host. Claude Code has a bounded live CLI check for applicable lifecycle events; live Claude interruption and compaction remain unverified. See [compatibility](distribution.md) for the tested scope. Payload simulations do not substitute for host execution.
 
