@@ -271,4 +271,192 @@ class CodexTests(unittest.TestCase):
         with self.assertRaises(BudgetTooSmall):dispatch(self.m,'memory_get',{'view':'record','id':source['id'],'max_chars':500})
 
 
+class HookRuleTests(unittest.TestCase):
+    """The rules the assistant receives before an edit, composed at the assistant budget."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
+        self.root = Path(self.temp.name).resolve()
+        self.m = Memory.create(self.root / '.memory' / 'memory.sqlite', 'Hook rules', ['Preserve recorded scope.'])
+        codex_host.initialize(self.m)
+        source = self.m.source('user-scope', 'Scope', 'User instruction', 'Change only the parser.', 'user')
+        self.evidence = [{'source_id': source['id'], 'reason': 'The user defines the scope.'}]
+        self.lessons = self.m.start('Lessons', 'Collect parser lessons.', 'learning',
+                                    'Lessons are reviewed.', subject='code')['id']
+        self.counter = 0
+
+    def tearDown(self):
+        self.m.close()
+        shutil.rmtree(self.temp.name, ignore_errors=True)
+
+    def key(self):
+        self.counter += 1
+        return 'key-' + str(self.counter)
+
+    def version(self):
+        return self.m.episode(self.lessons)['version']
+
+    def rule(self, do='Run the Unicode fixture first.', **triggers):
+        """Record a lesson and accept it, so that it becomes an active guard."""
+        payload = {'when': 'Editing the parser.', 'do': do, 'because': 'Earlier edits lost characters.',
+                   'exceptions': 'Documentation changes.', **triggers}
+        lesson = self.m.record(self.lessons, 'lesson', payload, expected_version=self.version(),
+                               request_key=self.key(), actor='assistant', evidence=self.evidence)['id']
+        self.m.record(self.lessons, 'lesson_review', {'lesson_id': lesson, 'status': 'accepted',
+                                                      'reason': 'The user reviewed the lesson.'},
+                      expected_version=self.version(), request_key=self.key(), actor='workspace-user',
+                      evidence=self.evidence, links=[{'event_id': lesson, 'reason': 'This review assesses the lesson.'}])
+        return lesson
+
+    def edit(self, session='session', call='call-1', target='src/app.py'):
+        event = {'hook_event_name': 'PreToolUse', 'session_id': session, 'turn_id': 'turn', 'tool_name': 'Edit',
+                 'tool_use_id': call, 'tool_input': {'file_path': str(self.root / target)}}
+        return codex_host.capture(self.m, event, host='claude')
+
+    def context(self, result):
+        return result.get('hookSpecificOutput', {}).get('additionalContext', '')
+
+    def shown(self):
+        return [json.loads(row[0])['lesson_id'] for row in self.m.db.execute(
+            "SELECT payload FROM host_receipts WHERE event_name='GuardShown' ORDER BY rowid")]
+
+    def test_the_hook_carries_the_assistant_rules_once_in_a_session(self):
+        assistant = self.rule(roles=['assistant'], paths=['src/**'], do='Run the Unicode fixture first.')
+        worker = self.rule(roles=['worker'], paths=['src/**'], do='Read the worker checklist.')
+        without_roles = self.rule(paths=['src/**'], do='Keep the tagged exception.')
+        first = self.context(self.edit())
+        self.assertIn(assistant, first)
+        self.assertIn('Run the Unicode fixture first.', first)
+        self.assertIn(without_roles, first)
+        self.assertIn('Keep the tagged exception.', first)
+        self.assertNotIn(worker, first)
+        self.assertLessEqual(len(first), codex_host.HOOK_CHARACTERS)
+        self.assertEqual(self.context(self.edit(call='call-2')), '')
+        other = self.context(self.edit(session='other', call='call-3'))
+        self.assertIn(assistant, other)
+        self.assertEqual(self.context(self.edit(session='third', call='call-4', target='docs/notes.md')), '')
+        self.assertEqual(sorted(self.shown()), sorted([assistant, without_roles] * 2))
+
+    def test_a_rule_that_does_not_fit_is_named_and_waits_for_the_next_edit(self):
+        rules = [self.rule(roles=['assistant'], paths=['src/**'], do=f'Run check number {index}.' + ' Keep the recorded conditions.' * 3)
+                 for index in range(9)]
+        first = self.context(self.edit())
+        carried = self.shown()
+        self.assertTrue(0 < len(carried) < len(rules))
+        self.assertLessEqual(len(first), codex_host.HOOK_CHARACTERS)
+        self.assertIn('were not carried here', first)
+        # Every rule left out is named, and none of them is recorded as shown.
+        for lesson in rules:
+            self.assertIn(lesson, first)
+        second = self.context(self.edit(call='call-2'))
+        later = [lesson for lesson in self.shown() if lesson not in carried]
+        self.assertTrue(later)
+        self.assertTrue(all(lesson in second for lesson in later))
+        self.assertEqual(len(set(self.shown())), len(self.shown()))
+
+    def prompt(self, session='session', text='Repair the parser now.'):
+        event = {'hook_event_name': 'UserPromptSubmit', 'session_id': session, 'prompt_id': 'p1', 'prompt': text}
+        return self.context(codex_host.capture(self.m, event, host='claude'))
+
+    def start(self, session='session'):
+        event = {'hook_event_name': 'SessionStart', 'session_id': session}
+        return self.context(codex_host.capture(self.m, event, host='claude'))
+
+    def test_the_session_start_hook_carries_the_base_text_of_the_assistant(self):
+        from memory_module import guards, workspace
+        context = self.start()
+        self.assertIn(guards.shipped_base('assistant'), context)
+        self.assertLessEqual(len(context), codex_host.HOOK_CHARACTERS)
+        workspace.action(self.m, 'instructions', {'role': 'assistant', 'text': 'Record every check you run.'}, 'base-1')
+        self.assertIn('Record every check you run.', self.start(session='second'))
+        self.assertNotIn(guards.shipped_base('assistant'), self.start(session='third'))
+
+    def test_a_rule_of_the_role_reaches_the_prompt_hook(self):
+        from memory_module import guards
+        rule = self.rule(roles=['assistant'], do='State the recorded scope before editing.')
+        keyword = self.rule(roles=['assistant'], keywords=['parser'], do='Read the parser fixture first.')
+        other = self.rule(roles=['assistant'], paths=['src/**'], do='Run the Unicode fixture first.')
+        context = self.prompt()
+        self.assertIn('State the recorded scope before editing.', context)
+        self.assertIn('Read the parser fixture first.', context)
+        self.assertNotIn(other, context)
+        self.assertIn('Memory session: session.', context)
+        self.assertLessEqual(len(context), codex_host.HOOK_CHARACTERS)
+        # Each rule is shown once in a session, so the next prompt repeats neither of them.
+        self.assertNotIn(rule, self.prompt())
+        self.assertEqual(sorted(self.shown()), sorted([rule, keyword]))
+        self.assertLessEqual(guards.compose(self.m, 'assistant', text='Repair the parser now.')['used'],
+                             guards.ROLE_BUDGETS['assistant'])
+
+    def test_a_rule_that_never_fits_is_reported_although_no_rule_is_carried(self):
+        long_rule = self.rule(roles=['assistant'], paths=['src/**'],
+                              do='Run the Unicode fixture first. ' + 'Keep every recorded exception. ' * 25)
+        context = self.context(self.edit())
+        self.assertIn(long_rule, context)
+        self.assertIn('were not carried here', context)
+        self.assertEqual(self.shown(), [])
+        # The panel reports the same rule as left out, with the reason, instead of as waiting for a run.
+        from memory_module import api
+        role = api.instructions(self.m)['roles']['assistant']
+        self.assertEqual([entry['lesson_id'] for entry in role['omitted']], [long_rule])
+        self.assertIn('no run of this role can carry it', role['omitted'][0]['reason'])
+
+    def test_the_rule_text_of_the_hook_stays_within_the_assistant_budget(self):
+        from memory_module import guards
+        for index in range(8):
+            self.rule(roles=['assistant'], paths=['src/**'],
+                      do=f'Run check number {index}.' + ' Keep the recorded conditions.' * 3)
+        context = self.context(self.edit())
+        rules = context.split('These accepted rules also apply')[0].strip()
+        self.assertLessEqual(len(rules), guards.ROLE_BUDGETS['assistant'])
+        self.assertIn('were not carried here', context)
+        self.assertLessEqual(len(context), codex_host.HOOK_CHARACTERS)
+
+    def test_the_composed_rules_stay_within_the_assistant_budget(self):
+        from memory_module import guards
+        for index in range(3):
+            self.rule(roles=['assistant'], paths=['src/**'], do=f'Run check number {index}.')
+        result = codex_host.assistant_rules(self.m, session_id='direct', targets=['src/app.py'], root=self.root)
+        composed = guards.compose(self.m, 'assistant', paths=['src/app.py'], root=self.root)
+        self.assertEqual(result['rule_ids'], composed['rule_ids'])
+        self.assertLessEqual(composed['used'], guards.ROLE_BUDGETS['assistant'])
+        self.assertEqual(codex_host.assistant_rules(self.m, session_id='direct', targets=[], root=self.root)['text'], '')
+
+    def cost(self, call):
+        """The result of one hook call and the number of database statements it ran."""
+        statements = []
+        self.m.db.set_trace_callback(statements.append)
+        try:
+            return call(), len(statements)
+        finally:
+            self.m.db.set_trace_callback(None)
+
+    def test_an_edit_the_rules_do_not_cover_costs_almost_nothing(self):
+        """A rule is selected by its triggers before its acceptance is confirmed, so an edit outside
+        the recorded paths does not pay the freshness check of every accepted rule."""
+        for index in range(24):
+            self.rule(roles=['assistant'], paths=['src/**'], do=f'Run check number {index}.')
+        (outside, outside_cost) = self.cost(lambda: self.context(self.edit(target='docs/notes.md')))
+        (covered, covered_cost) = self.cost(lambda: self.context(self.edit(call='call-2')))
+        self.assertEqual(outside, '')
+        self.assertIn('Run check number 23.', covered)
+        self.assertLess(outside_cost * 4, covered_cost)
+        self.assertLess(outside_cost, 60)
+
+    def test_a_later_edit_in_the_same_session_does_not_compose_the_rules_again(self):
+        """Every rule the session has seen is filtered out before the freshness check, so the cost of
+        the rules falls on the first edit and not on every edit that follows."""
+        for index in range(24):
+            self.rule(roles=['assistant'], paths=['src/**'], do=f'Run check number {index}.')
+        (first, first_cost) = self.cost(lambda: self.context(self.edit()))
+        self.assertIn('Run check number 23.', first)
+        costs = []
+        for call in range(2, 6):
+            (context, cost) = self.cost(lambda call=call: self.context(self.edit(call='call-%d' % call)))
+            costs.append(cost)
+            self.assertNotIn('Run check number 23.', context)
+        self.assertLess(max(costs) * 4, first_cost)
+        self.assertLess(max(costs), 80)
+
+
 if __name__=='__main__':unittest.main()

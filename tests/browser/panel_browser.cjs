@@ -210,10 +210,43 @@ async function views(page, kind, expected) {
 
   await go(page, "#learning");
   const learning = await text(page, "#main");
-  assert.match(learning, /1 accepted guard is active, and 1 guard recorded a recurrence\./);
+  assert.match(learning, /2 accepted guards are active, and 1 guard recorded a recurrence\./);
   assert.match(learning, /Recurred 1 time/);
   assert.match(learning, /Failures without lessons/);
-  step(`${kind}: Learning shows the accepted guard, its recurrence and the failures without lessons`);
+  step(`${kind}: Learning shows the accepted guards, the recurrence and the failures without lessons`);
+
+  // Instructions: one panel per role with its base text, its rules, its omissions and its budget.
+  assert.equal(await page.locator('#main [data-key^="instructions-"]').count(), 3);
+  const assistant = await text(page, '[data-key="instructions-assistant"]');
+  assert.match(assistant, /This prompt carries 1 rule and uses \d+ of 600 characters\./);
+  assert.match(assistant, /The shipped file agents\/assistant\.md is in force\./);
+  assert.match(assistant, /2 runs composed it/);
+  const reviewer = await text(page, '[data-key="instructions-reviewer"]');
+  assert.match(reviewer, /You saved version 1 of this text in this project\./);
+  assert.match(reviewer, /Give one verdict of pass, changes required or uncertain\./);
+  assert.match(reviewer, /Unproven/);
+  const worker = await text(page, '[data-key="instructions-worker"]');
+  assert.match(worker, /uses \d+ of 1,200 characters/);
+  assert.match(worker, /1 further accepted rule is composed only into a run that matches the triggers\./);
+  assert.match(worker, /Ineffective/);
+  assert.match(worker, /Recurrences before 1, after 1/);
+  step(`${kind}: the Instructions section states the base text, the rules in force and the budget of each role`);
+
+  // On a phone the base text scrolls inside its own block and the rules stay on screen.
+  await page.setViewportSize({ width: 390, height: 900 });
+  await page.waitForTimeout(250);
+  const panel = await page.evaluate(() => {
+    const card = document.querySelector('[data-key="instructions-reviewer"]');
+    const base = card.querySelector(".kn-base");
+    const rule = card.querySelector(".kn-rule");
+    return { card: card.getBoundingClientRect().right, base: base.getBoundingClientRect().right,
+      rule: rule ? rule.getBoundingClientRect().right : null };
+  });
+  assert.ok(panel.card <= 390, `${kind}: the reviewer panel ends at ${Math.round(panel.card)} pixels on a 390 pixel screen`);
+  assert.ok(panel.base <= 390, `${kind}: the base text block ends at ${Math.round(panel.base)} pixels on a 390 pixel screen`);
+  assert.ok(panel.rule !== null && panel.rule <= 390, `${kind}: a composed rule sits off a 390 pixel screen: ${panel.rule}`);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  step(`${kind}: the Instructions section keeps the base text and the rules on a 390 pixel screen`);
 
   await go(page, "#agents");
   assert.match(await text(page, "#main .sentence"), /configured hosts can run work now/);
@@ -243,7 +276,7 @@ async function views(page, kind, expected) {
   step(`${kind}: Records and Requirements render their current state`);
 
   for (const width of [1440, 768, 390, 320]) {
-    for (const hash of ["#now", "#plan", "#work", "#architecture", "#decisions"]) {
+    for (const hash of ["#now", "#plan", "#work", "#architecture", "#decisions", "#learning"]) {
       await go(page, hash);
       await noOverflow(page, width, `${kind} ${hash}`);
     }
@@ -321,16 +354,33 @@ async function editing(page, ids, posts) {
   await field(page, "paths").fill("docs/releases/**");
   await field(page, "keywords").fill("release note");
   await field(page, "failure_type").fill("unclear_wording");
+  await field(page, "role_reviewer").check();
   await page.locator("#form-save").click();
   await savedToast(page, /lesson is accepted/);
-  await page.waitForFunction(() => /2 accepted guards are active/.test(document.querySelector("#main .view:not(.pending)").textContent), null, { timeout: 15000 });
+  await page.waitForFunction(() => /3 accepted guards are active/.test(document.querySelector("#main .view:not(.pending)").textContent), null, { timeout: 15000 });
   assert.match(await text(page, "#main"), /release note/);
   const guard = await page.evaluate(async (id) => {
     const learning = await Panel.get("learning");
     return learning.guards.find((entry) => entry.lesson_id === id);
   }, ids.proposed_lesson);
-  assert.deepEqual([guard.paths, guard.keywords, guard.failure_type], [["docs/releases/**"], ["release note"], "unclear_wording"]);
-  step("a proposed lesson is accepted with its path, keyword and failure type triggers");
+  assert.deepEqual([guard.paths, guard.keywords, guard.failure_type, guard.roles],
+    [["docs/releases/**"], ["release note"], "unclear_wording", ["reviewer"]]);
+  assert.match(await text(page, '[data-key="instructions-reviewer"]'),
+    /1 further accepted rule is composed only into a run that matches the triggers\./);
+  step("a proposed lesson is accepted with its path, keyword and failure type triggers and with the reviewer role");
+
+  // Saving a new version of the base text of one role.
+  await page.locator('[data-key="form:instructions:reviewer"]').click();
+  await page.waitForSelector("#form-dialog[open] textarea[name=text]");
+  assert.match(await field(page, "text").inputValue(), /You are the reviewer in this project\./);
+  await field(page, "text").fill("You are the reviewer in this project. State the evidence for every judgement and give one verdict.");
+  await field(page, "reason").fill("The user shortens the reviewer instructions.");
+  await page.locator("#form-save").click();
+  await savedToast(page, /Version 2 of the reviewer instructions is saved/);
+  await page.waitForFunction(() => /You saved version 2 of this text/.test(
+    document.querySelector('[data-key="instructions-reviewer"]').textContent), null, { timeout: 15000 });
+  assert.match(await text(page, '[data-key="base-reviewer"]'), /State the evidence for every judgement and give one verdict\./);
+  step("a new version of the reviewer base text is saved and the panel shows it");
 
   // Allowing the blocked path of the scope block.
   await go(page, "#now");

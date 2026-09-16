@@ -345,6 +345,49 @@ class WorkspaceTests(unittest.TestCase):
             unfinished=fake_run(self.m,ep,state='failed',project=self.root)
             with self.assertRaises(InvalidRecord):action(self.m,'request_work_review',{'run_id':unfinished},'rereview-failed')
         requested.assert_called_once()
+    def test_instructions_action_saves_a_base_version_for_a_role_as_the_user(self):
+        first=action(self.m,'instructions',{'role':'worker','text':'Work only on the files the plan names.','reason':'The user writes the worker text.'},'base-worker')
+        self.assertEqual((first['role'],first['version'],first['actor'],first['source']),('worker',1,'workspace-user','instructions-base:worker'))
+        self.assertEqual(action(self.m,'instructions',{'role':'worker','text':'Work only on the files the plan names.','reason':'The user writes the worker text.'},'base-worker'),first)
+        value=guards.instructions(self.m,'worker')
+        self.assertEqual((value['base'],value['base_source'],value['base_version']),('Work only on the files the plan names.','instructions-base:worker',1))
+        self.assertEqual((first['text'],first['rule_ids'],first['omitted']),(value['text'],[],[]))
+        second=action(self.m,'instructions',{'role':'worker','text':'Work only on the files the plan names, and run the fixture.'},'base-worker-2')
+        self.assertEqual((second['version'],guards.base_text(self.m,'worker')['version']),(2,2))
+        rows=self.m.db.execute("SELECT origin,version FROM sources WHERE source_key='instructions-base:worker' ORDER BY version").fetchall()
+        self.assertEqual([(row['origin'],row['version']) for row in rows],[('user',1),('user',2)])
+        self.assertEqual(guards.base_text(self.m,'reviewer')['source'],'agents/reviewer.md')
+        with self.assertRaises(Conflict):action(self.m,'instructions',{'role':'worker','text':'A third text of the worker role.'},'base-worker')
+    def test_instructions_action_refuses_another_actor_and_unusable_text(self):
+        refused=[{'role':'worker','text':'Work only on the files the plan names.','actor':'assistant'},
+                 {'role':'author','text':'Work only on the files the plan names.'},
+                 {'role':'worker','text':'   '},{'role':'worker','text':42},{'role':'worker'}]
+        for index,data in enumerate(refused):
+            with self.subTest(data=str(data)[:60]),self.assertRaises(InvalidRecord):action(self.m,'instructions',data,'refused-%d'%index)
+        self.assertEqual(self.m.db.execute("SELECT count(*) FROM sources WHERE source_key LIKE 'instructions-base:%'").fetchone()[0],0)
+        action(self.m,'instructions',{'role':'worker','text':'Work only on the files the plan names.'},'base')
+        with self.assertRaises(InvalidRecord):action(self.m,'instructions',{'role':'worker','text':'Work only on the files the plan names.'},'base-again')
+        self.assertEqual(self.m.db.execute("SELECT count(*) FROM sources WHERE source_key='instructions-base:worker'").fetchone()[0],1)
+        self.assertEqual(guards.instructions(self.m,'worker')['base'],'Work only on the files the plan names.')
+    def test_a_rule_accepted_by_the_user_follows_the_saved_base_text(self):
+        action(self.m,'instructions',{'role':'worker','text':'Work only on the files the plan names.'},'base')
+        lessons=self.m.start('Lessons','Collect parser lessons.','learning','Lessons are reviewed.',subject='code')['id']
+        source=self.m.source('lesson-evidence','Fixture result','The tagged fixture failed.','The recorded run lost characters.','tool',subject='code')
+        lesson=self.m.record(lessons,'lesson',{'when':'Editing the parser.','do':'Run the tagged fixture first.','because':'Earlier edits lost characters.',
+                                               'exceptions':'Documentation changes.','pattern_type':'recovery'},
+                             expected_version=self.m.episode(lessons)['version'],actor='assistant',request_key='role-lesson',
+                             evidence=[{'source_id':source['id'],'reason':'The fixture result supports the lesson.'}])
+        action(self.m,'lesson_review',{'lesson_id':lesson['id'],'expected_version':self.m.episode(lessons)['version'],'status':'accepted',
+                                       'reason':'The user accepts the rule.','roles':['worker']},'accept-rule')
+        composed=guards.instructions(self.m,'worker')
+        self.assertTrue(composed['text'].startswith('Work only on the files the plan names.'))
+        self.assertIn(guards.RULES_HEADING,composed['text'])
+        self.assertEqual(composed['rule_ids'],[lesson['id']])
+        saved=action(self.m,'instructions',{'role':'worker','text':'Work only on the files the plan names, and run the fixture.'},'base-2')
+        self.assertEqual(saved['rule_ids'],[lesson['id']])
+        self.assertEqual(saved['text'],guards.instructions(self.m,'worker')['text'])
+        with self.assertRaises(InvalidRecord):action(self.m,'lesson_review',{'lesson_id':lesson['id'],'expected_version':self.m.episode(lessons)['version'],
+                                                                             'status':'rejected','reason':'The user changes the roles.','roles':['reviewer']},'reject-with-roles')
     def test_live_api_uses_origin_csrf_versions_and_shared_history(self):
         ready=queue.Queue()
         def serve():

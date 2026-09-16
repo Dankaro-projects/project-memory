@@ -67,11 +67,43 @@ An unavailable host during delegated work reroutes the run once to the other con
 
 ## Guards
 
-An accepted lesson with at least one trigger is a guard. Triggers are paths, keywords and a failure type, and you set them when you accept the lesson.
+An accepted lesson with at least one trigger is a guard. Triggers are paths, keywords, a failure type and agent roles, and you set them when you accept the lesson.
 
 A guard matches a decision when one of the plan paths matches or overlaps its pattern, or when one of its keywords appears as a whole word, ignoring case, in the objective, the completion criterion, the decision, its reason or the plan scope. Every matching guard must appear in the `lessons_considered` list of the decision with `yes` or `no` and a reason. Otherwise the decision is rejected, and the error names the lessons to read. A decision that matches no guard is unaffected.
 
 Project Memory also reports when a failure type recurs after its lesson was accepted, and when a failed outcome has no lesson and no later complete result. Both appear in the Learning view. A recurring guard shows that the lesson did not prevent the failure; it does not decide what to do about it.
+
+## Instructions and rules
+
+Every run receives the instructions of its role. The roles are `assistant` for the session that works with you, `worker` for delegated work, and `reviewer` for every check and work review.
+
+The instructions are the base text of the role, followed by the accepted rules of that role:
+
+- The base text is the file shipped with Project Memory, `memory_module/agents/<role>.md`, unless you saved a project version in the Learning view of the control panel. Only you can save it, every version stays, and the latest version is the one in force.
+- A rule is a lesson that you accepted with one or more roles. A lesson with no role is a guard and is never composed into a prompt.
+- A prompt carries at most eight rules for one role, within 600 characters for the assistant, 1,200 for the worker and 900 for the reviewer. Rules with the fewest recurrences after acceptance come first, then the most recently accepted. A rule that does not fit is reported with its reason, in the Learning view and in the metrics of the run. A rule that is longer than the budget of its role is reported as left out in every run, because no run can carry it. Nothing is dropped in silence.
+- More than eight accepted rules for one role is an attention item in the Now view, and so is a rule that the counts judge ineffective.
+- A rule with paths, keywords or a failure type is composed only into a run that matches it. A rule with a role and no other trigger is composed into every run of that role.
+
+Each run stores the exact text it received as a source `instructions:<role>` and records the rule identifiers in its metrics, so an outcome can be read against the instructions that produced it. The source keys `instructions-base:<role>` and `instructions:<role>` are reserved: you write the base text in the control panel and Project Memory writes the text of a run, so an agent cannot replace the instructions it is judged against.
+
+The assistant receives the base text of its role when a session starts and again after a compaction. It receives the rules of the role when it submits a prompt, and the rules of the files it is about to change before an edit. Each rule is carried once in a session, and a rule that did not fit is named instead of hidden.
+
+A rule of the worker travels with delegated work, and a rule of the reviewer with a check. Each rule reaches a prompt once: a rule the cross review already carries among its constraints is reported as left out rather than written twice, and a rule composed into the instructions of a worker is not repeated in its snapshot.
+
+Write the current text of each role to a folder for reading:
+
+```sh
+project-memory instructions --output instructions
+```
+
+The command reads the database and writes one Markdown file per role. The database stays the source of truth.
+
+## Rule effectiveness
+
+For each rule, Project Memory counts the runs that composed it, the verdicts of those runs, and the recurrences of its failure type before and after acceptance. A delegated work run reports a result rather than a verdict, so the verdict of the cross review that judged that work counts for the rules the worker received. From these counts it reports a state of effective, unproven or ineffective. A single recurrence decides nothing: the comparison before and after acceptance is used from two recurrences, and a state that rests on small counts says so. The counts appear in the Learning view of the control panel and in the guards view of `memory_get`.
+
+No model judges a rule. Pending and uncertain runs stay out of the ratio, every denominator is reported, and a rule with few runs is reported as unproven together with its counts. A rule whose failure type keeps recurring is returned to you as ineffective rather than staying in force unexamined. Retiring it is your decision.
 
 ## Scope
 

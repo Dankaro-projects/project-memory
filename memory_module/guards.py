@@ -1,8 +1,16 @@
-"""Lesson triggers, accepted guards, decision acknowledgement and file scope enforcement.
+"""Lesson triggers, accepted guards, decision acknowledgement, file scope enforcement and the rules composed into agent prompts.
 
 An accepted lesson with at least one trigger (paths, keywords or a failure type)
 becomes a guard. Decisions whose work matches a guard must acknowledge it, and
 edit tools are checked against the path patterns of the session's current work.
+
+An accepted lesson that names roles (assistant, worker or reviewer) is also a
+rule. `compose` selects the rules a run triggers, orders them so that the same
+run always produces the same text, and fills a character budget per role.
+`instructions` puts the base text of the role before those rules, and
+`effectiveness` reports counts per rule so that the user can retire a rule that
+does not help. Nothing here writes a rule: an agent proposes a lesson and only
+the user accepts it.
 
 Boundary: edit targets come from the structured fields of edit tools (including
 file writing tools of MCP servers, whose names carry an `mcp__<server>__`
@@ -27,6 +35,7 @@ patterns inside the root are compared relative to it.
 """
 import json
 import os
+from pathlib import Path
 import posixpath
 import re
 from functools import lru_cache
@@ -34,6 +43,19 @@ from functools import lru_cache
 from .core import InvalidRecord, MemoryError, _digest, _text
 
 TRIGGERS = ('paths', 'keywords', 'failure_type')
+# A lesson review may replace the triggers and the roles of the lesson it accepts.
+REVIEW_FIELDS = TRIGGERS + ('roles',)
+RULE_ROLES = ('assistant', 'worker', 'reviewer')
+ROLE_BUDGETS = {'assistant': 600, 'worker': 1200, 'reviewer': 900}
+MAX_ACTIVE_RULES = 8
+RULES_HEADING = 'Rules accepted in this project for this role:'
+BASE_SOURCE_PREFIX = 'instructions-base:'
+RUN_SOURCE_PREFIX = 'instructions:'
+SHIPPED_BASE_SOURCE = 'agents/{role}.md'
+VERDICTS = ('pass', 'changes_required', 'uncertain')
+EFFECTIVENESS_MINIMUM = 3
+# One recurrence is not a trend, so the comparison before and after acceptance needs at least this many.
+RECURRENCE_MINIMUM = 2
 EDIT_TOOLS = frozenset({'Edit', 'Write', 'MultiEdit', 'NotebookEdit', 'apply_patch', 'ApplyPatch',
                         'edit_file', 'write_file', 'create_file'})
 MCP_EDIT_TOOLS = EDIT_TOOLS | {'move_file'}
@@ -95,6 +117,8 @@ def validate_triggers(payload):
         validate_keywords(payload['keywords'])
     if 'failure_type' in payload:
         _text(payload['failure_type'], 'failure_type', 200)
+    if 'roles' in payload:
+        validate_roles(payload['roles'])
 
 
 def validate_considered(value):
@@ -268,39 +292,102 @@ def plan_paths(memory, episode_id):
     return list(plan.get('paths', [])) if plan else []
 
 
+CANDIDATE_SQL = """SELECT l.id AS lesson_id, l.payload AS lesson, l.episode_id, l.subject,
+        r.id AS review_id, r.payload AS review, r.created_at AS accepted_at
+    FROM events l JOIN events r ON r.id = (SELECT x.id FROM events x WHERE x.kind='lesson_review'
+        AND json_extract(x.payload,'$.lesson_id')=l.id ORDER BY x.rowid DESC LIMIT 1)
+    WHERE l.kind='lesson' AND NOT EXISTS (SELECT 1 FROM events n WHERE n.supersedes=l.id)
+      AND json_extract(r.payload,'$.status')='accepted'
+    ORDER BY r.created_at, l.rowid"""
+
+
+def _state_key(memory):
+    """A cheap key that changes whenever a record or a source changes, so a cached read is never stale."""
+    row = memory.db.execute('SELECT (SELECT coalesce(max(rowid),0) FROM events), '
+                            '(SELECT coalesce(max(rowid),0) FROM sources)').fetchone()
+    return (row[0], row[1])
+
+
+def _cached(memory, name, key):
+    """The cached value of this connection for the current state, or None."""
+    store = getattr(memory, '_guard_cache', None)
+    if store is None:
+        return None
+    entry = store.get(name)
+    return entry[1] if entry and entry[0] == key else None
+
+
+def _store(memory, name, key, value):
+    """Keep a value for this connection until a record or a source changes."""
+    store = getattr(memory, '_guard_cache', None)
+    if store is None:
+        store = {}
+        try:
+            memory._guard_cache = store
+        except AttributeError:
+            return value
+    store[name] = (key, value)
+    return value
+
+
+def candidate_guards(memory):
+    """Accepted lessons with at least one trigger or role, before the evidence freshness check.
+
+    This is one query. `confirm_guards` then runs the freshness check of a
+    review, which walks the evidence of a lesson, so a caller that first selects
+    the few guards a run can use pays that walk only for those.
+    """
+    key = _state_key(memory)
+    found = _cached(memory, 'candidates', key)
+    if found is None:
+        found = []
+        for row in memory.db.execute(CANDIDATE_SQL).fetchall():
+            lesson = json.loads(row['lesson'])
+            review = json.loads(row['review'])
+            source = review if any(name in review for name in TRIGGERS) else lesson
+            guard = {
+                'lesson_id': row['lesson_id'],
+                'review_id': row['review_id'],
+                'accepted_at': row['accepted_at'],
+                'when': lesson['when'],
+                'do': lesson['do'],
+                'because': lesson['because'],
+                'exceptions': lesson['exceptions'],
+                'pattern_type': lesson.get('pattern_type', 'practice'),
+                'paths': list(source.get('paths', [])),
+                'keywords': list(source.get('keywords', [])),
+                'failure_type': source.get('failure_type'),
+                'roles': list(review['roles'] if 'roles' in review else lesson.get('roles', [])),
+                'subject': row['subject'],
+                'episode_id': row['episode_id'],
+            }
+            if guard['paths'] or guard['keywords'] or guard['failure_type'] or guard['roles']:
+                found.append(guard)
+        _store(memory, 'candidates', key, found)
+    return [dict(guard) for guard in found]
+
+
+def confirm_guards(memory, guards):
+    """The guards whose acceptance still holds, which is the freshness check of their review."""
+    key = _state_key(memory)
+    statuses = _cached(memory, 'confirmed', key)
+    if statuses is None:
+        statuses = _store(memory, 'confirmed', key, {})
+    result = []
+    for guard in guards:
+        held = statuses.get(guard['lesson_id'])
+        if held is None:
+            review = memory._lesson_review(guard['lesson_id'])
+            held = bool(review and review['status'] == 'accepted')
+            statuses[guard['lesson_id']] = held
+        if held:
+            result.append(guard)
+    return result
+
+
 def active_guards(memory):
     """Accepted lessons with at least one trigger, oldest acceptance first."""
-    rows = memory.db.execute("""SELECT l.id, l.payload, l.episode_id, l.subject FROM events l
-        WHERE l.kind='lesson' AND NOT EXISTS (SELECT 1 FROM events n WHERE n.supersedes=l.id)
-          AND EXISTS (SELECT 1 FROM events r WHERE r.kind='lesson_review'
-                      AND json_extract(r.payload,'$.lesson_id')=l.id)
-        ORDER BY l.rowid""").fetchall()
-    guards = []
-    for row in rows:
-        review = memory._lesson_review(row['id'])
-        if not review or review['status'] != 'accepted':
-            continue
-        lesson = json.loads(row['payload'])
-        source = review if any(key in review for key in TRIGGERS) else lesson
-        guard = {
-            'lesson_id': row['id'],
-            'review_id': review['event_id'],
-            'accepted_at': memory.db.execute('SELECT created_at FROM events WHERE id=?', (review['event_id'],)).fetchone()[0],
-            'when': lesson['when'],
-            'do': lesson['do'],
-            'because': lesson['because'],
-            'exceptions': lesson['exceptions'],
-            'pattern_type': lesson.get('pattern_type', 'practice'),
-            'paths': list(source.get('paths', [])),
-            'keywords': list(source.get('keywords', [])),
-            'failure_type': source.get('failure_type'),
-            'subject': row['subject'],
-            'episode_id': row['episode_id'],
-        }
-        if guard['paths'] or guard['keywords'] or guard['failure_type']:
-            guards.append(guard)
-    guards.sort(key=lambda guard: guard['accepted_at'])
-    return guards
+    return confirm_guards(memory, candidate_guards(memory))
 
 
 def _keyword_found(keyword, text):
@@ -449,6 +536,374 @@ def scope_changes(memory, *, limit=20):
         if len(result) >= limit:
             break
     return result
+
+
+# Rules that target a role.
+
+def validate_roles(value):
+    """Check the optional roles field of a lesson or a lesson review."""
+    if not isinstance(value, list) or not 1 <= len(value) <= len(RULE_ROLES):
+        raise InvalidRecord(f'roles must be a list of 1 to {len(RULE_ROLES)} role names.')
+    for role in value:
+        if role not in RULE_ROLES:
+            raise InvalidRecord('roles must name assistant, worker or reviewer.')
+    if len(set(value)) != len(value):
+        raise InvalidRecord('Each role appears at most once in roles.')
+    return value
+
+
+def _require_role(role):
+    if role not in RULE_ROLES:
+        raise InvalidRecord('role must be assistant, worker or reviewer.')
+
+
+def _require_limit(limit):
+    if type(limit) is not int or not 1 <= limit <= 1000:
+        raise InvalidRecord('limit must be between 1 and 1000.')
+
+
+def _table_exists(memory, name):
+    """True when the table is present, so read paths never create it."""
+    return memory.db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)).fetchone() is not None
+
+
+def _columns(memory, name):
+    return {row[1] for row in memory.db.execute(f'PRAGMA table_info({name})')} if _table_exists(memory, name) else set()
+
+
+def recurrence_count(memory, failure_type, review_id, *, after=True):
+    """Current bad outcomes with this failure type, recorded after or before the acceptance."""
+    if not failure_type or not review_id:
+        return 0
+    comparison = '>' if after else '<'
+    row = memory.db.execute(f"""SELECT count(*) FROM events o WHERE o.kind='outcome'
+        AND NOT EXISTS (SELECT 1 FROM events n WHERE n.supersedes=o.id)
+        AND json_extract(o.payload,'$.assessment')='bad'
+        AND json_extract(o.payload,'$.failure_type')=?
+        AND o.rowid {comparison} (SELECT rowid FROM events WHERE id=?)""", (failure_type, review_id)).fetchone()
+    return row[0] if row else 0
+
+
+def role_rules(memory, role, *, rules=None):
+    """Accepted rules that target one role, oldest acceptance first.
+
+    Without a given list the role is selected first and the freshness check of a
+    review then runs for the rules of that role only, so a run of a role without
+    rules pays one query. A given list is used as it is, because its caller
+    already selected it.
+    """
+    _require_role(role)
+    if rules is not None:
+        return [rule for rule in rules if role in rule['roles']]
+    return confirm_guards(memory, [rule for rule in candidate_guards(memory) if role in rule['roles']])
+
+
+def _has_trigger(rule):
+    return bool(rule['paths'] or rule['keywords'] or rule['failure_type'])
+
+
+def matching_rules(memory, role, *, paths=(), text='', failure_types=(), rules=None, root=None):
+    """Rules of a role that the run triggers, plus rules whose only trigger is the role.
+
+    Triggered rules are selected by `matching_guards`, so paths, keywords and
+    failure types behave exactly as they do for decisions.
+    """
+    candidates = role_rules(memory, role, rules=rules)
+    triggered = [rule for rule in candidates if _has_trigger(rule)]
+    matched = {}
+    for failure_type in tuple(failure_types) or (None,):
+        for rule in matching_guards(memory, paths=paths, text=text, failure_type=failure_type,
+                                    guards=triggered, root=root):
+            found = matched.get(rule['lesson_id'])
+            if found is None:
+                matched[rule['lesson_id']] = rule
+                continue
+            found['matched_on'] = found['matched_on'] + [name for name in rule['matched_on']
+                                                         if name not in found['matched_on']]
+    result = []
+    for rule in candidates:
+        if not _has_trigger(rule):
+            result.append({**rule, 'matched_on': ['roles']})
+        elif rule['lesson_id'] in matched:
+            result.append(matched[rule['lesson_id']])
+    return result
+
+
+def _sentence(value):
+    """A field of a lesson without its trailing full stop, so the rendered block reads as one sentence."""
+    text = ' '.join(str(value).split())
+    return text[:-1] if text.endswith('.') else text
+
+
+def render_rule(rule):
+    """The one block a rule contributes to a composed prompt."""
+    return (f'When {_sentence(rule["when"])}. Do {_sentence(rule["do"])}. '
+            f'Exceptions: {_sentence(rule["exceptions"])}.')
+
+
+def compose(memory, role, *, paths=(), text='', failure_types=(), budget=None, rules=None, root=None, exclude=()):
+    """The rules composed into a prompt for one role, with every omission reported.
+
+    Order: fewest recurrences after acceptance first, then the most recent
+    acceptance, then the lesson identifier, so the same run composes the same
+    text. Rules beyond `MAX_ACTIVE_RULES` or beyond the character budget are
+    returned under `omitted` with the reason. `exclude` names rules the prompt
+    already carries elsewhere, for example as the constraints of a review; they
+    are reported as left out instead of being written twice.
+    """
+    _require_role(role)
+    if budget is None:
+        budget = ROLE_BUDGETS[role]
+    if type(budget) is not int or not 0 <= budget <= 20000:
+        raise InvalidRecord('budget must be between 0 and 20000 characters.')
+    rules = role_rules(memory, role, rules=rules)
+    excluded = set(exclude or ())
+    candidates = matching_rules(memory, role, paths=paths, text=text, failure_types=failure_types,
+                                rules=rules, root=root)
+    carried = [rule for rule in candidates if rule['lesson_id'] in excluded]
+    counted = [{**rule, 'recurrences_after': recurrence_count(memory, rule['failure_type'], rule['review_id'])}
+               for rule in candidates if rule['lesson_id'] not in excluded]
+    ordered = sorted(counted, key=lambda rule: rule['lesson_id'])
+    ordered.sort(key=lambda rule: rule['accepted_at'], reverse=True)
+    ordered.sort(key=lambda rule: rule['recurrences_after'])
+    blocks = []
+    rule_ids = []
+    omitted = []
+    matched_ids = {rule['lesson_id'] for rule in ordered}
+    # A rule whose block is longer than the whole budget is reported here even when this run does not
+    # match it, because no run of this role can carry it and the user would otherwise wait for a run
+    # that can never exist.
+    oversize = [rule for rule in rules if rule['lesson_id'] not in matched_ids
+                and rule['lesson_id'] not in excluded and len(render_rule(rule)) > budget]
+    used = 0
+    for position, rule in enumerate(ordered):
+        if position >= MAX_ACTIVE_RULES:
+            omitted.append({'lesson_id': rule['lesson_id'],
+                            'reason': f'A prompt carries at most {MAX_ACTIVE_RULES} rules for one role, '
+                                      'so this rule was not composed.'})
+            continue
+        block = render_rule(rule)
+        length = len(block) + (1 if blocks else 0)
+        if used + length > budget:
+            omitted.append({'lesson_id': rule['lesson_id'],
+                            'reason': f'This rule did not fit within the budget of {budget} characters.'})
+            continue
+        blocks.append(block)
+        rule_ids.append(rule['lesson_id'])
+        used += length
+    for rule in carried:
+        omitted.append({'lesson_id': rule['lesson_id'],
+                        'reason': 'This prompt already carries this rule among its constraints, '
+                                  'so it is not repeated in the rules.'})
+    for rule in oversize:
+        omitted.append({'lesson_id': rule['lesson_id'],
+                        'reason': f'This rule alone is longer than the budget of {budget} characters, '
+                                  'so no run of this role can carry it.'})
+    return {'role': role, 'text': '\n'.join(blocks), 'rule_ids': rule_ids, 'omitted': omitted,
+            'budget': budget, 'used': used, 'matched_total': len(ordered),
+            'accepted_total': len(rules)}
+
+
+# Base text and the composed instructions of a run.
+
+def base_source_key(role):
+    """The source key of the project base text for a role."""
+    _require_role(role)
+    return BASE_SOURCE_PREFIX + role
+
+
+def run_source_key(role):
+    """The source key under which a run stores the exact text it received."""
+    _require_role(role)
+    return RUN_SOURCE_PREFIX + role
+
+
+def shipped_base(role):
+    """The base text shipped with the package, or an empty string when the role has no file."""
+    _require_role(role)
+    path = Path(__file__).with_name('agents').joinpath(role + '.md')
+    return path.read_text(encoding='utf-8').strip() if path.exists() else ''
+
+
+def base_text(memory, role):
+    """The base text in force for a role: the project version when the user saved one, otherwise the shipped file."""
+    _require_role(role)
+    # Only a version whose origin is the user is in force, so a source written by a tool never
+    # becomes the base text, even in a project recorded before the key was reserved.
+    row = memory.db.execute("SELECT id,version,body FROM sources WHERE source_key=? AND origin='user' "
+                            'ORDER BY version DESC LIMIT 1', (base_source_key(role),)).fetchone()
+    if row:
+        return {'text': row['body'].strip(), 'source': base_source_key(role), 'source_id': row['id'],
+                'version': row['version']}
+    shipped = shipped_base(role)
+    return {'text': shipped, 'source': SHIPPED_BASE_SOURCE.format(role=role) if shipped else 'none',
+            'source_id': None, 'version': None}
+
+
+def instructions(memory, role, *, paths=(), text='', failure_types=(), budget=None, rules=None, root=None, exclude=()):
+    """The complete text for a role: the base text first, then the composed rules.
+
+    The omissions of `compose` are reported unchanged, so a caller can show
+    which accepted rules the run did not carry.
+    """
+    base = base_text(memory, role)
+    composed = compose(memory, role, paths=paths, text=text, failure_types=failure_types, budget=budget,
+                       rules=rules, root=root, exclude=exclude)
+    parts = [base['text']] if base['text'] else []
+    if composed['text']:
+        parts.append(RULES_HEADING + '\n' + composed['text'])
+    complete = '\n\n'.join(parts)
+    return {'role': role, 'text': complete, 'base': base['text'], 'rules': composed['text'],
+            'base_source': base['source'], 'base_source_id': base['source_id'], 'base_version': base['version'],
+            'rule_ids': composed['rule_ids'], 'omitted': composed['omitted'], 'budget': composed['budget'],
+            'used': composed['used'], 'matched_total': composed['matched_total'],
+            'accepted_total': composed['accepted_total'], 'characters': len(complete)}
+
+
+# Effectiveness of the rules in force.
+
+def _review_verdicts(memory, columns):
+    """The verdict of the cross review of each delegated work run, by the identifier of that work run."""
+    found = {}
+    if 'parent_run' not in columns:
+        return found
+    rows = memory.db.execute("SELECT parent_run,report FROM review_runs WHERE role='work_review' "
+                             'AND parent_run IS NOT NULL AND report IS NOT NULL ORDER BY rowid').fetchall()
+    for row in rows:
+        try:
+            report = json.loads(row['report'])
+        except ValueError:
+            continue
+        verdict = report.get('verdict') if isinstance(report, dict) else None
+        if verdict in VERDICTS:
+            found[row['parent_run']] = verdict
+    return found
+
+
+def _run_verdict(row, report, reviews_by_run):
+    """The verdict of a run.
+
+    A check reports its own verdict. A delegated work run reports a result
+    instead, so the verdict of the cross review that judged that work is the
+    verdict of the run, and the rules the worker received are counted against it.
+    """
+    verdict = report.get('verdict') if isinstance(report, dict) else None
+    if verdict in VERDICTS:
+        return verdict
+    reviewed = reviews_by_run.get(row['id'])
+    if reviewed in VERDICTS:
+        return reviewed
+    return 'pending'
+
+
+def _composed_runs(memory):
+    """Runs that recorded composed rule identifiers in their metrics, grouped by rule."""
+    grouped = {}
+    columns = _columns(memory, 'review_runs')
+    if not {'metrics', 'report', 'state', 'role'} <= columns:
+        return grouped
+    reviews_by_run = _review_verdicts(memory, columns)
+    rows = memory.db.execute("SELECT id,role,state,report,metrics FROM review_runs "
+                             "WHERE metrics IS NOT NULL AND metrics LIKE '%rule_ids%' ORDER BY rowid").fetchall()
+    for row in rows:
+        try:
+            metrics = json.loads(row['metrics'])
+            report = json.loads(row['report']) if row['report'] else {}
+        except ValueError:
+            continue
+        identifiers = metrics.get('rule_ids') if isinstance(metrics, dict) else None
+        if not isinstance(identifiers, list):
+            continue
+        entry = {'run_id': row['id'], 'role': row['role'], 'state': row['state'],
+                 'verdict': _run_verdict(row, report, reviews_by_run),
+                 'instruction_source': metrics.get('instruction_source')}
+        for lesson_id in identifiers:
+            if isinstance(lesson_id, str):
+                grouped.setdefault(lesson_id, []).append(entry)
+    return grouped
+
+
+def _count(value, noun):
+    """A count with its noun, so a sentence reads correctly with the number one."""
+    return f'{value} {noun}' if value == 1 else f'{value} {noun}s'
+
+
+def _times(value):
+    return _count(value, 'time')
+
+
+def _state(verdicts, assessed, before, after):
+    """The state of a rule from counts alone.
+
+    A single recurrence decides nothing, so the comparison of the recurrences
+    before and after acceptance is used only once at least RECURRENCE_MINIMUM of
+    them were recorded. Below that the verdicts of the runs decide, and a rule
+    with too few of those stays unproven.
+    """
+    if before + after >= RECURRENCE_MINIMUM:
+        if after and after >= before:
+            return 'ineffective'
+        if before and not after:
+            return 'effective'
+    if assessed >= EFFECTIVENESS_MINIMUM:
+        if not verdicts['changes_required']:
+            return 'effective'
+        if verdicts['changes_required'] > verdicts['pass']:
+            return 'ineffective'
+    return 'unproven'
+
+
+def _effectiveness_note(state, assessed, before, after):
+    """One plain sentence for the state, which says when the counts are too small to claim a change."""
+    small = assessed < EFFECTIVENESS_MINIMUM and before + after < EFFECTIVENESS_MINIMUM
+    if state == 'unproven':
+        return ('The counts are too small to separate this rule from the rest of the run, with '
+                + _count(assessed, 'assessed run') + ' and ' + _count(after, 'recurrence') + ' after acceptance.')
+    caveat = ' These counts are small, so they do not establish the change on their own.' if small else ''
+    if state == 'effective':
+        return ('The failure type recurred ' + _times(before) + ' before acceptance and ' + _times(after)
+                + ' after it, over ' + _count(assessed, 'assessed run') + '.' + caveat)
+    return ('The failure type recurred ' + _times(after) + ' after acceptance against ' + _times(before)
+            + ' before it, over ' + _count(assessed, 'assessed run') + '.' + caveat
+            + ' Return this rule to the user.')
+
+
+def effectiveness(memory, *, limit=50):
+    """Counts per rule: the runs that composed it, their verdicts, its recurrences and its state.
+
+    Pending and uncertain verdicts stay out of the ratio and the denominators are
+    always reported. No model is called and nothing is written.
+    """
+    _require_limit(limit)
+    grouped = _composed_runs(memory)
+    result = []
+    for rule in active_guards(memory):
+        if not rule['roles']:
+            continue
+        runs = grouped.get(rule['lesson_id'], [])
+        verdicts = {name: 0 for name in VERDICTS + ('pending',)}
+        for run in runs:
+            verdicts[run['verdict']] += 1
+        assessed = verdicts['pass'] + verdicts['changes_required']
+        before = recurrence_count(memory, rule['failure_type'], rule['review_id'], after=False)
+        after = recurrence_count(memory, rule['failure_type'], rule['review_id'])
+        state = _state(verdicts, assessed, before, after)
+        result.append({
+            'lesson_id': rule['lesson_id'], 'review_id': rule['review_id'], 'accepted_at': rule['accepted_at'],
+            'roles': list(rule['roles']), 'when': rule['when'], 'do': rule['do'],
+            'failure_type': rule['failure_type'], 'runs': len(runs),
+            'run_ids': [run['run_id'] for run in runs[:20]], 'verdicts': verdicts, 'assessed': assessed,
+            'recurrences_before': before, 'recurrences_after': after, 'state': state,
+            'note': _effectiveness_note(state, assessed, before, after)})
+        if len(result) >= limit:
+            break
+    return result
+
+
+def rule_counts(memory):
+    """Accepted rules per role, so a surface can report the load without composing a prompt."""
+    rules = active_guards(memory)
+    return {role: len([rule for rule in rules if role in rule['roles']]) for role in RULE_ROLES}
 
 
 # Host enforcement.

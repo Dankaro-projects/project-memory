@@ -18,7 +18,7 @@ def install_state(args):
 
 
 # Commands that read an existing project. setup and init create one; hook stays silent without one.
-NEEDS_DATABASE={'serve','doctor','view','backup','sync','check','review'}
+NEEDS_DATABASE={'serve','doctor','view','backup','sync','check','review','instructions'}
 
 
 def database(args):
@@ -70,11 +70,30 @@ def doctor(path, client=None, project=None, clients=None):
             'note':'Receipt counts show past capture, not current configuration health. Missing lifecycle events may simply not have occurred.'}
 
 
+def write_instructions(path,output):
+    """Write the instruction text composed for each role now, one Markdown file per role."""
+    from . import guards
+    folder=Path(output).resolve()
+    folder.mkdir(parents=True,exist_ok=True)
+    roles=[]
+    with Memory(path,read_only=True) as memory:
+        for role in guards.RULE_ROLES:
+            value=guards.instructions(memory,role)
+            target=folder/(role+'.md')
+            target.write_text(value['text']+'\n',encoding='utf-8')
+            roles.append({'role':role,'file':str(target),'characters':value['characters'],'base_source':value['base_source'],
+                          'base_version':value['base_version'],'rule_ids':value['rule_ids'],'omitted':value['omitted'],
+                          'budget':value['budget'],'used':value['used'],'accepted_rules':value['accepted_total']})
+    return {'output':str(folder),'roles':roles,
+            'note':'These files are a copy for reading and are replaced on the next run. The records in the database stay the source of truth, '
+                   'and a rule with a path, keyword or failure type trigger is composed only into the run that matches it.'}
+
+
 def main(argv=None):
     parser=argparse.ArgumentParser(description='Keep project decisions, evidence and outcomes locally.')
     parser.add_argument('--version',action='version',version=__version__)
     sub=parser.add_subparsers(dest='command',required=True)
-    for name in ['setup','serve','doctor','view','backup','uninstall','sync','check','review']:
+    for name in ['setup','serve','doctor','view','backup','uninstall','sync','check','review','instructions']:
         p=sub.add_parser(name)
         p.add_argument('--project',default=os.environ.get('PROJECT_MEMORY_PROJECT',os.getcwd()))
         p.add_argument('--db')
@@ -93,6 +112,8 @@ def main(argv=None):
             p.add_argument('--cancel');p.add_argument('--retry',action='store_true')
             p.add_argument('--max-seconds',type=int,help='Execution limit; with --wait, legacy alias for --wait-seconds.')
             p.add_argument('--wait-seconds',type=int,help='Stop waiting after this many seconds without cancelling the review (default: 60).')
+        elif name=='instructions':
+            p.add_argument('--output',required=True,help='Folder that receives one Markdown file per role. The database stays the source of truth.')
         elif name=='backup':p.add_argument('destination')
     init=sub.add_parser('init',help='Create a project from a template: product, engagement or automation.')
     init.add_argument('path')
@@ -158,6 +179,8 @@ def main(argv=None):
                     result=reviews.request(memory,args.episode,args.role,request_key='cli:'+uuid.uuid4().hex,retry=args.retry,max_seconds=args.max_seconds if args.max_seconds is not None else 300)
                     reviews.launch(memory,result)
                 result.pop('snapshot',None)
+        elif args.command=='instructions':
+            result=write_instructions(database(args),args.output)
         elif args.command=='view' and not args.output:
             if args.include_bodies or args.replace:raise ValueError('--include-bodies and --replace require --output for a snapshot.')
             from .live import start

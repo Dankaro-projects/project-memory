@@ -6,7 +6,8 @@ The project is scaffolded from its template with no hook clients, then filled
 through the real modules: work items with types, parents, acceptance criteria and
 a blocked dependency chain; a decision with a failed outcome and a successful
 revision; a document with an exception; an accepted lesson with path triggers and
-a recurrence; a proposed lesson; a scope block receipt; a completed delegated run
+a recurrence; a rule accepted for every agent role and a reviewer base text saved
+by the user; a proposed lesson; a scope block receipt; a completed delegated run
 with a passing work review that awaits a merge; authored components with links;
 and project files for the template (a small source tree, engagement documents or
 exported n8n workflows).
@@ -35,6 +36,10 @@ from memory_module.planning import latest, save  # noqa: E402
 from memory_module.workspace import action  # noqa: E402
 
 LAUNCHER = [sys.executable, '-m', 'memory_module.cli']
+# The project version of the reviewer base text, saved through the workspace action as the user.
+BASE_TEXT = ('You are the reviewer in this project. Assess the supplied work against the recorded objective, the completion '
+             'criterion and every constraint. State the evidence for every judgement and report missing evidence as unknown. '
+             'Give one verdict of pass, changes required or uncertain. Do not edit files, repeat the work or merge.')
 USER = 'workspace-user'
 AGENT = 'assistant'
 
@@ -196,6 +201,9 @@ KINDS = {
         'lesson': {'when': 'Client text is decoded.', 'do': 'Run the tagged Latin-1 sample before changing the decoder.',
                    'because': 'The tagged sample failed after a strict decoding change.', 'exceptions': 'Files without an encoding tag.',
                    'pattern_type': 'recovery', 'paths': ['src/app/**']},
+        'rule': {'when': 'A change to the importer is proposed.', 'do': 'Name the sample file that proves the change.',
+                 'because': 'A change without a named sample could not be checked.', 'exceptions': 'Changes that only rename a symbol.',
+                 'pattern_type': 'practice', 'roles': ['assistant', 'worker', 'reviewer']},
         'proposed': {'when': 'A release note is prepared.', 'do': 'Read the release note aloud before publishing it.',
                      'because': 'Unclear wording reached users in the last release.', 'exceptions': 'Internal releases.',
                      'pattern_type': 'practice'},
@@ -247,6 +255,9 @@ KINDS = {
                    'because': 'The survey response rate was too low to support a finding.',
                    'exceptions': 'Engagements where the client already holds audited cost data.', 'pattern_type': 'recovery',
                    'paths': ['engagement/**']},
+        'rule': {'when': 'A recommendation is written for the client.', 'do': 'Name the source of every figure in the same sentence.',
+                 'because': 'The partner could not trace two figures in the last report.', 'exceptions': 'Figures the client supplied in writing.',
+                 'pattern_type': 'practice', 'roles': ['assistant', 'worker', 'reviewer']},
         'proposed': {'when': 'A board report is drafted.', 'do': 'State the confidence interval next to each estimate.',
                      'because': 'The partner asked for the strength of evidence behind each number.',
                      'exceptions': 'Figures taken directly from audited accounts.', 'pattern_type': 'practice'},
@@ -293,6 +304,9 @@ KINDS = {
         'lesson': {'when': 'A workflow calls an outside model for every item.', 'do': 'Test the workflow with a burst of sample items before deployment.',
                    'because': 'A rate limit delayed leads during a burst.', 'exceptions': 'Workflows that run once a day.',
                    'pattern_type': 'recovery', 'paths': ['workflows/**']},
+        'rule': {'when': 'A workflow is changed.', 'do': 'State which trigger and which credential the change affects.',
+                 'because': 'A changed trigger stopped the lead intake without anyone noticing.', 'exceptions': 'Changes to a disabled workflow.',
+                 'pattern_type': 'practice', 'roles': ['assistant', 'worker', 'reviewer']},
         'proposed': {'when': 'A credential is added to a workflow.', 'do': 'Record the credential name and owner in the systems document.',
                      'because': 'A handover missed the owner of the Slack credential.', 'exceptions': 'Credentials that the client manages directly.',
                      'pattern_type': 'practice'},
@@ -408,9 +422,20 @@ class Builder:
                                                                    'reason': 'The failed outcome teaches this lesson.'}])
         action(self.m, 'lesson_review', {'lesson_id': accepted['id'], 'expected_version': self.m.episode(lessons)['version'],
                                          'status': 'accepted', 'reason': 'The user accepts the lesson with its triggers.',
-                                         'paths': spec['lesson']['paths'], 'failure_type': spec['failure_type']},
+                                         'paths': spec['lesson']['paths'], 'failure_type': spec['failure_type'],
+                                         'roles': ['worker']},
                'fixture:accept-lesson')
         self.ids['guard'] = accepted['id']
+        # A rule with a role and no other trigger is composed into every prompt of that role.
+        rule = self.record(lessons, 'lesson', spec['rule'])
+        action(self.m, 'lesson_review', {'lesson_id': rule['id'], 'expected_version': self.m.episode(lessons)['version'],
+                                         'status': 'accepted', 'reason': 'The user accepts the lesson as a rule for every role.',
+                                         'roles': spec['rule']['roles']},
+               'fixture:accept-rule')
+        self.ids['rule'] = rule['id']
+        action(self.m, 'instructions', {'role': 'reviewer', 'text': BASE_TEXT,
+                                        'reason': 'The user adjusts the base text of the reviewer.'},
+               'fixture:instructions-reviewer')
         self.ids['proposed_lesson'] = self.record(lessons, 'lesson', spec['proposed'])['id']
         title, decision, observed = spec['recurrence']
         episode = self.m.start(title, title + '.', 'action', 'The work finishes without the known failure.', subject=spec['subject'])['id']
@@ -468,12 +493,19 @@ class Builder:
         work = 'check_' + uuid.uuid4().hex
         source = self.m.source('delegation:' + work, 'Changes of the delegated work', 'The delegated work changed ' + str(len(changed)) + ' files.',
                                diff, 'tool', subject=spec['subject'])
+        # Both runs name the rules they composed, so the Learning view can count the runs of a rule.
+        worker_rules = [self.ids['rule'], self.ids['guard']]
         self.run_row('work', 'codex', 'completed', run_id=work, report=report,
-                     metrics={'changed_files': changed, 'commit': 'f1x7ure0', 'diff_source': source['id']})
+                     metrics={'changed_files': changed, 'commit': 'f1x7ure0', 'diff_source': source['id'],
+                              'instruction_role': 'worker', 'instruction_source': 'instructions:worker',
+                              'rule_ids': worker_rules, 'rules_omitted': []})
         review = {'verdict': 'pass', 'summary': 'The work review found that the change meets the acceptance criteria.',
                   'checks': [{'criterion': 'C001', 'evidence': 'The diff changes only the allowed paths.', 'result': 'met'}],
                   'findings': [], 'lesson_proposals': []}
-        review_id = self.run_row('work_review', 'claude', 'pass', parent=work, report=review, metrics={'input_tokens': 10})
+        review_id = self.run_row('work_review', 'claude', 'pass', parent=work, report=review,
+                                 metrics={'input_tokens': 10, 'instruction_role': 'reviewer',
+                                          'instruction_source': 'instructions:reviewer',
+                                          'rule_ids': [self.ids['rule']], 'rules_omitted': []})
         hosts.mark_available(self.m, 'codex')
         hosts.mark_unavailable(self.m, 'claude', 'The fixture records a usage limit for this host.')
         self.ids.update(work_run=work, work_review=review_id, diff_source=source['id'])

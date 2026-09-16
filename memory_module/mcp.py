@@ -139,6 +139,9 @@ def payload_rule(kind):
         properties.update(project_revision={'type': 'integer', 'minimum': 0}, work_plan_id=S)
     typed(properties, COUNTS, {'type': 'integer', 'minimum': 0})
     typed(properties, TEXT_LISTS, {'type': 'array', 'items': S, 'maxItems': 30})
+    if 'roles' in properties:
+        names = list(module('guards').RULE_ROLES)
+        properties['roles'] = {'type': 'array', 'items': {'type': 'string', 'enum': names}, 'minItems': 1, 'maxItems': len(names)}
     for key in PAYLOAD_RULES.keys() & properties.keys():
         properties[key] = PAYLOAD_RULES[key]
     choices = metadata.get('choices', {})
@@ -162,7 +165,7 @@ def operation_rules(operation):
                            # An omitted path keeps the stored path; an explicit null clears it.
                            'path': {'type': ['string', 'null']}},
              'answer_kickoff': {'question_ids': {'type': 'array', 'items': S, 'minItems': 1, 'maxItems': 30}}}
-    hidden = {'merge': {'override_reason'}}
+    hidden = {'merge': {'override_reason'}, 'source': {'internal'}}
     return rules.get(operation, {}), hidden.get(operation, set())
 
 
@@ -229,6 +232,7 @@ RECORD_GUIDANCE = {
     'optional_record_fields': ['decision_id', 'supersedes', 'links'], 'evidence': '[{source_id, reason}]', 'links': '[{event_id, reason}]',
     'types': 'alternatives, assumptions and queries are lists of text; review findings are [{location,issue,severity}]; metrics are nonnegative integers; all other fields are text.',
     'triggers': 'A lesson or an accepting lesson_review may carry paths (path patterns), keywords (at most 30 words) and failure_type (text). An accepted lesson with triggers becomes a guard.',
+    'roles': 'A lesson or an accepting lesson_review may name roles: one to three of assistant, worker and reviewer. An accepted lesson with roles becomes a rule composed into the instructions of those runs, within the budget of the role. Only the user accepts a lesson.',
     'lessons_considered': 'A decision whose work matches accepted guards lists each of them as {lesson_id, applies: yes or no, reason}; otherwise it is rejected with the matching lessons.',
     'failure_type': 'An outcome may name a failure_type so that a recurrence of a guarded failure is detected.',
     'kickoff_answers': 'A note may list the kickoff question ids that its text answers.',
@@ -280,9 +284,9 @@ def schema(kind):
         'outcome': (['observed', 'assessment', 'assessment_reason', 'severity', 'attribution'],
                     ['completion', 'tokens', 'context_characters', 'research_calls', 'repeated_research', 'human_corrections', 'maintenance_ms', 'duration_ms', 'failure_type', 'model']),
         'research': (['question', 'findings', 'gaps'], ['queries', 'refresh_reason']),
-        'lesson': (['when', 'do', 'because', 'exceptions'], ['pattern_type', 'paths', 'keywords', 'failure_type']),
+        'lesson': (['when', 'do', 'because', 'exceptions'], ['pattern_type', 'paths', 'keywords', 'failure_type', 'roles']),
         'note': (['text'], ['kickoff_answers']), **FIELDS, **PLAN_FIELDS,
-        'lesson_review': (FIELDS['lesson_review'][0], FIELDS['lesson_review'][1] | {'paths', 'keywords', 'failure_type'})}
+        'lesson_review': (FIELDS['lesson_review'][0], FIELDS['lesson_review'][1] | {'paths', 'keywords', 'failure_type', 'roles'})}
     if kind not in fields:
         return {'record_kinds': list(fields), 'note': 'Request a kind by id to see its payload fields.'}
     required, optional = fields[kind]
@@ -417,7 +421,12 @@ def view_guards(memory, request):
     matched = guards.matching_guards(memory, paths=paths, text=text) if matching else guards.active_guards(memory)
     result = {'scope': 'matching' if matching else 'all', 'paths': paths, 'guards': matched, 'guards_total': len(matched),
               'recurrences': guards.recurrences(memory, limit=request.limit),
-              'note': 'Guards are accepted lessons with triggers. A matching guard must be acknowledged in lessons_considered on the next decision.'}
+              'rules_per_role': guards.rule_counts(memory), 'max_rules_per_role': guards.MAX_ACTIVE_RULES,
+              'effectiveness': guards.effectiveness(memory, limit=request.limit),
+              'note': 'Guards are accepted lessons with triggers. A matching guard must be acknowledged in lessons_considered on the next decision. '
+                      'A guard that names roles is also a rule composed into the instructions of those runs. rules_per_role counts the accepted rules of each role, '
+                      'and effectiveness reports the runs, verdicts and recurrences behind the state of each rule. The user accepts, retires and rewrites rules.'}
+    trimmed(result, 'effectiveness', request.budget)
     trimmed(result, 'recurrences', request.budget)
     return trimmed(result, 'guards', request.budget)
 
@@ -443,7 +452,7 @@ VIEWS = {
     'coverage': ('Unassessed requests and capture gaps of a session_id.', lambda memory, request: module('coverage').inspect(memory, request.args['session_id'], request.limit, request.offset) if request.args.get('session_id') else module('coverage').sessions(memory, request.limit, request.offset)),
     'graph': ('Typed links around an id, with depth and limit.', view_graph),
     'architecture': ('Components, workflows and packages, with level, focus and layers.', view_architecture),
-    'guards': ('Accepted lessons matching a work item id or paths, and recurrences.', view_guards),
+    'guards': ('Accepted lessons matching a work item id or paths, with recurrences, rule effectiveness and the rule count per role.', view_guards),
     'agents': ('Host availability and runs, optionally of a work item id.', lambda memory, request: trimmed({**module('api').host_overview(memory), **module('delegation').runs(memory, episode_id=request.id, limit=request.limit, offset=request.offset)}, 'runs', request.budget)),
     'kickoff': ('Template phases, open kickoff questions and starter documents.', lambda memory, request: module('templates').kickoff(memory)),
     'plan': ('Work item hierarchy with state roll up, optionally below an id.', lambda memory, request: shrink(lambda value: module('planning').hierarchy(memory, root=request.id, limit=value), request.limit if request.limit_given else 100, request.budget)),

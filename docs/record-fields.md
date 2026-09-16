@@ -11,8 +11,8 @@ All event payloads reject unknown fields. Text must be nonempty; lists and costs
 | review | target, revision, summary, findings | None |
 | correction | before, after, reason, scope | None |
 | research | question, findings, gaps | queries, refresh_reason |
-| lesson | when, do, because, exceptions | pattern_type, paths, keywords, failure_type |
-| lesson_review | lesson_id, status, reason | paths, keywords, failure_type |
+| lesson | when, do, because, exceptions | pattern_type, paths, keywords, failure_type, roles |
+| lesson_review | lesson_id, status, reason | paths, keywords, failure_type, roles |
 | follow_up | review_after, owner, reason | None |
 | episode_status | status, reason | None |
 | note | text | kickoff_answers |
@@ -24,6 +24,8 @@ All event payloads reject unknown fields. Text must be nonempty; lists and costs
 A work plan `paths` field is a list of 1 to 100 unique patterns, each at most 500 characters. A pattern is a relative POSIX path without a `..` segment, or an absolute path. `*` matches characters within one path segment, `**` matches across segments and `?` matches one character. A pattern without glob characters matches that path and everything beneath it, and `.` matches the whole project. Relative patterns are compared with paths relative to the project root.
 
 A lesson can carry triggers: `paths` (a list of at most 100 patterns), `keywords` (a list of at most 30 items, each at most 100 characters) and `failure_type` (text). A lesson review can carry the same three fields. When an accepted review carries any of them, the review's trigger fields replace all of the lesson's triggers; a trigger field that the review omits is then empty. An accepted lesson with at least one trigger is a guard.
+
+A lesson can also carry `roles`: a list of 1 to 3 of `assistant`, `worker` and `reviewer`. A lesson review can set or replace it, independently of the trigger fields. An accepted lesson with roles is a rule that is composed into the instructions of a run of those roles, within a character budget per role. A lesson without roles is never composed into a prompt.
 
 A guard matches a decision when a plan path matches or overlaps a guard pattern, or when a keyword appears as a whole word, ignoring case, in the episode objective, the success criterion, the decision, its reason or the plan scope. A decision must list every matching guard in `lessons_considered`: a list of at most 50 objects with exactly `lesson_id`, `applies` (`yes` or `no`) and `reason`. Each entry must reference a lesson record. Otherwise the decision is rejected with the matching lessons and a next step that names the first lesson to read. Decisions that match no guard are not affected.
 

@@ -22,6 +22,10 @@ USER_ACTOR = "workspace-user"
 RESERVED_ACTORS = {USER_ACTOR, "user", "human", "owner", "customer", "client", "me"}
 KINDS = {"decision", "action", "outcome", "research", "lesson", "note", "review", "correction", "action_result", "follow_up", "episode_status", "lesson_review", "work_plan", "sprint"}
 ASSESSMENTS = {"pending", "good", "bad", "unknown"}
+# Source keys that hold the instructions of an agent role. The base text is written by the user
+# in the control panel and the composed text of a run is written by Project Memory itself, so an
+# agent may not store a source under these keys and replace the instructions it is judged against.
+RESERVED_SOURCE_PREFIXES = ("instructions-base:", "instructions:")
 
 
 class MemoryError(Exception):
@@ -248,9 +252,21 @@ class Memory(Workflow):
                             (eid, title, objective, task_type, criterion, self.now(), subject))
         return self.episode(eid)
 
-    def source(self, source_key, title, summary, body, origin, review_after=None, subject="general"):
+    def source(self, source_key, title, summary, body, origin, review_after=None, subject="general", *, internal=False):
+        """Store a version of an evidence source.
+
+        internal is set by Project Memory itself for the reserved instruction
+        keys. A caller from outside, such as an agent through MCP, cannot set it,
+        so the instructions of a role stay under the control of the user.
+        """
         for key, value in (("source_key", source_key), ("title", title), ("summary", summary)):
             _text(value, key, 2000)
+        if not internal and any(source_key.startswith(prefix) for prefix in RESERVED_SOURCE_PREFIXES):
+            raise InvalidRecord(
+                "The source key " + source_key + " is reserved for the instructions of an agent role. "
+                "Only the user saves that text, in the control panel, and Project Memory stores the text of a run "
+                "itself. Choose another source key.",
+                reserved_prefixes=list(RESERVED_SOURCE_PREFIXES))
         _text(body, "body", 5_000_000)
         if origin not in {"user", "tool", "document"}:
             raise InvalidRecord("Source origin must be user, tool or document.")
@@ -307,7 +323,7 @@ class Memory(Workflow):
         if kind == "lesson_review" and isinstance(payload, dict):
             # Optional trigger overrides are validated here; the remaining fields keep their existing checks.
             guards.validate_triggers(payload)
-            payload = {key: value for key, value in payload.items() if key not in guards.TRIGGERS}
+            payload = {key: value for key, value in payload.items() if key not in guards.REVIEW_FIELDS}
         if validate_payload(kind, payload):
             return
         required = {
@@ -324,7 +340,7 @@ class Memory(Workflow):
             "outcome": {"tokens", "human_corrections", "duration_ms", "failure_type", "model",
                         "context_characters", "research_calls", "repeated_research", "maintenance_ms", "completion"},
             "research": {"queries", "refresh_reason"},
-            "lesson": {"pattern_type", "paths", "keywords", "failure_type"}, "note": {"kickoff_answers"},
+            "lesson": {"pattern_type", "paths", "keywords", "failure_type", "roles"}, "note": {"kickoff_answers"},
         }[kind]
         if not isinstance(payload, dict) or set(payload) - required - optional or required - set(payload):
             raise InvalidRecord(f"{kind} requires {sorted(required)}; optional: {sorted(optional)}.")
@@ -335,6 +351,8 @@ class Memory(Workflow):
                 guards.validate_patterns(value, minimum=0)
             elif kind == "lesson" and key == "keywords":
                 guards.validate_keywords(value)
+            elif kind == "lesson" and key == "roles":
+                guards.validate_roles(value)
             elif kind == "note" and key == "kickoff_answers":
                 from .templates import validate_answers
                 validate_answers(value)

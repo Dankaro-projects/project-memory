@@ -8,7 +8,8 @@
  *   comment {episode_id}; requirements {}; lesson_review {lesson_id, status} with triggers on acceptance;
  *   allow_paths {episode_id, paths, reason}; component {component_id}, or {kind, path} to add one;
  *   confirm_component {component_id}; answer_kickoff {question_ids}; delegate {episode_id}; merge, discard and
- *   request_work_review {run_id}; review {episode_id, role}; cancel_run {run_id}.
+ *   request_work_review {run_id}; review {episode_id, role}; cancel_run {run_id};
+ *   instructions {role} edits the base instruction text of an agent role.
  *
  * A form that cannot act on the current data explains why in the form alert and disables Save.
  */
@@ -20,6 +21,7 @@
   const ITEM_TYPES = ["phase", "epic", "story", "task", "research", "deliverable", "workflow"];
   const SUBJECTS = ["general", "code", "writing", "research"];
   const ACTIVE = ["queued", "running", "cancelling"];
+  const RULE_ROLES = ["assistant", "worker", "reviewer"];
   const COMPONENT_KINDS = ["system", "component", "service", "workflow", "integration", "dataset", "stakeholder", "workstream", "deliverable", "process"];
 
   // Helpers.
@@ -36,6 +38,9 @@
     .map(([label, value]) => [h("dt", null, label), h("dd", null, value)]));
   const list = (name, value, rows = "3") => P.textarea(name, value || [], { rows, dataset: { list: "" } });
   const area = (name, value, rows = "3") => P.textarea(name, value, { rows });
+  const roleChecks = (chosen) => h("div", { class: "choices" }, RULE_ROLES.map((role) =>
+    h("label", { class: "field check" }, h("input", { type: "checkbox", name: "role_" + role, checked: (chosen || []).includes(role) }),
+      h("span", null, P.words(role)))));
   function choices(name, options, value) {
     return h("div", { class: "choices", role: "radiogroup" }, options.map(([optionValue, label, detail, disabled]) =>
       h("label", { class: "field check" }, h("input", { type: "radio", name, value: optionValue, checked: optionValue === value, disabled: Boolean(disabled) }),
@@ -274,6 +279,34 @@
     done: (result) => `Requirements version ${result.version} is approved.`,
   });
 
+  // Base instruction text of one agent role. Every earlier version stays, so an earlier text is saved again to return to it.
+  P.registerForm("instructions", {
+    title: (context) => "Edit the " + context.role + " instructions",
+    submitLabel: "Save the base text",
+    async render(fields, context) {
+      const value = ((await P.get("learning")).instructions || { roles: {} }).roles[context.role];
+      if (!value) stop("This role has no instruction text in this panel.");
+      context.saved = value.base || "";
+      context.project = String(value.base_source || "").indexOf("instructions-base:") === 0;
+      fields.append(kv([["Role", P.words(context.role)], ["In force", value.base_source],
+        ["Version", value.base_version === null || value.base_version === undefined ? "The shipped text" : String(value.base_version)],
+        ["Rules composed now", String((value.rule_ids || []).length)]]),
+      hint("This text is the base of every " + context.role + " prompt. The accepted rules are added below it and are not edited here. "
+        + "Saving writes a new version and keeps every earlier one."),
+      P.field("Base text", area("text", context.saved, "16")),
+      P.field("Reason", area("reason", "", "2")));
+    },
+    submit(values, context) {
+      need(values.text, "Write the base text of this role.");
+      if (context.project && values.text.trim() === context.saved.trim()) throw new P.FormError("The saved text of this role is already this text.");
+      const data = { role: context.role, text: values.text };
+      if (values.reason) data.reason = values.reason;
+      return { operation: "instructions", data };
+    },
+    reload: reloadIds(["role"]),
+    done: (result) => "Version " + result.version + " of the " + result.role + " instructions is saved.",
+  });
+
   // Lesson review with triggers on acceptance.
   P.registerForm("lesson_review", {
     title: "Review the lesson",
@@ -295,7 +328,8 @@
         hint("A guard reminds agents of this lesson when a change touches one of the paths, the text contains a keyword, or a failure has this type. An accepted lesson without triggers is not shown as a guard."),
         P.field("Paths", list("paths", lesson.paths), "Write one pattern per line, such as src/export/** or deliverables/."),
         P.field("Keywords", list("keywords", lesson.keywords, "2"), "Write one keyword per line. A keyword matches as a whole word."),
-        P.field("Failure type", P.input("failure_type", lesson.failure_type), "Use the failure type that outcomes record, such as encoding_error."));
+        P.field("Failure type", P.input("failure_type", lesson.failure_type), "Use the failure type that outcomes record, such as encoding_error."),
+        P.field("Roles", roleChecks(lesson.roles), "A lesson with a role becomes a rule in the prompt of that role. A lesson without a role stays a guard."));
       const sync = () => {
         const accepted = (form.querySelector('input[name="status"]:checked') || {}).value === "accepted";
         triggers.hidden = !accepted;
@@ -311,9 +345,11 @@
       context.decision = values.status;
       const data = { lesson_id: context.lesson_id, expected_version: context.version, status: values.status, reason: values.reason };
       // Triggers on a review replace all triggers of the lesson, so they are sent together.
-      if (values.status === "accepted" && (values.paths.length || values.keywords.length || values.failure_type || context.hadTriggers)) {
+      const roles = RULE_ROLES.filter((role) => values["role_" + role]);
+      if (values.status === "accepted" && (values.paths.length || values.keywords.length || values.failure_type || roles.length || context.hadTriggers)) {
         Object.assign(data, { paths: values.paths, keywords: values.keywords });
         if (values.failure_type) data.failure_type = values.failure_type;
+        if (roles.length) data.roles = roles;
       }
       return { operation: "lesson_review", data };
     },

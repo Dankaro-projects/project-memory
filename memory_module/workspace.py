@@ -17,7 +17,7 @@ from .shared import prior_result, run_summary, store_result
 
 KEY_REUSED = 'This action key was already used for different changes.'
 RECORD_OPERATIONS = ('plan', 'sprint', 'comment', 'requirements', 'lesson_review', 'allow_paths', 'link', 'component',
-                     'answer_kickoff')
+                     'answer_kickoff', 'instructions')
 RUN_OPERATIONS = ('delegate', 'merge', 'discard', 'review', 'cancel_run', 'request_work_review')
 OPERATIONS = RECORD_OPERATIONS + RUN_OPERATIONS
 FIELDS = {
@@ -25,11 +25,12 @@ FIELDS = {
     'sprint': (set(), {'episode_id', 'expected_version', 'title', 'objective', 'criterion', 'subject', 'payload'}),
     'comment': ({'episode_id', 'expected_version', 'text'}, set()),
     'requirements': ({'requirements', 'reason', 'expected_version'}, set()),
-    'lesson_review': ({'lesson_id', 'expected_version', 'status', 'reason'}, {'paths', 'keywords', 'failure_type'}),
+    'lesson_review': ({'lesson_id', 'expected_version', 'status', 'reason'}, {'paths', 'keywords', 'failure_type', 'roles'}),
     'allow_paths': ({'episode_id', 'expected_version', 'paths', 'reason'}, set()),
     'link': ({'from_id', 'to_id', 'type', 'reason'}, {'retire'}),
     'component': ({'title', 'kind', 'description', 'status'}, {'component_id', 'path'}),
     'answer_kickoff': ({'question_ids', 'text'}, {'episode_id'}),
+    'instructions': ({'role', 'text'}, {'reason', 'actor'}),
     'delegate': ({'episode_id'}, {'host', 'max_seconds'}),
     'merge': ({'run_id'}, {'override_reason'}),
     'discard': ({'run_id', 'reason'}, set()),
@@ -40,11 +41,12 @@ FIELDS = {
 MESSAGES = {
     'comment': 'Select a work item, its current version and the comment text.',
     'requirements': 'Provide the complete requirements, reason and current version.',
-    'lesson_review': 'Select a lesson, status, reason and current work item version. Triggers are optional.',
+    'lesson_review': 'Select a lesson, status, reason and current work item version. Triggers and roles are optional.',
     'allow_paths': 'Select a work item, its current version, the paths to allow and the reason.',
     'link': 'Provide the two record ids, the link type and the reason.',
     'component': 'Provide the component title, kind, description and status. The id and path are optional.',
     'answer_kickoff': 'Select the kickoff questions and write the answer.',
+    'instructions': 'Select the role and write the base instructions. The reason is optional.',
     'delegate': 'Select the work item to delegate. The host and time limit are optional.',
     'merge': 'Select the delegated run to merge. An override reason is optional.',
     'discard': 'Select the delegated run to discard and give the reason.',
@@ -183,9 +185,9 @@ def lesson_review(memory, data, request_key):
     lesson = memory.read(data['lesson_id'])
     if lesson['kind'] != 'lesson':
         raise InvalidRecord('Select a lesson to review.')
-    triggers = {key: data[key] for key in ('paths', 'keywords', 'failure_type') if key in data}
+    triggers = {key: data[key] for key in ('paths', 'keywords', 'failure_type', 'roles') if key in data}
     if triggers and data['status'] != 'accepted':
-        raise InvalidRecord('Triggers apply only when you accept a lesson. Remove the paths, keywords and failure type, or accept the lesson.')
+        raise InvalidRecord('Triggers and roles apply only when you accept a lesson. Remove the paths, keywords, failure type and roles, or accept the lesson.')
     source = memory.source('workspace:' + request_key, 'The user reviews a proposed lesson', data['reason'], dumps(data), 'user',
                            subject=lesson['subject'])
     payload = {key: data[key] for key in ('lesson_id', 'status', 'reason')}
@@ -273,9 +275,42 @@ def answer_kickoff(memory, data, request_key):
                          evidence=evidence, episode_id=data.get('episode_id'))
 
 
+def instructions(memory, data, request_key):
+    """Save a new version of the base instruction text of one role.
+
+    The base text is a source, so every earlier version stays and activating an
+    earlier text is a new version with that text. Only the user writes it.
+    """
+    from . import guards
+    actor = data.get('actor', USER)
+    if actor != USER:
+        raise InvalidRecord('Saving the base instructions of a role is a user action. The recorded actor is ' + USER +
+                            ', so another actor name is not accepted.', actor=USER)
+    role = data['role']
+    if role not in guards.RULE_ROLES:
+        raise InvalidRecord('Select the role to save. Use one of: ' + ', '.join(guards.RULE_ROLES) + '.',
+                            roles=list(guards.RULE_ROLES))
+    body = data['text']
+    # Rejects a value that is not text, is empty or is only spaces.
+    _text(body, 'text', 100000)
+    reason = data.get('reason') or 'The user saves the base instructions of the ' + role + ' role.'
+    _text(reason, 'reason', 2000)
+    current = guards.base_text(memory, role)
+    if current['source_id'] and current['text'] == body.strip():
+        raise InvalidRecord('The saved base instructions of this role already have this text.',
+                            version=current['version'])
+    source = memory.source(guards.base_source_key(role), 'Base instructions for the ' + role + ' role', reason,
+                           body, 'user', internal=True)
+    composed = guards.instructions(memory, role)
+    return {'role': role, 'source': guards.base_source_key(role), 'source_id': source['id'], 'version': source['version'],
+            'actor': USER, 'characters': composed['characters'], 'base_characters': len(composed['base']),
+            'rule_ids': composed['rule_ids'], 'omitted': composed['omitted'], 'budget': composed['budget'],
+            'used': composed['used'], 'text': composed['text']}
+
+
 RECORD_HANDLERS = {'plan': plan, 'sprint': sprint, 'comment': comment, 'requirements': requirements,
                    'lesson_review': lesson_review, 'allow_paths': allow_paths, 'link': link, 'component': component,
-                   'answer_kickoff': answer_kickoff}
+                   'answer_kickoff': answer_kickoff, 'instructions': instructions}
 
 
 # Agent run actions.

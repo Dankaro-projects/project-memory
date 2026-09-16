@@ -267,4 +267,111 @@ class ReviewDiagnosticsTests(unittest.TestCase):
         self.assertIsNotNone(log.result)
 
 
+class CheckInstructionTests(unittest.TestCase):
+    """Every agent check composes its instructions, keeps the exact text and records it in its metrics."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
+        self.root = Path(self.temp.name).resolve()
+        info = setup(self.root,requirements=['Keep the tagged legacy exception.'])
+        self.m = Memory(info['database'])
+        self.ep = action(self.m,'plan',{'title':'Repair the parser','objective':'Preserve both decoding paths.',
+            'criterion':'UTF-8 rejects invalid bytes; tagged Latin-1 succeeds.', 'subject':'code',
+            'payload':{'state':'ready','next_action':'Inspect the implementation.',
+                       'scope':'Change decoding only; preserve the tagged exception.',
+                       'autonomy':'act','reason':'The user requests the repair.'}},'fixture')['episode_id']
+        reviews.configure(self.m,self.root,'codex')
+        self.counter = 0
+        source = self.m.source('user-lessons','Lessons','User instruction','Review the parser work.','user',subject='code')
+        self.evidence = [{'source_id':source['id'],'reason':'The user asks for the lesson.'}]
+        self.learning = self.m.start('Lessons','Collect parser lessons.','learning','Lessons are reviewed.',subject='code')['id']
+
+    def tearDown(self):
+        self.m.close()
+        shutil.rmtree(self.temp.name, ignore_errors=True)
+
+    def report(self, snapshot):
+        """A passing report for the checklist and the constraints of a snapshot."""
+        return {'verdict':'pass','summary':'The fixture supports both paths.',
+                'checks':[{'criterion':c['id'],'evidence':'parser.py preserves the stated condition.','result':'met'}
+                          for c in snapshot['checklist']],
+                'constraint_checks':[{'constraint':c['id'],'applicability':'applies',
+                    'reason':'The task changes decoding only.','evidence':'The scope identifies the parser.',
+                    'result':'met'} for c in snapshot['constraints']],
+                'findings':[], 'lesson_proposals':[]}
+
+    def key(self):
+        self.counter += 1
+        return 'lesson-key-'+str(self.counter)
+
+    def rule(self, *, do='Read the recorded conditions first.', **triggers):
+        """Record a lesson and accept it, so that it becomes a rule in force."""
+        version = self.m.episode(self.learning)['version']
+        payload = {'when':'Checking the parser.','do':do,'because':'Earlier checks missed a condition.',
+                   'exceptions':'Documentation changes.', **triggers}
+        lesson = self.m.record(self.learning,'lesson',payload,expected_version=version,request_key=self.key(),
+                               actor='assistant',evidence=self.evidence)['id']
+        self.m.record(self.learning,'lesson_review',{'lesson_id':lesson,'status':'accepted','reason':'The user reviewed it.'},
+                      expected_version=self.m.episode(self.learning)['version'],request_key=self.key(),actor='workspace-user',
+                      evidence=self.evidence,links=[{'event_id':lesson,'reason':'This review assesses the lesson.'}])
+        return lesson
+
+    def run_check(self, key, role='outcome', timeout=3):
+        """Execute one check with a fake child process that returns a passing report."""
+        run = reviews.request(self.m,self.ep,role,request_key=key,retry=True)
+        folder = self.m.path.parent/'agent-runs'/run['id']
+        answer = self.report(run['snapshot'])
+        program = ('import json,pathlib\nfolder=pathlib.Path('+repr(str(folder))+')\n'
+                   '(folder/"answer.json").write_text(json.dumps('+repr(answer)+'))\n'
+                   'print(json.dumps({"type":"turn.completed","usage":{"input_tokens":10}}))\n')
+        with patch.object(reviews,'command',return_value=[sys.executable,'-u','-c',program]):
+            reviews.execute(self.m,run['id'],timeout=timeout)
+        return reviews.read(self.m,run['id'])
+
+    def test_a_check_composes_the_reviewer_instructions_and_keeps_the_exact_text(self):
+        from memory_module import guards
+        rule = self.rule(roles=['reviewer'],do='Read the recorded conditions first.')
+        worker = self.rule(roles=['worker'],do='Read the worker checklist.')
+        result = self.run_check('check-one')
+        self.assertEqual(result['state'],'pass',result['error'])
+        metrics = result['metrics']
+        self.assertEqual(metrics['instruction_role'],'reviewer')
+        self.assertEqual(metrics['instruction_source'],'instructions:reviewer')
+        self.assertEqual(metrics['rule_ids'],[rule])
+        self.assertEqual(metrics['rules_omitted'],[])
+        self.assertEqual(metrics['instruction_base_source'],'agents/reviewer.md')
+        stored = self.m.read(metrics['instruction_source_id'],detail=True)
+        self.assertEqual(stored['source_key'],'instructions:reviewer')
+        composed = guards.instructions(self.m,'reviewer',paths=[],text='')
+        self.assertEqual(stored['body'],composed['text'])
+        self.assertIn(guards.RULES_HEADING,stored['body'])
+        self.assertIn('Do Read the recorded conditions first.',stored['body'])
+        self.assertNotIn('Read the worker checklist.',stored['body'])
+        self.assertEqual(metrics['instruction_characters'],len(stored['body']))
+        prompt = (self.m.path.parent/'agent-runs'/result['id']/'prompt.txt').read_text()
+        self.assertIn('Do Read the recorded conditions first.',prompt)
+        self.assertIn(guards.shipped_base('reviewer').splitlines()[0][:60],prompt)
+        second = self.run_check('check-two',role='intent')
+        self.assertEqual(second['metrics']['instruction_source_id'],metrics['instruction_source_id'])
+        self.assertEqual(self.m.db.execute("SELECT count(*) FROM sources WHERE source_key='instructions:reviewer'").fetchone()[0],1)
+
+    def test_a_new_rule_writes_a_new_version_and_omissions_are_reported(self):
+        from memory_module import guards
+        rules = [self.rule(roles=['reviewer'],do=f'Read condition {index}.'+' Keep every recorded exception.'*3)
+                 for index in range(9)]
+        result = self.run_check('check-many')
+        metrics = result['metrics']
+        self.assertTrue(metrics['rule_ids'])
+        self.assertLess(len(metrics['rule_ids']),len(rules))
+        self.assertEqual(sorted(metrics['rule_ids']+[item['lesson_id'] for item in metrics['rules_omitted']]),sorted(rules))
+        reasons = ' '.join(item['reason'] for item in metrics['rules_omitted'])
+        self.assertTrue(str(guards.MAX_ACTIVE_RULES) in reasons or 'budget' in reasons)
+        self.assertEqual(metrics['rules_accepted'],len(rules))
+        stored = self.m.read(metrics['instruction_source_id'],detail=True)
+        self.assertEqual(stored['version'],1)
+        self.rule(roles=['reviewer'],do='Read the newest condition first.')
+        again = self.run_check('check-after')
+        self.assertEqual(self.m.read(again['metrics']['instruction_source_id'],detail=True)['version'],2)
+
+
 if __name__=='__main__': unittest.main()

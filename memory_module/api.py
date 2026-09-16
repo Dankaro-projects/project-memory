@@ -409,6 +409,17 @@ def now(memory, params):
         times = 'once' if entry['total'] == 1 else f'{entry["total"]} times'
         attention.append({'type': 'guard_recurrence', 'id': entry['lesson_id'],
                           'reason': f'The failure type {entry["failure_type"]} occurred {times} after the lesson was accepted.'})
+    for role, total in guards.rule_counts(memory).items():
+        if total > guards.MAX_ACTIVE_RULES:
+            attention.append({'type': 'rules_over_cap', 'id': None, 'role': role,
+                              'reason': f'The {role} role has {total} accepted rules and one prompt carries at most '
+                                        f'{guards.MAX_ACTIVE_RULES} of them. Retire a rule or narrow its triggers.'})
+    recurring_ids = {entry['lesson_id'] for entry in recurring}
+    for entry in guards.effectiveness(memory, limit=GUARD_LIMIT):
+        if entry['state'] == 'ineffective' and entry['lesson_id'] not in recurring_ids:
+            attention.append({'type': 'rule_ineffective', 'id': entry['lesson_id'],
+                              'reason': 'The rule for the ' + ', '.join(entry['roles']) + ' role is in force and its '
+                                        'counts do not show that it helps. ' + entry['note']})
     failures = guards.failures_without_lesson(memory, limit=1000)
     for entry in failures[:10]:
         attention.append({'type': 'failure_without_lesson', 'id': entry['outcome_id'], 'episode_id': entry['episode_id'],
@@ -553,6 +564,23 @@ def _lesson_entry(memory, lesson_id):
             'evidence': evidence, 'links': lesson.get('links', [])}
 
 
+def instructions(memory):
+    """The instruction text composed for each role now, with its budget, its rules and every omission.
+
+    No run context is given, so a rule with a path, keyword or failure type
+    trigger appears only in the run that matches it. A rule that is longer than
+    the budget of its role is reported as left out, because no run can carry it.
+    The accepted rules are loaded once and shared by every role.
+    """
+    from . import guards
+    rules = guards.active_guards(memory)
+    return {'roles': {role: guards.instructions(memory, role, rules=rules) for role in guards.RULE_ROLES},
+            'counts': {role: len([rule for rule in rules if role in rule['roles']]) for role in guards.RULE_ROLES},
+            'max_rules': guards.MAX_ACTIVE_RULES,
+            'note': 'A run composes the base text of its role and the rules whose triggers it matches. '
+                    'A rule beyond the cap or the character budget is listed under omitted, never dropped in silence.'}
+
+
 def learning(memory, params):
     """Accepted guards with recurrence counts, proposed lessons, failures without lessons, scope changes and signals."""
     from . import guards
@@ -567,7 +595,8 @@ def learning(memory, params):
             'proposed_lessons': {'lessons': [_lesson_entry(memory, lesson_id) for lesson_id in proposed[offset:offset + limit]],
                                  'total': len(proposed), 'offset': offset, 'more': offset + limit < len(proposed)},
             'failures_without_lesson': guards.failures_without_lesson(memory, limit=50),
-            'scope_changes': guards.scope_changes(memory, limit=20), 'signals': memory.signals(limit=20)}
+            'scope_changes': guards.scope_changes(memory, limit=20), 'signals': memory.signals(limit=20),
+            'instructions': instructions(memory), 'effectiveness': guards.effectiveness(memory, limit=GUARD_LIMIT)}
 
 
 def host_overview(memory):

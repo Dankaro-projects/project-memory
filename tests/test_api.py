@@ -1,5 +1,7 @@
 """Data contracts of the read API, the live server over it and the offline export."""
 import shutil
+from contextlib import redirect_stdout
+import io
 import json
 from pathlib import Path
 import queue
@@ -201,6 +203,101 @@ class ApiTests(unittest.TestCase):
         with patch('memory_module.guards.active_guards', return_value=[{**guard, 'lesson_id': 'event_' + str(i)} for i in range(api.GUARD_LIMIT + 5)]):
             bounded = api.learning(self.m, {})
         self.assertEqual((len(bounded['guards']), bounded['guards_total'], bounded['guards_more']), (api.GUARD_LIMIT, api.GUARD_LIMIT + 5, True))
+
+    def rule(self, key, roles, **triggers):
+        """Record a lesson that names roles and let the user accept it with its triggers."""
+        lessons = self.ids['lessons']
+        payload = {'when': 'A delegated change is prepared.', 'do': 'Run the tagged fixture first.',
+                   'because': 'The tagged fixture failed before.', 'exceptions': 'Documentation changes.',
+                   'pattern_type': 'practice'}
+        lesson = self.m.record(lessons, 'lesson', {**payload, 'do': 'Run the ' + key + ' fixture first.'},
+                               expected_version=self.m.episode(lessons)['version'], actor='assistant', request_key='lesson:' + key,
+                               evidence=[{'source_id': self.ids['source'], 'reason': 'The user defines the work this rule guards.'}])
+        action(self.m, 'lesson_review', {'lesson_id': lesson['id'], 'expected_version': self.m.episode(lessons)['version'],
+                                         'status': 'accepted', 'reason': 'The user accepts the rule.', 'roles': list(roles),
+                                         **triggers}, 'accept:' + key)
+        return lesson['id']
+
+    def test_learning_reports_the_instructions_per_role_and_the_effectiveness_of_each_rule(self):
+        from memory_module import guards
+        before = api.learning(self.m, {})['instructions']
+        self.assertEqual(sorted(before['roles']), sorted(guards.RULE_ROLES))
+        self.assertEqual(before['counts'], {'assistant': 0, 'worker': 0, 'reviewer': 0})
+        self.assertEqual(before['max_rules'], guards.MAX_ACTIVE_RULES)
+        worker = before['roles']['worker']
+        self.assertEqual((worker['base_source'], worker['rule_ids'], worker['used']), ('agents/worker.md', [], 0))
+        self.assertEqual((worker['budget'], worker['text']), (guards.ROLE_BUDGETS['worker'], worker['base']))
+        self.assertEqual(api.learning(self.m, {})['effectiveness'], [])
+        always = self.rule('always', ['worker'])
+        guarded = self.rule('guarded', ['worker'], failure_type='lost_text')
+        value = api.learning(self.m, {})
+        worker = value['instructions']['roles']['worker']
+        # Every run of the role carries the rule without other triggers; the guarded rule joins the run that matches it.
+        self.assertEqual((worker['rule_ids'], value['instructions']['counts']['worker']), ([always], 2))
+        self.assertIn(guards.RULES_HEADING, worker['text'])
+        self.assertIn('Run the always fixture first', worker['text'])
+        self.assertEqual((worker['omitted'], worker['accepted_total']), ([], 2))
+        self.assertEqual(value['instructions']['roles']['assistant']['rule_ids'], [])
+        self.assertEqual(guards.instructions(self.m, 'worker', failure_types=['lost_text'])['rule_ids'], [guarded, always])
+        entries = {entry['lesson_id']: entry for entry in value['effectiveness']}
+        self.assertEqual(sorted(entries), sorted([always, guarded]))
+        self.assertEqual((entries[always]['roles'], entries[always]['runs'], entries[always]['state']), (['worker'], 0, 'unproven'))
+        self.assertEqual(entries[always]['verdicts'], {'pass': 0, 'changes_required': 0, 'uncertain': 0, 'pending': 0})
+        # The fixture recorded this failure type before the acceptance and none after it.
+        self.assertEqual((entries[guarded]['recurrences_before'], entries[guarded]['recurrences_after'],
+                          entries[guarded]['state']), (2, 0, 'effective'))
+        self.assertTrue(entries[guarded]['note'].endswith('.'))
+        with Memory(self.m.path, read_only=True) as reader:
+            self.assertEqual(api.learning(reader, {})['instructions']['counts'], {'assistant': 0, 'worker': 2, 'reviewer': 0})
+
+    def run_with_rules(self, episode_id, rule_ids, verdict):
+        """Insert a finished reviewer run that recorded the rules it composed."""
+        reviews.ensure_run_columns(self.m)
+        run_id = 'check_' + uuid.uuid4().hex
+        report = json.dumps({'verdict': verdict, 'summary': 'The fixture review finished.'})
+        metrics = json.dumps({'rule_ids': list(rule_ids), 'instruction_source': 'instructions:reviewer'})
+        with self.m._write():
+            self.m.db.execute('INSERT INTO review_runs (id,episode_id,role,signature,host,session_id,state,created_at,'
+                              'updated_at,request_key,snapshot,report,metrics,error) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+                              (run_id, episode_id, 'work_review', 'fixture', 'codex', '', verdict, self.m.now(),
+                               self.m.now(), run_id, '{}', report, metrics, ''))
+        return run_id
+
+    def test_the_now_view_reports_rules_over_the_cap_and_a_rule_that_does_not_help(self):
+        from memory_module import guards
+        for index in range(guards.MAX_ACTIVE_RULES + 1):
+            self.rule('cap-%d' % index, ['worker'])
+        now = api.now(self.m, {})
+        over = [item for item in now['attention'] if item['type'] == 'rules_over_cap']
+        self.assertEqual([item['role'] for item in over], ['worker'])
+        self.assertIn('at most ' + str(guards.MAX_ACTIVE_RULES), over[0]['reason'])
+        self.assertEqual(guards.rule_counts(self.m)['worker'], guards.MAX_ACTIVE_RULES + 1)
+        # A rule judged ineffective by the verdicts of its runs alone also reaches the attention list.
+        rule = self.rule('weak', ['reviewer'])
+        episode = self.ids['parser']
+        for _ in range(3):
+            self.run_with_rules(episode, [rule], 'changes_required')
+        entry = {item['lesson_id']: item for item in guards.effectiveness(self.m)}[rule]
+        self.assertEqual((entry['state'], entry['failure_type']), ('ineffective', None))
+        items = [item for item in api.now(self.m, {})['attention'] if item['type'] == 'rule_ineffective']
+        self.assertEqual([item['id'] for item in items], [rule])
+        self.assertIn('do not show that it helps', items[0]['reason'])
+
+    def test_the_instructions_command_writes_one_file_per_role(self):
+        from memory_module import cli, guards
+        output = self.root / 'instructions'
+        stream = io.StringIO()
+        with redirect_stdout(stream):
+            self.assertEqual(cli.main(['instructions', '--db', str(self.m.path), '--output', str(output)]), 0)
+        result = json.loads(stream.getvalue())
+        self.assertEqual([entry['role'] for entry in result['roles']], list(guards.RULE_ROLES))
+        for entry in result['roles']:
+            with self.subTest(role=entry['role']):
+                written = (output / (entry['role'] + '.md')).read_text()
+                self.assertEqual(written.strip(), guards.instructions(self.m, entry['role'])['text'].strip())
+                self.assertEqual(entry['base_source'], 'agents/' + entry['role'] + '.md')
+                self.assertEqual((entry['rule_ids'], entry['omitted'], entry['accepted_rules']), ([], [], 0))
+        self.assertTrue(result['note'].endswith('.'))
 
     def test_run_endpoint_returns_the_report_metrics_reviews_and_merge_state(self):
         review = fake_run(self.m, self.ids['parser'], role='work_review', state='changes_required', parent=self.ids['run'], project=self.root)

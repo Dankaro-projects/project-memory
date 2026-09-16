@@ -328,6 +328,9 @@ table.data th button { min-height: 0; padding: 0; border: 0; background: transpa
 .kn-text { white-space: pre-line; }
 .kn-nowrap { white-space: nowrap; }
 .kn-nested { grid-template-columns: minmax(90px, 140px) minmax(0, 1fr); }
+.kn-role h4 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--dk-color-support); }
+.kn-role .list > li { padding: var(--dk-space-2) 0; }
+.kn-base { max-height: 220px; margin: 0; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
 .kn-guard[data-tone="blocked"] { border-color: #f3c5c0; border-left: 3px solid var(--tone); }
 .kn-guard[data-tone="guarded"] { border-left: 3px solid var(--tone); }
 .kn-pager { justify-content: flex-end; }

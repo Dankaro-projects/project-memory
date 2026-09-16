@@ -2,11 +2,16 @@
  * Project Memory control panel: views_knowledge.js.
  *
  * Views: learning, agents, records and requirements. Drawers: record and run. Buttons open the forms of forms.js:
- * lesson_review {lesson_id, status}, merge, discard, cancel_run and request_work_review {run_id}, requirements {}.
+ * lesson_review {lesson_id, status}, instructions {role}, merge, discard, cancel_run and request_work_review {run_id},
+ * requirements {}.
  *
  * Endpoints read: learning {offset}, agents {offset}, run {id}, records {view, limit, offset, query, subject, status,
  * episode, from, to, order, related}, record {id, body_offset}, requirements {offset, revision_offset}. A snapshot
  * holds records {view, limit: 100} for each view, so the Records view filters and pages those in the browser.
+ *
+ * The Instructions section of the Learning view reads learning.instructions and learning.effectiveness: one panel per
+ * agent role with the base text in force, the rules composed into that prompt, the rules that wait for a matching run,
+ * the rules left out with the reason, and the character budget.
  */
 (() => {
   "use strict";
@@ -102,6 +107,59 @@
           actionButton("Reject", "reject-" + lesson.id, (trigger) => lessonReview(lesson, "rejected", trigger)),
           actionButton("Retire", "retire-" + lesson.id, (trigger) => lessonReview(lesson, "retired", trigger), "quiet")] : null));
   }
+  // Instructions: the text each agent role receives, the rules composed into it and the rules left out.
+  const RULE_STATE = { effective: "ready", unproven: "backlog", ineffective: "blocked" };
+  const VERDICTS = ["pass", "changes_required", "uncertain", "pending"];
+  const has = (list, id) => (list || []).some((entry) => (entry.lesson_id || entry) === id);
+  // A rule beyond the effectiveness limit carries its identifier and its reason only, so no count is invented for it.
+  function ruleEntry(rule, role, reason) {
+    const counts = rule.verdicts || {};
+    return h("li", { class: "stack kn-item kn-rule" },
+      h("div", { class: "row" }, openButton(rule.do || rule.lesson_id, rule.lesson_id, { prefix: "rule-" + role + "-" }),
+        rule.state ? P.badge(RULE_STATE[rule.state] || "neutral", P.words(rule.state)) : null),
+      rule.when ? h("p", { class: "muted" }, "When " + lower(rule.when)) : null,
+      reason ? h("p", { class: "muted" }, reason) : null,
+      rule.state ? h("div", { class: "row" }, h("span", { class: "chip" }, P.count(rule.runs || 0, "run") + " composed it"),
+        VERDICTS.filter((name) => counts[name]).map((name) => h("span", { class: "chip" }, P.words(name) + ": " + counts[name])),
+        h("span", { class: "chip" }, "Recurrences before " + (rule.recurrences_before || 0) + ", after " + (rule.recurrences_after || 0))) : null,
+      rule.note ? h("p", { class: "muted" }, rule.note) : null);
+  }
+  function rolePanel(role, value, rules, accepted, max) {
+    const omitted = value.omitted || [];
+    const mine = rules.filter((rule) => (rule.roles || []).indexOf(role) >= 0);
+    const found = (id) => mine.find((rule) => rule.lesson_id === id) || { lesson_id: id };
+    const composed = (value.rule_ids || []).map(found);
+    const waiting = mine.filter((rule) => !has(value.rule_ids, rule.lesson_id) && !has(omitted, rule.lesson_id));
+    const saved = String(value.base_source || "").indexOf("instructions-base:") === 0;
+    return h("article", { class: "card kn-role", dataset: { key: "instructions-" + role } },
+      h("h3", null, h("span", null, P.words(role)), P.badge("guarded", P.count(accepted, "rule"))),
+      h("p", null, "This prompt carries " + P.count(composed.length, "rule") + " and uses " + number(value.used || 0) + " of "
+        + number(value.budget || 0) + " characters. The whole text is " + number(value.characters || 0) + " characters."),
+      P.progress(value.budget ? (value.used || 0) / value.budget : 0, "Character budget of the " + role + " rules"),
+      waiting.length ? h("p", { class: "muted" }, P.count(waiting.length, "further accepted rule") + " " + isAre(waiting.length)
+        + " composed only into a run that matches the triggers.") : null,
+      accepted > max ? h("p", { class: "muted" }, "This role has more than " + P.count(max, "accepted rule") + ", so one prompt cannot carry all of them.") : null,
+      h("h4", null, "Base text"),
+      h("p", { class: "muted" }, saved ? "You saved version " + value.base_version + " of this text in this project."
+        : value.base_source === "none" ? "No base text is shipped for this role."
+          : "The shipped file " + value.base_source + " is in force. No project version is saved."),
+      h("pre", { class: "source-text kn-base", dataset: { key: "base-" + role } }, value.base || "No base text is recorded."),
+      h("div", { class: "row" }, P.formButton("Edit the base text", "instructions", { role }, { class: "small" })),
+      h("h4", null, "Rules in force"),
+      composed.length ? h("ul", { class: "list" }, composed.map((rule) => ruleEntry(rule, role))) : P.empty("No rule is composed into this prompt."),
+      waiting.length ? [h("h4", null, "Rules that wait for a matching run"), h("ul", { class: "list" }, waiting.map((rule) => ruleEntry(rule, role)))] : null,
+      omitted.length ? [h("h4", null, "Rules left out"),
+        h("ul", { class: "list" }, omitted.map((entry) => ruleEntry(found(entry.lesson_id), role, entry.reason)))] : null);
+  }
+  function instructionsSection(data) {
+    const value = data.instructions || {};
+    const roles = Object.keys(value.roles || {});
+    const rules = data.effectiveness || [];
+    return section("Instructions", h("span", { class: "muted" }, P.count(roles.length, "role")),
+      value.note ? h("p", { class: "muted" }, value.note) : null,
+      roles.length ? h("div", { class: "grid" }, roles.map((role) => rolePanel(role, value.roles[role], rules,
+        (value.counts || {})[role] || 0, value.max_rules || 0))) : P.empty("No instruction text is available in this snapshot."));
+  }
   P.registerView("learning", {
     title: "Learning",
     async render(container, params, ctx) {
@@ -111,9 +169,14 @@
       const recurring = data.recurrences || [];
       const failures = data.failures_without_lesson || [];
       const ineffective = (data.guards || []).filter((guard) => guard.recurrences > 0).length;
+      // A rule can be judged ineffective by the verdicts of its runs alone, with no recurrence recorded.
+      const weak = (data.effectiveness || []).filter((rule) => rule.state === "ineffective").length;
       put(container, sentence([P.count(data.guards_total || 0, "accepted guard") + " " + isAre(data.guards_total || 0) + " active",
         ineffective ? ", and " + P.count(ineffective, "guard") + " recorded a recurrence" : "", ". ",
+        weak ? P.count(weak, "rule") + " " + isAre(weak) + " judged ineffective and " + (weak === 1 ? "waits" : "wait")
+          + " for your decision. " : "",
         P.count(proposed.total, "proposed lesson") + " " + (proposed.total === 1 ? "awaits" : "await") + " your decision."].join("")));
+      put(container, instructionsSection(data));
       const byLesson = Object.fromEntries(recurring.map((entry) => [entry.lesson_id, entry]));
       const guards = [...(data.guards || [])].sort((a, b) => (b.recurrences || 0) - (a.recurrences || 0));
       put(container, section("Accepted guards", h("span", { class: "muted" }, P.count(data.guards_total || 0, "guard")),

@@ -74,7 +74,25 @@ Decisions lists the recorded decisions with their outcome badges and a marker fo
 
 ## Learning
 
-Learning shows the accepted guards with their triggers and their recurrence counts, so that a guard that keeps failing to prevent its failure is visible. Below them are the proposed lessons with Accept, Reject and Retire. Accepting a lesson can set its triggers: paths, keywords and a failure type. The triggers you set on acceptance replace the triggers of the lesson, and a field you leave empty stays empty. The view also lists failures without a lesson, the path widenings made by an actor other than you, and the records whose evidence needs attention.
+Learning opens with the Instructions section, then the accepted guards with their triggers and their recurrence counts, so that a guard that keeps failing to prevent its failure is visible. Below them are the proposed lessons with Accept, Reject and Retire. Accepting a lesson can set its triggers: paths, keywords, a failure type and the agent roles. The triggers you set on acceptance replace the triggers of the lesson, and a field you leave empty stays empty. The view also lists failures without a lesson, the path widenings made by an actor other than you, and the records whose evidence needs attention.
+
+### Instructions
+
+The Instructions section holds one panel per agent role: assistant, worker and reviewer. Each panel states what that role receives:
+
+| Part | Meaning |
+| --- | --- |
+| Base text | The instructions in force for the role, either the file shipped with Project Memory or the version you saved in this project. |
+| Character budget | How much of the budget for rules this prompt uses. The budget is 600 characters for the assistant, 1,200 for the worker and 900 for the reviewer. |
+| Rules in force | The accepted rules composed into the prompt now, each with the number of runs that carried it, the verdicts of those runs, the recurrences of its failure type before and after acceptance, and its state of effective, unproven or ineffective. |
+| Rules that wait for a matching run | Accepted rules of the role whose paths, keywords or failure type match only some runs. They are composed into the runs they match. |
+| Rules left out | Accepted rules that the prompt could not carry, with the reason: the limit of eight rules for one role, the character budget, a rule that is longer than the whole budget of its role, or a rule the prompt already carries among its constraints. Nothing is dropped in silence. |
+
+A lesson becomes a rule when you name one to three roles as you accept it. A lesson without a role stays a guard: it is reported when a decision matches it and it is not composed into any prompt.
+
+"Edit the base text" saves a new version of the base text of that role. Every earlier version stays, so returning to an earlier text means saving that text again. Only you can save it: the source key of the base text is reserved, so a write from an agent is refused and only a version whose author is you is in force. The rules are not edited here, because they come from lessons that you accepted.
+
+The counts are counts only. No model judges a rule, pending and uncertain runs stay out of the ratio, and a rule with few runs is reported as unproven with its denominators rather than as an improvement.
 
 ## Agents
 

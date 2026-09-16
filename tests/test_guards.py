@@ -281,6 +281,14 @@ class GuardHistoryTests(Fixture):
         with self.assertRaises(InvalidRecord):
             self.accept(lesson, paths=['../outside'])
 
+    def test_review_roles_do_not_replace_the_lesson_triggers(self):
+        lesson = self.lesson(paths=['docs'], failure_type='lost_text')
+        self.accept(lesson, roles=['worker'])
+        [guard] = guards.active_guards(self.m)
+        self.assertEqual((guard['paths'], guard['failure_type']), (['docs'], 'lost_text'))
+        self.assertEqual(guard['roles'], ['worker'])
+        self.assertEqual([item['lesson_id'] for item in guards.matching_guards(self.m, paths=['docs/a.md'])], [lesson])
+
     # Learning signals.
 
     def test_recurrence_counts_only_failures_after_acceptance(self):

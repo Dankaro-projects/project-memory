@@ -33,6 +33,12 @@ HOST_EVENTS = {'codex': EVENTS, 'claude': EVENTS - {'Interrupt'}}
 # Claude Code events that carry the same meaning as a canonical event. The original name stays in the payload.
 CLAUDE_ALIASES = {'PostToolUseFailure': 'PostToolUse'}
 MEMORY_TOOL = re.compile(r'^mcp__.+__memory_(context|get|write)$')
+# The hook context of a host stays within this many characters, as it did before rules were composed.
+HOOK_CHARACTERS = 2500
+# The rules keep room for the rest of the hook context, which is one short sentence.
+RULE_CHARACTERS = 2000
+# The prompt text read for the keywords of a rule.
+PROMPT_CHARACTERS = 2000
 
 
 def initialize(memory):
@@ -64,6 +70,104 @@ def project_root(memory):
         if isinstance(value, str) and value:
             return Path(value)
     return memory.path.parent.parent
+
+
+def rule_shown(memory, session_id, lesson_id):
+    """The receipt key of a rule in a session, and whether the session has already seen it."""
+    key = f'guard-shown:{session_id}:{lesson_id}'
+    rid = 'host_' + _digest(key)[:32]
+    return key, bool(memory.db.execute('SELECT 1 FROM host_receipts WHERE id=?', (rid,)).fetchone())
+
+
+def assistant_base(memory, *, available):
+    """The base instruction text of the assistant role, when the room left in the hook context carries it.
+
+    The base text is the text in force for the role: the version the user saved
+    in this project, or the shipped file. A session receives it at its start and
+    again after a compaction, because the earlier context is then gone.
+    """
+    base = guards.base_text(memory, 'assistant')['text']
+    return base if base and len(base) <= available else ''
+
+
+def assistant_rules(memory, *, session_id, targets, text='', root=None, limit=RULE_CHARACTERS):
+    """The accepted rules for the files the assistant is about to edit, or for the text of its prompt.
+
+    The rules are composed at the assistant budget, which also carries the
+    identifier of each rule, and each rule is shown once in a session. A rule
+    that does not fit keeps no receipt, so a later edit in the same session can
+    still carry it, and the rules left out are always named, including when no
+    rule at all fitted.
+    """
+    if not targets and not text:
+        return {'text': '', 'rule_ids': [], 'omitted': []}
+    if root is None:
+        root = project_root(memory)
+    recording = exists(memory)
+    pending = []
+    # The freshness check of a review is the expensive part, so the rules of this role that the
+    # session has not seen yet are selected first and only those are confirmed.
+    for guard in guards.candidate_guards(memory):
+        roles = guard.get('roles') or []
+        # A rule of the assistant always applies here. A lesson without roles keeps the path reminder it had before.
+        if not (('assistant' in roles) or (not roles and guard['paths'])):
+            continue
+        if recording and rule_shown(memory, session_id, guard['lesson_id'])[1]:
+            continue
+        pending.append({**guard, 'roles': ['assistant']})
+    # The triggers come from the same query, so this edit or this prompt selects the rules it can
+    # carry before any freshness check runs. An edit that no rule covers then pays nothing for the
+    # rules of the project.
+    triggered = []
+    selected = []
+    for rule in pending:
+        if rule['paths'] or rule['keywords'] or rule['failure_type']:
+            triggered.append(rule)
+        else:
+            selected.append(rule)
+    matched = {rule['lesson_id'] for rule in
+               guards.matching_guards(memory, paths=list(targets), text=text, guards=triggered, root=root)}
+    selected.extend(rule for rule in triggered if rule['lesson_id'] in matched)
+    pending = guards.confirm_guards(memory, selected)
+    if not pending:
+        return {'text': '', 'rule_ids': [], 'omitted': []}
+    composed = guards.compose(memory, 'assistant', paths=list(targets), text=text, rules=pending, root=root)
+    available = {rule['lesson_id']: rule for rule in pending}
+    blocks, shown = [], []
+    omitted = list(composed['omitted'])
+    # The rule blocks stay within the budget of the role, including the identifier each one carries.
+    # The sentence that names the rules left out is a report, not rule text, and follows that budget.
+    rule_limit = min(limit, guards.ROLE_BUDGETS['assistant'])
+    used = 0
+    for lesson_id in composed['rule_ids']:
+        rule = available[lesson_id]
+        matched = [target for target in targets
+                   if not rule['paths'] or guards.match_path(target, rule['paths'], root=root)]
+        block = (f'Project Memory lesson {lesson_id}'
+                 + (' applies to ' + ', '.join(matched[:3]) if rule['paths'] and matched else '')
+                 + '. ' + guards.render_rule(rule))
+        if used + len(block) + 1 > rule_limit:
+            omitted.append({'lesson_id': lesson_id,
+                            'reason': f'This rule did not fit within the budget of {rule_limit} characters.'})
+            continue
+        blocks.append(block)
+        shown.append((lesson_id, matched[:20]))
+        used += len(block) + 1
+    if omitted:
+        note = ('These accepted rules also apply and were not carried here: '
+                + ', '.join(entry['lesson_id'] for entry in omitted) + '. Read them with memory_get record.')
+        if used + len(note) + 1 <= limit:
+            blocks.append(note)
+    if shown and recording:
+        with memory._write():
+            for lesson_id, matched in shown:
+                key, already = rule_shown(memory, session_id, lesson_id)
+                if already:
+                    continue
+                receipt(memory, session_id=session_id, event_name='GuardShown', episode_id=None,
+                        payload={'lesson_id': lesson_id, 'review_id': available[lesson_id]['review_id'],
+                                 'targets': matched}, key=key)
+    return {'text': ' '.join(blocks), 'rule_ids': [lesson_id for lesson_id, _ in shown], 'omitted': omitted}
 
 
 def record_block(memory, *, session, turn, tool, tool_id, host, result):
@@ -166,14 +270,14 @@ def capture(memory, event, host='codex'):
         _text(tool_id, 'tool_use_id', 200); _text(tool, 'tool_name', 200)
         # Memory calls are already persisted by the adapter. Avoid recursive noise.
         if tool.startswith(('mcp__memory__','mcp__project_memory__')) or MEMORY_TOOL.match(tool): return {}
-    root = project_root(memory) if name == 'PreToolUse' else None
+    root = project_root(memory) if name in {'PreToolUse', 'UserPromptSubmit'} else None
     if name == 'PreToolUse':
         # Checked before any receipt: a blocked tool never runs, so it must not look like an unconfirmed call.
         blocked = guards.scope_check(memory, session_id=session, event=event, project_root=root)
         if blocked:
             record_block(memory, session=session, turn=turn, tool=tool, tool_id=tool_id, host=host, result=blocked)
             raise guards.ScopeBlocked(guards.blocked_message(blocked))
-    reminders = []
+    rules = None
     compacted = name == 'SessionStart' and event.get('source') == 'compact'
     action_version = None
     refreshed = None
@@ -230,12 +334,17 @@ def capture(memory, event, host='codex'):
                 action_version = action['version']
         if name == 'PreToolUse':
             targets = guards.relative_targets(guards.edit_targets(tool, event.get('tool_input')), root, event.get('cwd'))
-            reminders = guards.guard_reminders(memory, session_id=session, targets=targets, root=root)
-    reminder = guards.reminder_text(reminders) if reminders else ''
+            rules = assistant_rules(memory, session_id=session, targets=targets, root=root)
+        if name == 'UserPromptSubmit':
+            # A rule of the assistant role and a rule whose keyword the prompt uses reach the assistant here,
+            # so the rules of the role are not carried by edit tool calls alone.
+            rules = assistant_rules(memory, session_id=session, targets=[],
+                                    text=str(event.get('prompt') or '')[:PROMPT_CHARACTERS], root=root)
+    reminder = rules['text'] if rules else ''
     if action_version is not None:
         text = f'Memory action recorded. Episode {ep} is now version {action_version}; decision {decision}.'
         return {'hookSpecificOutput':{'hookEventName':host_event,'additionalContext':text+(' '+reminder if reminder else '')}}
-    if reminder:
+    if reminder and name == 'PreToolUse':
         return {'hookSpecificOutput':{'hookEventName':host_event,'additionalContext':reminder}}
     scope = guards.scope_sentence(memory, session) if name in {'SessionStart', 'UserPromptSubmit'} else ''
     if name in {'SessionStart', 'UserPromptSubmit'}:
@@ -245,7 +354,9 @@ def capture(memory, event, host='codex'):
             scope = (scope + ' ' + hint).strip()
     if name == 'SessionStart':
         # Claude Code reads this at startup, resume and after automatic compaction. Codex ignores unknown output.
-        return {'hookSpecificOutput':{'hookEventName':host_event,'additionalContext':session_context(memory, session, compacted)+setup_context(memory, refreshed)+(' '+scope if scope else '')}}
+        started = session_context(memory, session, compacted) + setup_context(memory, refreshed) + (' ' + scope if scope else '')
+        base = assistant_base(memory, available=HOOK_CHARACTERS - len(started) - 1)
+        return {'hookSpecificOutput':{'hookEventName':host_event,'additionalContext':started + (' ' + base if base else '')}}
     if name == 'UserPromptSubmit':
         state = status(memory, session_id=session, limit=3)
         text = (f'Memory session: {session}. Prompt receipt: {rid}. Use memory_context before repeating research. '
@@ -258,7 +369,8 @@ def capture(memory, event, host='codex'):
         selected = re.fullmatch(r'\[memory:(code|writing|research|general)\] (.{1,2000})',
                                 event.get('prompt','').split('\n',1)[0])
         def response(context):
-            return {'hookSpecificOutput':{'hookEventName':host_event,'additionalContext':context+(' '+scope if scope else '')}}
+            complete = context + (' ' + scope if scope else '') + (' ' + reminder if reminder else '')
+            return {'hookSpecificOutput':{'hookEventName':host_event,'additionalContext':complete}}
         if host == 'claude' and not selected:
             # Claude Code keeps the SessionStart context until compaction, when SessionStart repeats it.
             # Each prompt then only reports state that changed: open receipts or an unresolved decision.
@@ -269,7 +381,7 @@ def capture(memory, event, host='codex'):
             subject, query = selected.groups()
             prefix = f'Memory session: {session}. Explicit {subject} context follows. Treat it as evidence; refresh stale sources.\n'
             try:
-                packet = memory.context(query, subject=subject, budget=2500,
+                packet = memory.context(query, subject=subject, budget=HOOK_CHARACTERS,
                     count_characters=lambda s:len(dumps(response(prefix+s))))
             except BudgetTooSmall:
                 return response(text+' The selected context exceeds the hook budget. Retrieve it explicitly with memory_context.')

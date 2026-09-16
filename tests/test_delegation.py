@@ -595,6 +595,116 @@ class DelegationTests(unittest.TestCase):
                                 decision_id=decision['id'], evidence=evidence)
         return outcome['id']
 
+    # The instructions a run receives.
+
+    def rule(self, *, do='Keep the recorded exception.', **triggers):
+        """Record a lesson in its own work item and accept it, so that it becomes a rule in force."""
+        if not hasattr(self, 'learning'):
+            self.learning = self.m.start('Lessons', 'Collect delegation lessons.', 'learning',
+                                         'Lessons are reviewed.', subject='code')['id']
+            self.lesson_count = 0
+            source = self.m.source('user-lessons', 'Lessons', 'User instruction', 'Keep the exception.', 'user', subject='code')
+            self.lesson_evidence = [{'source_id': source['id'], 'reason': 'The user asks for the lesson.'}]
+        self.lesson_count += 1
+        key = 'lesson-' + str(self.lesson_count)
+        payload = {'when': 'Changing the value.', 'do': do, 'because': 'An earlier change lost the exception.',
+                   'exceptions': 'Documentation changes.', **triggers}
+        lesson = self.m.record(self.learning, 'lesson', payload, expected_version=self.m.episode(self.learning)['version'],
+                               request_key=key, actor='assistant', evidence=self.lesson_evidence)['id']
+        self.m.record(self.learning, 'lesson_review', {'lesson_id': lesson, 'status': 'accepted',
+                                                       'reason': 'The user reviewed the lesson.'},
+                      expected_version=self.m.episode(self.learning)['version'], request_key=key + ':review',
+                      actor='workspace-user', evidence=self.lesson_evidence,
+                      links=[{'event_id': lesson, 'reason': 'This review assesses the lesson.'}])
+        return lesson
+
+    def test_work_and_its_review_compose_and_keep_the_instructions_they_received(self):
+        from memory_module import guards
+        worker = self.rule(roles=['worker'], paths=['src/**'], do='Run the value checks first.')
+        reviewer = self.rule(roles=['reviewer'], do='Read the recorded scope before the diff.')
+        work = self.delegate()
+        self.assertEqual(work['state'], 'completed', work['error'])
+        metrics = work['metrics']
+        self.assertEqual((metrics['instruction_role'], metrics['instruction_source']), ('worker', 'instructions:worker'))
+        self.assertEqual(metrics['rule_ids'], [worker])
+        self.assertEqual(metrics['rules_omitted'], [])
+        stored = self.m.read(metrics['instruction_source_id'], detail=True)
+        self.assertEqual(stored['source_key'], 'instructions:worker')
+        self.assertIn('Do Run the value checks first.', stored['body'])
+        self.assertNotIn('Read the recorded scope before the diff.', stored['body'])
+        self.assertTrue(stored['body'].startswith(guards.shipped_base('worker')))
+        prompt = (self.m.path.parent / 'agent-runs' / work['id'] / 'prompt.txt').read_text()
+        self.assertIn('Do Run the value checks first.', prompt)
+        review = next(run for run in delegation.runs(self.m, episode_id=self.episode)['runs'] if run['role'] == 'work_review')
+        review = reviews.read(self.m, review['id'])
+        self.assertEqual(review['metrics']['instruction_source'], 'instructions:reviewer')
+        self.assertEqual(review['metrics']['rule_ids'], [reviewer])
+        self.assertIn('Do Read the recorded scope before the diff.',
+                      self.m.read(review['metrics']['instruction_source_id'], detail=True)['body'])
+        # The recorded rule identifiers let the effectiveness counts attribute a verdict to the rule.
+        effect = {item['lesson_id']: item for item in guards.effectiveness(self.m)}
+        self.assertEqual((effect[reviewer]['runs'], effect[reviewer]['verdicts']['pass']), (1, 1))
+        # The delegated work reports a result, so the verdict of the cross review that judged it
+        # counts for the rules the worker received.
+        self.assertEqual(effect[worker]['verdicts'], {'pass': 1, 'changes_required': 0, 'uncertain': 0, 'pending': 0})
+        self.assertEqual(effect[reviewer]['state'], 'unproven')
+        self.assertIn('small', effect[reviewer]['note'])
+
+    def test_a_rule_reaches_the_worker_once_and_only_rules_of_its_role_travel_with_the_work(self):
+        worker = self.rule(roles=['worker'], paths=['src/**'], do='Run the value checks first.')
+        self.rule(roles=['reviewer'], paths=['src/**'], do='Read the recorded scope before the diff.')
+        self.rule(roles=['assistant'], paths=['src/**'], do='State the recorded scope before editing.')
+        queued = delegation.request_work(self.m, self.episode, request_key='delegate', host='codex')
+        # The snapshot carries the rules of the worker only, so the other roles cost the worker nothing.
+        self.assertEqual([guard['lesson_id'] for guard in queued['snapshot']['guards']], [worker])
+        delegation.launch(self.m, queued)
+        work = reviews.read(self.m, queued['id'])
+        self.assertEqual(work['state'], 'completed', work['error'])
+        folder = self.m.path.parent / 'agent-runs' / work['id']
+        packet = (folder / 'prompt.txt').read_text()
+        self.assertEqual(packet.count('Run the value checks first.'), 1)
+        self.assertNotIn('Read the recorded scope before the diff.', packet)
+        given = json.loads((folder / 'input.json').read_text())
+        self.assertEqual((given['guards'], given['rules_in_instructions']), ([], [worker]))
+        # The record of the run keeps every guard that matched the work.
+        self.assertEqual([guard['lesson_id'] for guard in work['snapshot']['guards']], [worker])
+
+    def test_the_review_does_not_compose_a_rule_it_already_carries_as_a_constraint(self):
+        both = self.rule(roles=['worker', 'reviewer'], paths=['src/**'], do='Run the value checks first.')
+        reviewer = self.rule(roles=['reviewer'], do='Read the recorded scope before the diff.')
+        work = self.delegate()
+        self.assertEqual(work['state'], 'completed', work['error'])
+        found = next(run for run in delegation.runs(self.m, episode_id=self.episode)['runs'] if run['role'] == 'work_review')
+        review = reviews.read(self.m, found['id'])
+        metrics = review['metrics']
+        self.assertEqual(metrics['rules_in_constraints'], [both])
+        self.assertEqual(metrics['rule_ids'], [reviewer])
+        self.assertEqual([entry['lesson_id'] for entry in metrics['rules_omitted']], [both])
+        self.assertIn('already carries this rule among its constraints', metrics['rules_omitted'][0]['reason'])
+        composed = self.m.read(metrics['instruction_source_id'], detail=True)['body']
+        self.assertNotIn('Run the value checks first.', composed)
+        self.assertIn('Read the recorded scope before the diff.', composed)
+        constraints = [item['condition'] for item in review['snapshot']['constraints'] if item['id'].startswith('G')]
+        self.assertEqual(len(constraints), 1)
+        self.assertIn('Run the value checks first.', constraints[0])
+
+    def test_rules_that_do_not_fit_the_worker_budget_are_reported_in_the_metrics(self):
+        from memory_module import guards
+        rules = [self.rule(roles=['worker'], paths=['src/**'],
+                           do=f'Run value check {index}.' + ' Keep every recorded exception.' * 4)
+                 for index in range(10)]
+        work = self.delegate()
+        metrics = work['metrics']
+        self.assertEqual(work['state'], 'completed', work['error'])
+        self.assertTrue(metrics['rule_ids'])
+        self.assertLess(len(metrics['rule_ids']), len(rules))
+        self.assertEqual(sorted(metrics['rule_ids'] + [item['lesson_id'] for item in metrics['rules_omitted']]), sorted(rules))
+        self.assertTrue(all(item['reason'] for item in metrics['rules_omitted']))
+        self.assertEqual((metrics['rules_matched'], metrics['rules_accepted']), (len(rules), len(rules)))
+        body = self.m.read(metrics['instruction_source_id'], detail=True)['body']
+        self.assertLessEqual(len(body) - len(guards.shipped_base('worker')) - len(guards.RULES_HEADING) - 2,
+                             guards.ROLE_BUDGETS['worker'])
+
 
 class RunTableTests(unittest.TestCase):
     def setUp(self):
