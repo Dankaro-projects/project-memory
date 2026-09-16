@@ -20,7 +20,7 @@ USER_ACTOR = "workspace-user"
 # Actor names that stand for the person. An assistant records what the user said in the
 # text of a record, under its own actor name, so every record keeps its true author.
 RESERVED_ACTORS = {USER_ACTOR, "user", "human", "owner", "customer", "client", "me"}
-KINDS = {"decision", "action", "outcome", "research", "lesson", "note", "review", "correction", "action_result", "follow_up", "episode_status", "lesson_review", "work_plan", "sprint"}
+KINDS = {"decision", "action", "outcome", "research", "lesson", "note", "review", "correction", "action_result", "follow_up", "episode_status", "lesson_review", "work_plan", "sprint", "hypothesis"}
 ASSESSMENTS = {"pending", "good", "bad", "unknown"}
 # Source keys that hold the instructions of an agent role. The base text is written by the user
 # in the control panel and the composed text of a run is written by Project Memory itself, so an
@@ -327,6 +327,10 @@ class Memory(Workflow):
     def _validate_payload(self, kind, payload):
         from .planning import validate_payload as validate_plan
         from . import guards
+        if kind == 'hypothesis':
+            from .focus import validate_hypothesis
+            validate_hypothesis(payload)
+            return
         if validate_plan(kind, payload):
             return
         if kind == "lesson_review" and isinstance(payload, dict):
@@ -434,6 +438,12 @@ class Memory(Workflow):
             validate_event(self, episode, kind, payload, evidence, decision_id, links)
             from .planning import validate_event as validate_plan
             validate_plan(self, episode, kind, payload, evidence)
+            if kind == 'work_plan':
+                from .planning import validate_focus_change
+                validate_focus_change(self, episode_id, payload, actor)
+            if kind == 'hypothesis':
+                from .focus import check_hypothesis
+                check_hypothesis(self, episode, payload, supersedes, actor)
             for link in links:
                 self._event(link["event_id"])
             if kind in {"action", "outcome"}:
@@ -463,7 +473,7 @@ class Memory(Workflow):
             elif kind in {'work_plan', 'sprint'}:
                 previous = self.db.execute('SELECT id FROM events WHERE episode_id=? AND kind=? ORDER BY seq DESC LIMIT 1',
                                            (episode_id, kind)).fetchone()
-            if (previous["id"] if previous else None) != supersedes:
+            if kind != 'hypothesis' and (previous["id"] if previous else None) != supersedes:
                 raise Conflict("supersedes must identify the latest decision/outcome or plan being revised.")
             event_id, seq = _id("event"), expected_version + 1
             if kind == 'decision':
@@ -482,6 +492,9 @@ class Memory(Workflow):
             if kind in {'work_plan', 'sprint'}:
                 from .schema import enable_plans
                 enable_plans(self)
+            elif kind == 'hypothesis':
+                from .schema import enable_hypotheses
+                enable_hypotheses(self)
             self.db.execute("INSERT INTO events VALUES (?,?,?,?,?,?,?,?,?,?,?,?)", (
                 event_id, episode_id, seq, kind, dumps(payload), self.now(), actor,
                 decision_id, supersedes, request_key, signature, episode["subject"]))

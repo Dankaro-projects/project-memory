@@ -120,6 +120,9 @@ def trimmed(result, key, budget):
 
 # Payload fields whose value is more than text. Each record kind takes the rules of the fields it declares.
 PAYLOAD_RULES = {
+    'focus': obj({'problem': S, 'check': {'type': 'object'},
+                  'max_attempts': {'type': 'integer', 'minimum': 1, 'maximum': 3},
+                  'mode': {'type': 'string', 'enum': ['relay', 'parallel']}}, ['problem']),
     'depends_on': {'type': 'array', 'maxItems': 30, 'items': obj({'episode_id': S, 'reason': S}, ['episode_id', 'reason'])},
     'sprint_id': {'type': ['string', 'null']},
     'paths': {'type': 'array', 'items': S, 'maxItems': 100},
@@ -137,6 +140,9 @@ def payload_rule(kind):
     properties = {key: S for key in required + optional}
     if kind == 'decision':
         properties.update(project_revision={'type': 'integer', 'minimum': 0}, work_plan_id=S)
+    if kind == 'hypothesis':
+        properties['attempt'] = {'type': 'integer', 'minimum': 1, 'maximum': 3}
+        properties['state'] = {'type': 'string', 'enum': ['open', 'confirmed', 'ruled_out']}
     typed(properties, COUNTS, {'type': 'integer', 'minimum': 0})
     typed(properties, TEXT_LISTS, {'type': 'array', 'items': S, 'maxItems': 30})
     if 'roles' in properties:
@@ -169,7 +175,11 @@ def operation_rules(operation):
                                         'minItems': 1, 'maxItems': 3},
                               'keywords': {'type': ['array', 'null'], 'items': S, 'maxItems': 30},
                               'paths': {'type': ['array', 'null'], 'items': S, 'maxItems': 100}}}
-    hidden = {'merge': {'override_reason'}, 'source': {'internal'}}
+    rules['focus_propose'] = {'max_attempts': {'type': 'integer', 'minimum': 1, 'maximum': 3},
+                              'mode': {'type': 'string', 'enum': ['relay', 'parallel']},
+                              'hypotheses': {'type': 'array', 'minItems': 1, 'maxItems': 3,
+                                             'items': obj({'statement': S, 'approach': S}, ['statement', 'approach'])}}
+    hidden = {'merge': {'override_reason'}, 'source': {'internal'}, 'delegate': {'focus_attempt'}}
     return rules.get(operation, {}), hidden.get(operation, set())
 
 
@@ -216,6 +226,11 @@ def validate_write_fields(memory, args):
 # Schemas returned by memory_get schema, one entry per operation. These entries are read only.
 
 OPERATION_SCHEMAS = {
+    'focus_propose': {'operation': 'focus_propose', 'required': ['episode_id', 'problem', 'actor'],
+                      'optional': ['max_attempts', 'mode', 'hypotheses'],
+                      'rules': 'Propose a focused problem with 1 to 3 distinct hypotheses, each with statement and approach. '
+                               'max_attempts is 1 to 3, default 2; mode is relay or parallel, default relay. '
+                               'Parallel allows at most 2 attempts. Only the user sets the check and starts attempts in the control panel.'},
     'sync': {'operation': 'sync', 'fields': {'limit': 100, 'offset': 0, 'check': False}, 'rules': 'Refresh previously selected Markdown. Use limit 1–1000, a nonnegative offset and a boolean check. check inspects changes without capturing new versions.'},
     'approve_requirements': {'operation': 'approve_requirements', 'required': ['requirements', 'reason', 'actor', 'evidence', 'expected_version'], 'types': {'requirements': 'List of 1–100 complete requirements.', 'reason': 'Text.', 'actor': 'Text.', 'evidence': '[{source_id, reason}]', 'expected_version': 'Current nonnegative direction version.'}, 'rules': 'Read memory_get direction first. Append only explicitly approved requirements with current approval evidence; this schema does not grant approval.'},
     'progress': {'operation': 'progress', 'required': ['episode_id', 'expected_version', 'payload', 'actor'], 'payload': {'state': 'Optional work state.', 'next_action': 'Optional complete sentence.', 'reason': 'Required explanation.'}, 'rules': 'Provide state or next_action. This preserves scope, autonomy, dependencies and evidence. Pass session_id when claiming agent work. Use plan for intentional scope changes; progress cannot waive completion checks. When Done is rejected only because the required outcome check is missing, the rejection starts that check and reports it under agent_check.'},
@@ -283,6 +298,7 @@ def schema(kind):
         return {'fields': {k: ('required' if p.default is inspect.Parameter.empty else p.default) for k, p in parameters if k != 'self'},
                 'choices': {'subject': SUBJECTS, 'origin': ['user', 'tool', 'document']}}
     fields = {
+        'hypothesis': (['statement', 'approach', 'state'], ['run_id', 'attempt', 'evidence_summary']),
         'decision': (['decision', 'why', 'expected', 'reconsider_when', 'uncertainty', 'alternatives'],
                      ['assumptions', 'review_after', 'follow_up_owner', 'model', 'condition', 'case_id', 'lessons_considered']),
         'action': (['action'], ['host_reference']),
@@ -455,6 +471,7 @@ def view_machine(memory, request):
 
 
 VIEWS = {
+    'focus': ('Focused attempts for an id, or overall check and cost totals.', lambda memory, request: module('focus').view(memory, request.id) if request.id else module('focus').report(memory)),
     'next': ('Intent, scope, dependencies and next action of a work item id, or without an id the work that can start now, optionally filtered by state.', lambda memory, request: paged_cards(module('planning').next_work(memory, episode_id=request.id, session_id=request.args.get('session_id'), limit=request.limit, offset=request.offset, subject=request.args.get('subject'), state=request.args.get('state')), request)),
     'record': ('One complete record by id; page a source body with body_offset.', view_record),
     'records': ('Up to 20 complete records by ids.', view_records),
@@ -594,6 +611,7 @@ def write_work_review(call, memory, request_key, data, session_id, receipt_ids):
 
 
 OPERATIONS = {
+    'focus_propose': ('Propose a focused problem and distinct hypotheses.', Operation('focus:propose'), 'focus_propose'),
     'start': ('Open an episode (title, objective, task_type, criterion, subject).', Operation('core:Memory.start', key=False), 'start'),
     'source': ('Store evidence text (source_key, title, summary, body, origin, subject).', Operation('core:Memory.source', key=False), 'source'),
     'document': ('Capture a local Markdown file by absolute path.', Operation('core:Memory.document', special=write_document), 'document'),
@@ -738,6 +756,8 @@ def dispatch(memory, name, arguments):
     if name == 'memory_write':
         validate_write_fields(memory, args)
         actor = args['data'].get('actor')
+        if isinstance(actor, str) and actor.strip().lower().replace('_', ' ').replace('-', ' ') == 'focus orchestrator':
+            raise InvalidRecord(module('focus').FOCUS_ACTOR_RESERVED)
         if isinstance(actor, str) and actor.strip().lower().replace('_', ' ').replace('-', ' ') in RESERVED_NAMES:
             raise InvalidRecord('MCP writes must identify the assistant that records them. Actor names that stand for the '
                                 'person, such as workspace-user, user and human, are reserved, so that an answer or an '

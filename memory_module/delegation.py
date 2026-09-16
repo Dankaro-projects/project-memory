@@ -89,7 +89,10 @@ def branch_name(episode_id, run_id):
 
 def _ensure_receipts(memory):
     if not codex_host.exists(memory):
-        codex_host.initialize(memory)
+        # Focus requests may already hold a write; executescript would commit that transaction.
+        with memory._write():
+            for statement in reviews._statements(codex_host.HOST_SCHEMA):
+                memory.db.execute(statement)
 
 
 def _receipt(memory, run, event_name, payload, key):
@@ -102,6 +105,26 @@ def _receipt(memory, run, event_name, payload, key):
 
 def _insert(memory, *, host, parent_run=None, details=None, **fields):
     """Insert a queued delegated run, naming its host and its parent run in the receipt."""
+    focus = fields['snapshot'].get('focus')
+    if fields['role'] == 'work' and focus:
+        # Focused siblings share a role family; all other work and the project limit still apply.
+        active = reviews.active_runs(memory)
+        if any(run['episode_id'] == fields['episode_id'] and run['role'] == 'work'
+               and (run['snapshot'].get('focus') or {}).get('start_key') != focus['start_key'] for run in active):
+            raise Conflict(reviews.FAMILY_CONFLICTS['work'])
+        if len(active) >= reviews.PROJECT_ACTIVE_LIMIT:
+            raise Conflict('Two agent runs are already active for this project. Wait for one of them or cancel it first.')
+        now = memory.now()
+        memory.db.execute('INSERT INTO review_runs '
+                          '(id,episode_id,role,signature,host,session_id,state,created_at,updated_at,request_key,snapshot,parent_run,workspace,branch) '
+                          'VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+                          (fields['run_id'], fields['episode_id'], fields['role'], hashlib.sha256(dumps(fields['snapshot']).encode()).hexdigest(),
+                           host, fields['session_id'], 'queued', now, now, fields['request_key'], dumps(fields['snapshot']),
+                           parent_run, fields.get('workspace'), fields.get('branch')))
+        codex_host.receipt(memory, session_id=fields['session_id'] or fields['run_id'], event_name=fields['event_name'],
+                           episode_id=fields['episode_id'], payload={'run_id': fields['run_id'], 'role': fields['role'],
+                           'host': host, 'parent_run': parent_run, **(details or {})}, key=fields['run_id'] + ':requested')
+        return
     reviews.insert_run(memory, host=host, parent_run=parent_run,
                        payload={'host': host, 'parent_run': parent_run, **(details or {})}, **fields)
 
@@ -143,7 +166,7 @@ def work_sources(memory, plan_id, project, uncommitted):
     return result, captured
 
 
-def request_work(memory, episode_id, *, request_key, host=None, session_id='', max_seconds=1800):
+def request_work(memory, episode_id, *, request_key, host=None, session_id='', max_seconds=1800, focus_attempt=None):
     """Queue delegated work after checking the plan, the repository and the configured hosts."""
     from .planning import latest
     from . import guards
@@ -206,6 +229,12 @@ def request_work(memory, episode_id, *, request_key, host=None, session_id='', m
         if prior:
             return prior
         chosen = hosts.choose(memory, preferred, allowed=config['hosts'])
+        if focus_attempt:
+            sibling = memory.db.execute("""SELECT snapshot FROM review_runs WHERE episode_id=? AND role='work'
+                AND json_extract(snapshot,'$.focus.start_key')=? ORDER BY rowid LIMIT 1""",
+                (episode_id, focus_attempt['start_key'])).fetchone()
+            if sibling:
+                base = json.loads(sibling[0])['base_commit']
         run_id = reviews.new_run_id()
         branch = branch_name(episode_id, run_id)
         snapshot = {
@@ -217,6 +246,8 @@ def request_work(memory, episode_id, *, request_key, host=None, session_id='', m
             'base_commit': base, 'branch': branch,
             'sources': sources, 'uncommitted_outside_paths': outside[:100], 'captured_uncommitted_paths': captured[:100],
             'limitations': limitations, 'execution_limit_seconds': max_seconds}
+        if focus_attempt is not None:
+            snapshot['focus'] = focus_attempt
         _insert(memory, run_id=run_id, episode_id=episode_id, role='work', host=chosen, snapshot=snapshot,
                 request_key=request_key, session_id=session_id, workspace=WORKTREES + '/' + run_id, branch=branch,
                 event_name='DelegationRequested',
@@ -277,6 +308,17 @@ def worker_prompt(snapshot, deadline, timeout, instructions=None):
     for limitation in snapshot.get('limitations') or [NETWORK_LIMITATION]:
         prompt += limitation + ' '
     prompt += '\n'
+    if snapshot.get('focus'):
+        from .focus import RULED_OUT_LIMIT
+        focus = snapshot['focus']
+        ruled = ' '.join(f'{number}. {entry["statement"]} Evidence: {entry["evidence_summary"]}'
+                         for number, entry in enumerate(focus['ruled_out'], 1)) or 'None.'
+        lines = [('Focused problem: ' + focus['problem'], 300),
+                 ('Hypothesis of this attempt: ' + focus['hypothesis']['statement'] + ' Approach: '
+                  + focus['hypothesis']['approach'], 300), ('Ruled out hypotheses: ' + ruled, RULED_OUT_LIMIT)]
+        for line, limit in lines:
+            line = ' '.join(line.splitlines())
+            prompt += (line if len(line) <= limit else line[:limit - 3] + '...') + '\n'
     prompt += (f'The hard deadline is {deadline.isoformat()} ({timeout} seconds total). '
                f'Reserve the final {min(60, timeout / 4):g} seconds to return the report with result partial when work remains.\n')
     return prompt
@@ -289,6 +331,10 @@ def execute(memory, run_id, timeout=None):
     run = reviews.read(memory, run_id)
     if run['role'] == 'work_review':
         reviews.execute(memory, run_id, timeout=timeout)
+        parent = reviews.read(memory, run['parent_run'])
+        if parent['snapshot'].get('focus') and reviews.read(memory, run_id)['state'] not in ACTIVE:
+            from .focus import after_review
+            after_review(memory, run_id)
     elif run['role'] == 'work':
         if _execute_work(memory, run, timeout):
             after_work(memory, run_id)
@@ -380,7 +426,13 @@ def _execute_work(memory, run, timeout):
                 outside = _store_changes(memory, run, folder, metrics)
         found = hosts.run_state(run['host'], metrics, report, missing_report='The worker did not return a report.',
                                 exit_message='The host work process exited unsuccessfully. Inspect its private event and stderr logs.')
-        if found and found[0] == 'host_unavailable':
+        check_files = set((snapshot.get('focus') or {}).get('check_files', []))
+        changed_check = [path for path in metrics['changed_files'] if path in check_files]
+        if changed_check:
+            from .focus import CHECK_FILE_REFUSED
+            state, error = 'scope_violation', CHECK_FILE_REFUSED.format(files=', '.join(changed_check))
+            metrics['check_files_changed'] = changed_check
+        elif found and found[0] == 'host_unavailable':
             state, error, metrics['termination_reason'] = found
         elif outside:
             state = 'scope_violation'
@@ -417,6 +469,20 @@ def after_work(memory, run_id):
     reviews.note_host(memory, run['host'], metrics)
     reviews.propose_lessons(memory, run_id)
     project = Path(run['snapshot']['project'])
+    if run['snapshot'].get('focus'):
+        from .focus import judge
+        if run['state'] == 'host_unavailable':
+            cleanup(project, project / run['workspace'], run['branch'])
+            try:
+                follow = reroute(memory, run)
+            except (InvalidRecord, Conflict) as exc:
+                _receipt(memory, run, 'DelegationFollowUpNotStarted',
+                         {'run_id': run_id, 'state': run['state'], 'error': str(exc)}, run_id + ':follow-up-not-started')
+                follow = None
+            if follow:
+                launch(memory, follow)
+                return follow
+        return judge(memory, run_id)
     try:
         if run['state'] == 'host_unavailable':
             cleanup(project, project / run['workspace'], run['branch'])
@@ -465,6 +531,9 @@ def start_missing_reviews(memory, *, limit=10):
     started = []
     for row in rows:
         run = reviews.read(memory, row[0])
+        if run['snapshot'].get('focus') and not memory.db.execute("""SELECT 1 FROM host_receipts
+                WHERE event_name='FocusSelected' AND json_extract(payload,'$.run_id')=?""", (run['id'],)).fetchone():
+            continue
         project = Path(run['snapshot']['project'])
         if not (run['metrics'] or {}).get('changed_files') or settlement(memory, run['id']) or not (project / run['workspace']).exists():
             continue
@@ -501,6 +570,12 @@ def reroute(memory, run):
                 request_key=run['id'] + ':reroute', session_id=run['session_id'], parent_run=run['id'],
                 workspace=WORKTREES + '/' + run_id, branch=branch, event_name='DelegationRerouted',
                 details={'from_host': run['host'], 'to_host': host, 'reason': (run['metrics'] or {}).get('host_unavailable')})
+        if run['snapshot'].get('focus'):
+            from .focus import _receipt as focus_receipt
+            attempt = run['snapshot']['focus']
+            focus_receipt(memory, 'FocusAttemptRerouted', {'episode_id': run['episode_id'], 'start_key': attempt['start_key'],
+                          'attempt': attempt['attempt'], 'from_run': run['id'], 'to_run': run_id,
+                          'from_host': run['host'], 'to_host': host})
     return reviews.read(memory, run_id)
 
 

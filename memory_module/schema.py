@@ -29,7 +29,7 @@ CREATE TRIGGER checked_event BEFORE INSERT ON events BEGIN
   OR NOT json_valid(NEW.payload) THEN RAISE(ABORT, 'Invalid event ID or JSON.') END;
  SELECT CASE WHEN NEW.kind NOT IN
  ('decision','action','outcome','research','lesson','note','review','correction',
- 'action_result','follow_up','episode_status','lesson_review','work_plan','sprint')
+ 'action_result','follow_up','episode_status','lesson_review','work_plan','sprint','hypothesis')
  THEN RAISE(ABORT, 'Unknown event kind.') END;
  SELECT CASE WHEN NEW.subject != (SELECT subject FROM episodes WHERE id=NEW.episode_id)
  THEN RAISE(ABORT, 'Event subject must match its episode.') END;
@@ -53,12 +53,26 @@ def enable_plans(memory):
         raise InvalidRecord('The database is missing its event validation trigger.')
     if "'work_plan','sprint'" in row[0]:
         return
-    marker = "'episode_status','lesson_review')"
+    marker = "'episode_status','lesson_review'"
     if marker not in row[0]:
         raise InvalidRecord('The event validation trigger differs from the supported schema; inspect it before upgrading.')
-    updated = row[0].replace(marker, "'episode_status','lesson_review','work_plan','sprint')")
+    updated = row[0].replace(marker, "'episode_status','lesson_review','work_plan','sprint'")
     memory.db.execute('DROP TRIGGER checked_event')
     memory.db.execute(updated)
+
+
+def enable_hypotheses(memory):
+    """Extend the event trigger without changing existing records, inside the caller's write."""
+    from .core import InvalidRecord
+    enable_plans(memory)
+    row = memory.db.execute("SELECT sql FROM sqlite_master WHERE type='trigger' AND name='checked_event'").fetchone()
+    if "'hypothesis'" in row[0]:
+        return
+    marker = "'work_plan','sprint')"
+    if marker not in row[0]:
+        raise InvalidRecord('The event validation trigger differs from the supported schema; inspect it before upgrading.')
+    memory.db.execute('DROP TRIGGER checked_event')
+    memory.db.execute(row[0].replace(marker, "'work_plan','sprint','hypothesis')"))
 
 
 def migrate(source, destination):

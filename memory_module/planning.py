@@ -8,7 +8,7 @@ CARD_LIMIT = 5000
 FIELDS = {
     'work_plan': ({'state', 'next_action', 'scope', 'autonomy', 'reason'},
                   {'sprint_id', 'depends_on', 'owner', 'priority', 'session_id', 'paths',
-                   'item_type', 'acceptance', 'parent_id'}),
+                   'item_type', 'acceptance', 'parent_id', 'focus'}),
     'sprint': ({'starts_on', 'ends_on', 'status', 'reason'}, set()),
 }
 # A revision of these plan fields changes what the work covers, so an earlier assessment no longer applies.
@@ -66,6 +66,9 @@ def validate_payload(kind, payload):
             validate_acceptance(value)
         elif kind == 'work_plan' and key == 'parent_id':
             _text(value, 'parent_id', 200)
+        elif kind == 'work_plan' and key == 'focus':
+            from .focus import validate_block
+            validate_block(value)
         else:
             _text(value, key, 2000)
     if kind == 'sprint':
@@ -206,11 +209,28 @@ def validate_event(memory, episode, kind, payload, evidence):
             raise InvalidRecord('Changed scope or dependencies require a new assessment before Done. Save the revised plan in Review first.')
 
 
+def validate_focus_change(memory, episode_id, payload, actor):
+    """Enforce check ownership for both plan saves and generic event writes."""
+    from .core import InvalidRecord, USER_ACTOR
+    from .focus import CHECK_USER_ONLY
+    previous = latest(memory, episode_id, 'work_plan') if episode_id else None
+    before = ((previous or {}).get('focus') or {}).get('check')
+    after = (payload.get('focus') or {}).get('check')
+    if actor != USER_ACTOR and before != after:
+        raise InvalidRecord(CHECK_USER_ONLY)
+
+
 def save(memory, kind, *, payload, actor, evidence, episode_id=None, expected_version=None,
          title=None, objective=None, criterion=None, subject=None, request_key, session_id=None, links=None):
     """Create work and its first plan atomically, or update at an explicit version."""
     from .core import InvalidRecord
     payload = dict(payload)
+    if kind == 'work_plan':
+        block = payload.get('focus')
+        if block is not None:
+            from .focus import validate_block
+            validate_block(block)
+        validate_focus_change(memory, episode_id, payload, actor)
     if kind == 'work_plan' and payload.get('state') == 'in_progress' and payload.get('owner', 'agent') == 'agent':
         if not session_id:
             raise InvalidRecord('Use the host session_id when claiming work in progress.')
