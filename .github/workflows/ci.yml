@@ -11,6 +11,10 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
         python: ['3.11', '3.14']
+        # Every test runs. They are shared between two jobs because a Windows
+        # runner needs fifteen to twenty minutes for the whole suite, where this
+        # machine needs about one.
+        shard: [1, 2]
     runs-on: ${{ matrix.os }}
     env:
       PYTHONUTF8: '1'
@@ -21,16 +25,24 @@ jobs:
           python-version: ${{ matrix.python }}
       - uses: astral-sh/setup-uv@v6
       - run: python scripts/check_publication.py
-      - run: python -u -X faulthandler -m unittest discover -s tests -v
+      - name: Run the tests of this shard
+        run: python -u -X faulthandler -m unittest -v $(python scripts/shard_tests.py --shard ${{ matrix.shard }} --of 2)
+        shell: bash
         timeout-minutes: 20
         env:
           PYTHONFAULTHANDLER: '1'
-      - run: python -m tests.integration.document_case --output results/documents
-      - run: python -m tests.integration.host_example --output results/host-example
-      - run: node tests/browser/static_check.cjs
-      - run: uv build
-      - run: python scripts/check_artifacts.py dist
-      - run: python scripts/installed_smoke.py dist
+      - if: matrix.shard == 1
+        run: python -m tests.integration.document_case --output results/documents
+      - if: matrix.shard == 1
+        run: python -m tests.integration.host_example --output results/host-example
+      - if: matrix.shard == 1
+        run: node tests/browser/static_check.cjs
+      - if: matrix.shard == 2
+        run: uv build
+      - if: matrix.shard == 2
+        run: python scripts/check_artifacts.py dist
+      - if: matrix.shard == 2
+        run: python scripts/installed_smoke.py dist
   browser:
     runs-on: ubuntu-latest
     steps:
