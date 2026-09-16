@@ -59,7 +59,7 @@ def source_file(name):
     return (
         name in ROOT_FILES or name in FIXED_FILES or runtime_file(name)
         or (path.parent.as_posix() == 'docs' and path.name in DOCS)
-        or (path.parent.as_posix() in {'scripts', 'tests', 'tests/integration'}
+        or (path.parent.as_posix() in {'scripts', 'tests', 'tests/integration', 'tests/browser'}
             and path.suffix == '.py' and not path.name.startswith('.'))
         or (path.parent.as_posix() == 'tests/browser' and path.suffix == '.cjs')
     )
