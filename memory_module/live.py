@@ -24,12 +24,9 @@ import uuid
 
 from . import Memory
 from . import api
-from .api import page  # Kept importable from this module for existing callers.
 from .core import MemoryError, InvalidRecord, Conflict, dumps
 from .documents import document_path, PREFIX
 from .install import atomic
-
-__all__ = ['Viewer', 'Handler', 'start', 'main', 'html', 'page']
 
 IDLE_SECONDS = 600
 MAX_ACTION_BYTES = 2_000_000
@@ -144,12 +141,9 @@ class Viewer(ThreadingHTTPServer):
             except OSError:
                 stats.append((str(path), None))
         stats.append(('project', self.project_state()))
-        from . import hosts
-        from .reviews import configured, exists
-        config = configured(self.memory)
-        if config:
-            # Unavailability expires with time, without a database write.
-            stats.append(('hosts', [hosts.availability(self.memory, host)['available'] for host in config['hosts']]))
+        from .reviews import exists
+        # Unavailability expires with time, without a database write.
+        stats.append(('hosts', [item['available'] for item in api.host_overview(self.memory)['hosts']]))
         if exists(self.memory):
             from datetime import datetime, timezone
             expired = [item['id'] for item in self.memory.db.execute("SELECT id,updated_at FROM review_runs WHERE state IN ('queued','running','cancelling')")

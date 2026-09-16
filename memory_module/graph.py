@@ -14,7 +14,6 @@ from .core import Conflict, InvalidRecord, _digest, _text, dumps
 
 LINK_TYPES = ('depends_on', 'blocks', 'implements', 'affects_component', 'relates_to', 'caused_by', 'learned_from', 'annotates',
               'uses', 'produces', 'part_of', 'owns', 'informs')
-AUTHORED_PREFIX = 'component:'
 SERVICE_NAME = re.compile(r'[a-z0-9][a-z0-9._-]{0,99}')
 EVENT_TITLE_KEYS = ('decision', 'summary', 'observed', 'question', 'do', 'text', 'next_action', 'reason', 'action')
 DECISION_KINDS = ('action', 'action_result', 'outcome', 'follow_up')
@@ -85,6 +84,16 @@ def _title(text):
     return text
 
 
+def event_title(payload, fallback):
+    """The title of an event: the first payload key that states what happened, otherwise the fallback."""
+    return next((payload[key] for key in EVENT_TITLE_KEYS if key in payload), fallback)
+
+
+def title_sql(column='payload'):
+    """The same title rule in SQL, for list queries that read many events at once."""
+    return 'coalesce(' + ','.join(f"json_extract({column},'$.{key}')" for key in EVENT_TITLE_KEYS) + ',kind)'
+
+
 def _episode_subject(memory, episode_id):
     if not episode_id:
         return 'general'
@@ -105,8 +114,7 @@ def node(memory, id):
         if value['kind'] == 'source':
             return {'id': id, 'kind': 'source', 'title': _title(value['title']), 'status': value['status'],
                     'subject': value['subject'], 'date': value['checked_at'], 'episode_id': None}
-        payload = value['payload']
-        title = next((payload[key] for key in EVENT_TITLE_KEYS if key in payload), value['kind'].replace('_', ' '))
+        title = event_title(value['payload'], value['kind'].replace('_', ' '))
         return {'id': id, 'kind': value['kind'], 'title': _title(title), 'status': value['status'],
                 'subject': value['subject'], 'date': value['created_at'], 'episode_id': value['episode_id']}
     if id.startswith('host_'):

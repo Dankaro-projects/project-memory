@@ -3,7 +3,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from memory_module import Memory, architecture, graph, planning
+from memory_module import Memory, arch_authored, graph, planning
 from memory_module.architecture import component, components, model, save_component
 from memory_module.core import Conflict, InvalidRecord
 
@@ -240,7 +240,7 @@ class AuthoredLayerTests(ComponentFixture):
             self.assertEqual(graph.node(reader, team)['title'], 'Finance team')
         self.m = Memory(self.path)
         with Memory(self.path, read_only=True) as reader:
-            self.assertEqual(architecture._revision_details(reader, 'component:missing')['revisions'], 0)
+            self.assertEqual(arch_authored._revision_details(reader, 'component:missing')['revisions'], 0)
 
 
 if __name__ == '__main__':

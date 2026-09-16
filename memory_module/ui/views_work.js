@@ -149,11 +149,15 @@
     if (step.action === "continue_phase" && step.episode_id) return primary("Open the phase", (t) => P.openWork(step.episode_id, t));
     return null;
   }
+  const BASELINE = { not_established: "The requirements baseline is not established.", current: "The requirements baseline is approved.",
+    needs_review: "The requirements baseline needs review, because its approval evidence changed." };
   async function kickoffCard(now) {
-    if (!now.kickoff || now.kickoff.baseline !== "not_established") return null;
+    // Approving the requirements is one kickoff step among several, so the checklist stays until every step is done.
+    if (!now.kickoff || !now.kickoff.template) return null;
     const kickoff = await P.get("kickoff").catch((error) => ({ error }));
     const card = h("section", { class: "card kickoff", "aria-labelledby": "kickoff-title" }, h("h3", { id: "kickoff-title" }, "Kickoff checklist"));
     if (kickoff.error) return card.appendChild(P.errorState(kickoff.error)) && card;
+    if ((kickoff.next_step || {}).action === "kickoff_complete") return null;
     const questions = kickoff.questions || [];
     const answered = questions.filter((question) => question.answered).length;
     const open = (kickoff.documents || []).filter((doc) => doc.status !== "changed").length;
@@ -178,7 +182,8 @@
         }, "The template has no starter documents.")),
         section("Phases", listOf(kickoff.phases, (phase) => (phase.episode_id ? workButton({ ...phase, id: phase.episode_id, item_type: "phase" }, "kickoff-phase-")
           : checkItem(false, "Missing", h("span", null, phase.title + " is not recorded as a work item."))), "The template has no phases."))));
-    put(card, h("p", null, `This project uses the ${kickoff.title || P.words(kickoff.template)} template. The requirements baseline is not established. ` +
+    put(card, h("p", null, `This project uses the ${kickoff.title || P.words(kickoff.template)} template. ` +
+      `${BASELINE[(now.kickoff || {}).baseline] || BASELINE.not_established} ` +
       `${answered} of ${P.count(questions.length, "kickoff question")} ${verb(answered, "is", "are")} answered, ` +
       `${P.count(research, "research item")} ${verb(research, "is", "are")} open and ` +
       `${P.count(open, "starter document")} ${verb(open, "is", "are")} not filled.`),

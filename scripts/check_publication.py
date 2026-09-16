@@ -10,9 +10,8 @@ ROOT_FILES = {
     'SECURITY.md', 'pyproject.toml',
 }
 DOCS = {
-    'distribution.md', 'evidence.md', 'record-fields.md', 'releasing.md',
-    'setup.md', 'user-guide.md', 'work-board.md', 'workspace-agents.md',
-    'workspace-ui.md',
+    'agents.md', 'control-panel.md', 'evidence.md', 'record-fields.md',
+    'releasing.md', 'setup.md', 'user-guide.md',
 }
 FIXED_FILES = {
     '.agents/plugins/marketplace.json', '.claude-plugin/marketplace.json',

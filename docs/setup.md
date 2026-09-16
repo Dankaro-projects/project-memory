@@ -1,22 +1,34 @@
 # Setup and lifecycle
 
-Run commands inside the intended project or pass `--project /absolute/path`. A missing database is created only by `setup`; `serve`, `doctor` and `view` refuse a missing database rather than silently create an empty project.
+Run every command inside the intended project, or pass `--project /absolute/path`. Only `setup` and `init` create a database. `serve`, `doctor` and `view` refuse a missing database rather than creating an empty project.
 
-For everyday use, start with the [user guide](user-guide.md). Setup includes the viewer. Open it through the command or your assistant; `memory_module/viewer.html` is an internal template, not the workspace. No separate frontend installation or rebuild is required.
+For everyday use, start with the [user guide](user-guide.md). Setup includes the control panel; `memory_module/viewer.html` is an internal template, not your records. There is no separate interface to install and nothing to rebuild.
 
-## Select existing documents
+## A new project from a template
+
+```sh
+project-memory init ~/projects/pricing-tool --template product --client codex --client claude
+```
+
+`--template` takes `product`, `engagement` or `automation`. The command creates the folder, runs `git init` unless `--no-git` is given, writes the starter documents of the template that do not exist yet, captures them, connects each client you name, and records the phases of the template as work items with their dependencies. `--name` sets the project name and `--no-view` skips opening the panel. Repeating the command writes no document twice and creates no phase twice.
+
+Delegated work starts from the latest git commit, so commit the documents the work depends on before delegating.
+
+## An existing project
 
 ```sh
 project-memory setup --client codex --trust --document VISION.md --document DECISIONS.md
 ```
 
-The command opens the included live HTML viewer automatically. Use `--no-view` for headless setup. There is no separate HTML installation. `project-memory view` reopens the same local service and browser address.
+Setup connects one client and keeps the others. It preserves existing records, captures the documents you select, and opens the panel unless `--no-view` is given. Repeating it duplicates neither hooks nor unchanged source versions. Source documents stay where they are.
 
-Select **Work board** to see sprint work, blockers and decision history. The [work board guide](work-board.md) explains how the assistant records intent and resumes from the same state.
+If the project has no approved requirements, setup records explicitly that none are approved. You can supply agreed text with repeated `--requirement` arguments. Changing existing requirements needs a separate evidenced approval, not a setup flag.
 
-Repeated setup does not duplicate hooks or unchanged source versions. Source documents remain in place. If the project has no agreed requirements, setup stores an explicit statement that none have been approved. You can supply already agreed text using repeated `--requirement` arguments. Changing existing requirements requires a separate, evidenced approval, not a setup flag.
+`.memory/install.json` records, per client, the exact configuration that setup wrote. Adding a second client keeps the first one intact.
 
-The assistant can capture another selected file using `memory_write document`. It should use `memory_get direction` before an explicitly authorised `approve_requirements` operation. Direction returns approval metadata and versioned read pointers. Follow `read_requirements_with` to retrieve the complete requirements and approval evidence; `memory_get requirements` accepts `version` for an earlier revision, including the original version zero. Follow `more` and `next_offset` until all requirements and evidence have been read. The approval operation requires complete requirement sentences, an approval reason, actor, evidence references and the current version. File capture and approval are different actions.
+## Codex
+
+`--trust` enables the project integration so that Codex discovers the hooks without a further step. Setup writes a managed block to `.codex/config.toml` and the hook commands to `.codex/hooks.json`, and leaves every other entry alone. Codex receives nine lifecycle events. A configuration edit inside the managed block produces a conflict instead of being overwritten.
 
 ## Claude Code
 
@@ -24,17 +36,17 @@ The assistant can capture another selected file using `memory_write document`. I
 project-memory setup --client claude --trust --document VISION.md
 ```
 
-Setup adds a `project_memory` entry to `.mcp.json` in the project root and the hook commands to `.claude/settings.local.json`. Both files keep their other entries. The local settings file holds machine-specific launch paths and stays out of version control. `--trust` lists the server in `enabledMcpjsonServers` so Claude Code does not ask for approval; without it, approve the project server when a new session asks. Claude Code needs no separate hook trust step.
+Setup adds a `project_memory` entry to `.mcp.json` in the project root and the hook commands to `.claude/settings.local.json`. Both files keep their other entries. The local settings file holds machine specific paths and stays out of version control. `--trust` lists the server in `enabledMcpjsonServers` so that Claude Code does not ask for approval; without it, approve the project server when a new session asks. Claude Code needs no separate hook trust step.
 
-The hook command carries `--host claude`. Claude Code sends the same field names as Codex for tool events (`tool_name`, `tool_input`, `tool_use_id`, `tool_response`) and adds `transcript_path`, `cwd` and `permission_mode`, which are not stored. Codex numbers turns; Claude Code does not, so repeated lifecycle events in one session are kept distinct by their prompt identifier or capture time. Three differences from Codex remain:
+The hook command carries `--host claude`. Claude Code sends the same field names as Codex for tool events and adds `transcript_path`, `cwd` and `permission_mode`, which are not stored. Codex numbers turns; Claude Code does not, so repeated lifecycle events in one session stay distinct through the prompt identifier or the capture time. Three differences remain:
 
-- Claude Code has no `Interrupt` hook. `doctor` does not expect it for this client. An interrupted tool call leaves its `PreToolUse` receipt unconfirmed, which the assistant reconciles with evidence in the same way as after a Codex interruption.
-- Claude Code raises `PostToolUseFailure` instead of `PostToolUse` when a tool fails. It is stored as a `PostToolUse` receipt with `failed` set and the original event name in the payload, so the tool receipt closes and the failure remains visible.
-- Claude Code compacts the conversation automatically. `PreCompact` and `PostCompact` are recorded. The `SessionStart` hook returns additional context at startup, resume and after compaction: the memory session, any active decision with its version, and the number of unconfirmed tool calls. It never returns record text; the assistant retrieves that explicitly.
+- Claude Code has no `Interrupt` hook, so `doctor` expects eight events for this client. An interrupted tool call leaves its `PreToolUse` receipt unconfirmed, which the assistant reconciles with evidence as after a Codex interruption.
+- Claude Code raises `PostToolUseFailure` instead of `PostToolUse` when a tool fails. It is stored as a `PostToolUse` receipt with the failure retained and the original event name in the payload.
+- Claude Code compacts the conversation automatically. `PreCompact` and `PostCompact` are recorded, and `SessionStart` returns context at startup, at resume and after compaction: the memory session, any active decision with its version, the number of unconfirmed tool calls and, in a templated project without approved requirements, a pointer to the kickoff.
 
-Memory tool calls made through any server name that ends in the three tool names are not captured as receipts, which avoids recursive noise when the server is installed as `project_memory`, `project-memory` or through a plugin.
+Memory tool calls made through any server name ending in the three tool names are not captured as receipts, so a server installed as `project_memory`, `project-memory` or through a plugin creates no recursive noise.
 
-## Generic MCP configuration
+## Other MCP clients
 
 After `project-memory setup --client mcp`, adapt this configuration to the client's documented MCP settings:
 
@@ -49,17 +61,29 @@ After `project-memory setup --client mcp`, adapt this configuration to the clien
 }
 ```
 
-Use the absolute installed executable if the desktop client cannot find it on PATH. `PROJECT_MEMORY_PROJECT` can supply the project directory when a client supports environment configuration. There is no global active-project pointer. Cloud-only clients cannot reach a local stdio process.
+Use the absolute installed path if the client cannot find the command on PATH. `PROJECT_MEMORY_PROJECT` supplies the project directory where a client supports environment configuration. There is no global pointer to an active project, and a cloud only client cannot reach a local stdio process. Generic MCP setup installs no lifecycle hooks and configures no agent host, so capture is limited to what the assistant records explicitly.
 
-The Codex and Claude Code plugins provide the same three MCP tools and a short workflow skill; the Claude Code plugin also carries the lifecycle hooks, which capture only in projects that have a Project Memory database. Install it from this repository's marketplace. If a project already has a setup-managed MCP connection, keep only one MCP connection enabled. Claude plugin hooks skip capture when the same project has managed Claude hooks. Codex explicitly excludes the Claude hook file from plugin discovery. Codex hooks require project setup and host trust; plugin discovery alone does not enable capture.
+## Plugins
+
+The repository also publishes a plugin for Codex and for Claude Code. The plugin provides the same three MCP tools and the workflow skill, and the Claude Code plugin adds the lifecycle hooks:
+
+```sh
+codex plugin marketplace add Dankaro-projects/project-memory
+codex plugin add project-memory@personal
+```
+
+```sh
+claude plugin marketplace add Dankaro-projects/project-memory
+claude plugin install project-memory@dankaro
+```
+
+The Codex marketplace in this repository is named `personal` and the Claude Code marketplace is named `dankaro`. Initialise the project with `project-memory setup --client mcp` before using a plugin, and keep only one MCP connection enabled for a project. Plugin hooks run in every project: they resolve the database from the project's install record and exit silently where no Project Memory database exists, and they skip capture where managed project hooks already exist. Codex excludes the Claude hook file from plugin discovery. The normal one command setup already connects the tools and the hooks, so the plugin is an alternative route, not an additional requirement.
 
 ## Verify the connection
 
-`project-memory doctor` starts a separate installed MCP process, initialises it, lists tools and requests the decision schema. It also checks SQLite integrity, identifies a missing requirements baseline, reports measurement coverage, and shows observed hook counts and unconfirmed actions. For a Codex installation, it asks the actual host to list enabled hooks and trust, and reports missing events, duplicate commands or Claude hooks discovered in Codex. It does not change trust. An unavailable host produces an explicit unverified result. The expected lifecycle events follow the client recorded at setup: nine for Codex, eight for Claude Code. Missing lifecycle events may not have happened yet; existing receipt counts are historical evidence, not proof that today's host configuration still works.
+`project-memory doctor` starts a separate installed MCP process, initialises it, lists the tools and requests the decision schema. It also checks SQLite integrity, identifies a missing requirements baseline, reports measurement coverage, and shows the observed hook counts and the unconfirmed actions. For a Codex installation it asks the host to list its enabled hooks and trust, and reports missing events, duplicate commands or Claude hooks discovered in Codex. It changes no trust, and an unavailable host produces an explicit unverified result. The expected lifecycle events follow the configured clients: nine for Codex, eight for Claude Code.
 
-A successful subprocess check does not establish that the three native tools are available in an already open task. In that task, call `memory_get` with `view: health` once. If the tools are absent, open a new task after setup; do not report a custom stdio bridge as native integration.
-
-In a new Codex task, ask the assistant to capture a selected document, record a decision with evidence, perform a small project action and record its actual outcome. Inspect the records with `view` and `doctor`. Reproducible live interruption and lifecycle harnesses are in `tests/integration/`; they require a signed-in local Codex and intentionally execute synthetic work. [Evidence](evidence.md) separates those checks from unit tests.
+A successful subprocess check does not prove that the three tools are available in a task that is already open. In that task, call `memory_get` once with `view: health`. If the tools are absent, open a new task after setup.
 
 ## Back up, upgrade and remove
 
@@ -67,43 +91,44 @@ In a new Codex task, ask the assistant to capture a selected document, record a 
 project-memory backup /absolute/path/to/backup.sqlite
 ```
 
-The destination must be new. SQLite's backup API provides a consistent database copy. Setup also creates a backup of the database and existing Codex configuration on first connection. Keep backups on storage you control.
+The destination must be new. SQLite's backup API produces a consistent copy. Setup also backs up the database and the existing client configuration on first connection. Keep backups on storage you control.
 
-Upgrade by running the current version's setup command inside the intended project:
+Upgrade by running the current version's setup inside the project:
 
 ```sh
-uvx project-memory-mcp@0.5.0b9 setup --client codex --trust
-uvx project-memory-mcp@0.5.0b9 doctor
+uvx project-memory-mcp@0.6.0b1 setup --client codex --trust
+uvx project-memory-mcp@0.6.0b1 doctor
 ```
 
-Use `--client claude --trust` for Claude Code, or `--client mcp` for another local MCP client. The recorded launcher is versioned; setup updates its configuration and verifies new Codex host hashes. Start a new task after an upgrade. A configuration edit within the managed block produces a conflict rather than overwriting it. If you use the optional plugin, update it through the host's plugin manager as well; an already running task retains its loaded tool schemas.
+Use `--client claude --trust` for Claude Code or `--client mcp` for another client. The recorded launcher is versioned, so setup updates the configuration and verifies the new host hashes. Start a new task afterwards. If you use a plugin, update it through the host's plugin manager as well; a task that is already running keeps the tool schemas it loaded.
 
-If setup is interrupted, repeat the same setup command. A small ownership file lets it finish after either configuration write. Uninstall after completing any pending setup:
+If setup is interrupted, run the same command again. A small ownership file lets it finish after either configuration write. Remove the connection when any pending setup is complete:
 
 ```sh
 project-memory uninstall
+project-memory uninstall --client claude
 uv tool uninstall project-memory-mcp
 ```
 
-Uninstall removes only its project connection and exact hook commands, including the `.mcp.json` entry and local settings hooks written for Claude Code. It preserves records, source documents, backups and other client configuration. Codex can retain inactive trust entries for removed commands. Setup never edits unrelated global MCP connectors.
+Without `--client`, every client is removed. With one, only that client is removed and the install record remains while another client remains. Uninstall removes only its own project connection and its exact hook commands, including the `.mcp.json` entry and the local settings hooks written for Claude Code. It preserves records, source documents, backups and other client configuration. Codex can keep inactive trust entries for removed commands. Setup never edits unrelated global MCP connections.
 
-When the package runs from a source checkout with its own `.venv`, setup writes a launcher that runs that checkout through `uv run --project`, so unreleased changes can be exercised in a real host. An installed wheel keeps the versioned release launcher.
+When the package runs from a source checkout with its own environment, setup writes a launcher that runs that checkout, so unreleased changes can be exercised in a real host. An installed wheel keeps the released launcher.
 
-## Existing memory-module databases
+## An existing database
 
-Back up the database first. If the old project already has the legacy `memory` MCP adapter and its command hooks, disable that connection before adding the public adapter so both versions do not capture the same work. The installer detects the legacy MCP entry and refuses to create a duplicate. Use `project-memory setup --db /absolute/path/to/existing.sqlite --client codex --trust` to explicitly connect it. Core history remains in SQLite schema 2; optional host and project-revision tables are additive. Original immutable requirements remain revision zero. Older versions do not understand revised requirements: after the first approved revision, use this version or newer; restore the pre-upgrade backup for a deliberate rollback.
+Back up the database first. If an older project still has a legacy `memory` MCP adapter and its command hooks, disable that connection before adding this one so that both do not capture the same work; the installer detects the legacy entry and refuses to create a duplicate. Connect an existing file explicitly:
 
-Do not copy an old private evidence ZIP into the public repository. `.memory` is private operational data, including generated HTML and backups.
+```sh
+project-memory setup --db /absolute/path/to/existing.sqlite --client codex --trust
+```
 
-## Desktop bundle
+Core history stays in SQLite schema 2. The tables for links, agent runs, host receipts and project revisions are additive and are created when they are first needed. The original immutable requirements remain revision zero. Older releases do not understand the newer record kinds; restore the backup for a deliberate rollback.
 
-The GitHub release also provides an MCPB file. A compatible desktop client asks you to select a project directory and starts the bundled Python server. The directory picker replaces hand-edited MCP configuration. Python 3.11+ must be available to the client (`python3` on macOS/Linux, `python` on Windows). The bundle initialises an empty selected project when needed, with no approved project-specific requirements; it preserves an existing setup. It supports generic explicit capture, not Codex lifecycle hooks. The bundle entry point is tested independently; see the compatibility evidence before assuming support in a particular client.
+Do not copy a private evidence archive into a public repository. `.memory` holds private operational data, including the worktrees of delegated runs, the agent run folders, generated pages and backups.
 
-## Daily use and document refresh
+## Documents and refresh
 
-`memory_get health` distinguishes an unestablished baseline, recorded requirements, observed capture and unmeasured costs. A populated database does not prove complete product coverage. Capture vision, decisions, research and ideas as selected evidence; the assistant still needs to check their meaning and preserve explicit approval.
-
-Codex and Claude hooks refresh previously selected Markdown files at session start and stop, up to 100 paths per hook. Unchanged files do not create another source version. Older source text and decision references remain intact. New files, moved files and symlinks require explicit selection or review; the hook does not crawl the project. A file that changes during reading is rejected for that read. Use the supported commands for a check or an immediate refresh:
+Codex and Claude hooks refresh previously captured Markdown files at session start and at session stop, up to 100 paths per hook. An unchanged file creates no new version, and earlier text and its references stay intact. New files, moved files and symbolic links need explicit selection, because the hook does not crawl the project. A file that changes while it is read is rejected for that read.
 
 ```sh
 project-memory check
@@ -111,29 +136,21 @@ project-memory sync
 project-memory sync --offset 100
 ```
 
-Both report changed, missing and unreadable paths and whether more files remain. The equivalent MCP operations are `memory_get` with `view: documents` and `memory_write` with `operation: sync`; use a fresh request key for a new refresh. Reusing a request key returns the original receipt. Neither command approves document proposals, extracts PDF capabilities, changes requirements or accepts a lesson. Sync at a lifecycle boundary does not guarantee that an editor has finished a non-atomic save.
+Both report the changed, missing and unreadable paths and whether more files remain. The equivalent MCP calls are `memory_get` with `view: documents` and `memory_write` with `operation: sync`; use a fresh request key for a new refresh. Neither approves a document proposal, changes requirements or accepts a lesson. A refresh at a lifecycle boundary cannot guarantee that an editor finished a save that is not atomic.
 
-When mandatory context exceeds a requested budget, the error reports the minimum size and a recovery call. `memory_get` with `view: requirements` pages complete requirement sentences. Only after reading every page may the caller reuse that revision's signature as `seen.requirements`. The complete requirements must still be present in the model's current context; discard the signature after compaction unless the requirements themselves were retained. Revision or freshness changes invalidate the signature. Omitted optional records expose up to five IDs plus a paged search route. Expand the relevant records before relying on them; a title or signature does not preserve unread evidence.
+## The control panel and exports
 
-## Live viewer and offline exports
+The live service binds to `127.0.0.1`, uses a random capability in its address, validates the request host and origin, and retrieves through a read only connection. A separate write connection opens only for a validated action. The address and its credential stay in the private `.memory/viewer.json` file; do not share that address. No cloud service and no additional runtime package is involved.
 
-The live viewer binds only to `127.0.0.1`, uses a random capability in its URL, validates the request host and origin, and uses read-only connections for retrieval. The development workspace opens a separate write connection only for validated plan, sprint, comment and review requests. Writes also require a same-origin JSON request and a session CSRF token. The address and credential remain in private `.memory/viewer.json`; do not share that URL. No cloud service, browser SQLite engine or additional runtime package is needed.
-
-The browser reads pages of records and loads source text on demand. It checks committed SQLite changes and selected-file state every two seconds while visible. Unchanged checks receive an HTTP 304 response. Filters, page selection, the open record and its scroll position survive refresh. Related evidence remains available outside the current page. The viewer identifies stale evidence and gives concrete reasons for dependent decisions that need review. Unreported costs appear as not measured.
-
-The local process stops after ten minutes without a request. If it stops, the browser displays the last successful check and a reconnect instruction. Run `project-memory view` to reuse its address and resume updates. This is an on-demand local process, not an installed operating-system service. Database replacement requires a restart; ordinary writes and WAL commits do not. Large derived-status or drift queries still scan matching records. The episode selector shows the latest 1,000 entries; older episodes remain reachable in the paged Episodes view.
-
-For a portable offline file:
+The page reads pages of records and loads source text on demand, and it checks for committed changes every two seconds while the tab is visible. An unchanged check receives an HTTP 304 response. The local process stops after ten minutes without a request; run `project-memory view` to resume it at the same address. Replacing the database file requires a restart, while ordinary writes do not. When an upgrade changes the version, setup opens the current panel at a new address and leaves the old one to exit on its own.
 
 ```sh
 project-memory view --output review.html --include-bodies --no-open
 project-memory view --output review.html --include-bodies --replace --no-open
 ```
 
-An explicit output path creates a static snapshot. Existing files are protected unless `--replace` is supplied; replacement uses a temporary file and atomic rename. Offline files state that they need regeneration. Source bodies remain optional. Avoid sharing an export containing private project evidence.
+An explicit output path writes a static snapshot with the same views and no network access. Existing files are protected unless `--replace` is given, and replacement uses a temporary file and an atomic rename. Source bodies are optional. Check an export before sharing it, because it contains project evidence.
 
-When upgrading, setup checks the version of a running viewer. If it belongs to an older release, setup opens the current viewer at a new local address. Close the old tab; its service exits after ten minutes without requests. Same-version restarts retain the existing address.
+## Agent hosts
 
-## Interactive workspace and agents
-
-Version `0.5.0b9` includes the interactive workspace and agent checks. The commands above install it. See [workspace and agents](workspace-agents.md) for controls and limits. Connecting Codex or Claude in beta 5 enables conditional model reviews through that installed host and account. These reviews consume provider usage. Generic MCP setup does not enable a reviewer.
+Configuring Codex or Claude Code also enables agent checks and delegated work through that installed CLI and account. Those runs consume the account's usage. Configuring both hosts lets a check run on a host other than the one that did the work, and lets a delegated run reroute when one host reports a usage limit. See [agent checks and delegated work](agents.md).

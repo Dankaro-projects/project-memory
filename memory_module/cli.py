@@ -17,10 +17,24 @@ def install_state(args):
     return project_state(args.project)
 
 
+# Commands that read an existing project. setup and init create one; hook stays silent without one.
+NEEDS_DATABASE={'serve','doctor','view','backup','sync','check','review'}
+
+
 def database(args):
     if args.db:return Path(args.db).resolve()
     state=install_state(args)
     return Path(state['database']) if state else Path(args.project).resolve()/'.memory/project.sqlite'
+
+
+def require_database(args):
+    """Refuse a command that needs a project, with a plain sentence instead of an operating system error."""
+    path=database(args)
+    if not path.exists():
+        raise ValueError('No project records were found in this folder. Run project-memory setup here to add Project '
+                         'Memory to an existing project, run project-memory init to create a project from a template, '
+                         'or pass --db with the path of an existing database.')
+    return path
 
 
 def doctor(path, client=None, project=None, clients=None):
@@ -92,6 +106,8 @@ def main(argv=None):
     hook.add_argument('--project',default=os.environ.get('PROJECT_MEMORY_PROJECT',os.getcwd()))
     args=parser.parse_args(argv)
     try:
+        if args.command in NEEDS_DATABASE:
+            require_database(args)
         if args.command=='setup':
             result=setup(args.project,client=args.client,database=args.db,requirements=args.requirement,documents=args.document,trust=args.trust)
             if not args.no_view:

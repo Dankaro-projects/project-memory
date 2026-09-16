@@ -83,11 +83,21 @@ def approve(memory, requirements, reason, actor, evidence, expected_version, req
     _text(reason,'reason',2000);_text(actor,'actor',200);_text(request_key,'request_key',180)
     if type(expected_version) is not int or expected_version<0:raise InvalidRecord('expected_version must be nonnegative.')
     if not isinstance(evidence,list) or not 1<=len(evidence)<=20:raise InvalidRecord('Approval requires evidence references.')
+    # Only the user approves the requirements baseline, so at least one reference must carry the words of the user.
+    # A document or a tool source that an agent wrote is evidence about the project, not an approval of it.
+    from_user=False
     for ref in evidence:
         if not isinstance(ref,dict) or set(ref)!={'source_id','reason'}:raise InvalidRecord('Evidence needs source_id and reason.')
         _text(ref['source_id'],'source_id',200)
         _text(ref['reason'],'evidence reason',2000)
         if memory.source_status(ref['source_id'])!='current_copy':raise InvalidRecord('Approval evidence needs review.')
+        if memory.db.execute("SELECT 1 FROM sources WHERE id=? AND origin='user'",(ref['source_id'],)).fetchone():
+            from_user=True
+    if not from_user:
+        raise InvalidRecord('Approving requirements needs current user-origin evidence of what the user approved. '
+                            'Record the words of the user as a source with origin user and cite it here. '
+                            'A document or a tool source that the assistant wrote does not approve requirements.',
+                            next_step={'action':'ask_user','reason':'Ask the user to approve the proposed requirements, then record the approval with the answer of the user as evidence.'})
     signature=_digest(dumps([requirements,reason,actor,evidence]))
     with memory._write():
         for statement in SCHEMA: memory.db.execute(statement)

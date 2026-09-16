@@ -19,6 +19,8 @@ SETTING = 'project_template'
 ACTOR = 'project-memory-template'
 QUESTION_ID = re.compile(r'[a-z][a-z0-9_]{0,59}')
 DONE_STATES = ('done', 'cancelled')
+PHASE_MOVE = ('A phase moves forward through its own work item: set its state to in_progress when its work starts, '
+              'and to done when its completion criterion is met.')
 
 
 def _document(title, purpose, sections):
@@ -104,13 +106,13 @@ TEMPLATES = {
                    owner='human'),
         ],
         'questions': [
-            {'id': 'goals', 'text': 'What problem does the product solve, and for whom?'},
-            {'id': 'users', 'text': 'Who are the main users, and what do they need to do?'},
-            {'id': 'success', 'text': 'How will success be measured?'},
-            {'id': 'constraints', 'text': 'Which constraints apply, such as budget, deadlines, technology or regulation?'},
-            {'id': 'existing_research', 'text': 'Which research already exists, and where is it kept?'},
-            {'id': 'open_questions', 'text': 'Which questions must research still answer?'},
-            {'id': 'out_of_scope', 'text': 'What is out of scope for the first release?'},
+            {'id': 'goals', 'phase': 'goals', 'text': 'What problem does the product solve, and for whom?'},
+            {'id': 'users', 'phase': 'goals', 'text': 'Who are the main users, and what do they need to do?'},
+            {'id': 'success', 'phase': 'goals', 'text': 'How will success be measured?'},
+            {'id': 'constraints', 'phase': 'goals', 'text': 'Which constraints apply, such as budget, deadlines, technology or regulation?'},
+            {'id': 'existing_research', 'phase': 'research', 'text': 'Which research already exists, and where is it kept?'},
+            {'id': 'open_questions', 'phase': 'research', 'text': 'Which questions must research still answer?'},
+            {'id': 'out_of_scope', 'phase': 'goals', 'text': 'What is out of scope for the first release?'},
         ],
     },
     'engagement': {
@@ -186,13 +188,13 @@ TEMPLATES = {
                    owner='human', paths=['deliverables/README.md']),
         ],
         'questions': [
-            {'id': 'objective', 'text': 'What decision or outcome does the client need from this engagement?'},
-            {'id': 'scope', 'text': 'What is in scope, and what is out of scope?'},
-            {'id': 'stakeholders', 'text': 'Who are the stakeholders, and who makes the final decisions?'},
-            {'id': 'deliverables', 'text': 'Which deliverables are expected, in which format and by when?'},
-            {'id': 'existing_evidence', 'text': 'Which evidence and data already exist?'},
-            {'id': 'hypotheses', 'text': 'Which hypotheses should the engagement test?'},
-            {'id': 'client_review', 'text': 'How and when will the client review the work?'},
+            {'id': 'objective', 'phase': 'scope', 'text': 'What decision or outcome does the client need from this engagement?'},
+            {'id': 'scope', 'phase': 'scope', 'text': 'What is in scope, and what is out of scope?'},
+            {'id': 'stakeholders', 'phase': 'stakeholders', 'text': 'Who are the stakeholders, and who makes the final decisions?'},
+            {'id': 'deliverables', 'phase': 'deliverables', 'text': 'Which deliverables are expected, in which format and by when?'},
+            {'id': 'existing_evidence', 'phase': 'research', 'text': 'Which evidence and data already exist?'},
+            {'id': 'hypotheses', 'phase': 'stakeholders', 'text': 'Which hypotheses should the engagement test?'},
+            {'id': 'client_review', 'phase': 'client_review', 'text': 'How and when will the client review the work?'},
         ],
     },
     'automation': {
@@ -233,7 +235,7 @@ TEMPLATES = {
                    subject='research', paths=['automation/process.md']),
             _phase('systems', 'Systems and credentials inventory', 'List the systems, credentials and data owners that the workflows need.',
                    'Each system and credential is listed with its owner, and no secret is recorded.',
-                   'Fill in the systems document and propose each system as a component. When an exported workflow also uses the system, set the component path to service:<name>, for example service:slack, so that the architecture shows one node for it.',
+                   'Fill in the systems document and propose each system as a component. When an exported workflow also uses the system, read the architecture with the n8n layer first and copy the exact service name it lists into the component path, for example service:slack, so that the architecture shows one node for it. The name of an HTTP node comes from the address it calls and the name of a mailbox node comes from its credential type, so read the listed name instead of guessing it.',
                    'Record system names, credential names and owners only. Never record a secret.',
                    paths=['automation/systems.md']),
             _phase('design', 'Solution design', 'Design the workflows, their triggers, the data flow and the error handling.',
@@ -263,13 +265,13 @@ TEMPLATES = {
                    owner='human', paths=['workflows/README.md', 'automation/solution-design.md']),
         ],
         'questions': [
-            {'id': 'process', 'text': 'Which process should be automated, and how does it run today?'},
-            {'id': 'trigger', 'text': 'What starts the process, and how often does it run?'},
-            {'id': 'systems', 'text': 'Which systems and accounts does the process use?'},
-            {'id': 'credentials', 'text': 'Who owns the credentials, and how will access be granted?'},
-            {'id': 'test_data', 'text': 'Which sample data can be used for testing?'},
-            {'id': 'errors', 'text': 'What should happen when a step fails?'},
-            {'id': 'operations', 'text': 'Where will the workflows run, and who maintains them after handover?'},
+            {'id': 'process', 'phase': 'process', 'text': 'Which process should be automated, and how does it run today?'},
+            {'id': 'trigger', 'phase': 'process', 'text': 'What starts the process, and how often does it run?'},
+            {'id': 'systems', 'phase': 'systems', 'text': 'Which systems and accounts does the process use?'},
+            {'id': 'credentials', 'phase': 'systems', 'text': 'Who owns the credentials, and how will access be granted?'},
+            {'id': 'test_data', 'phase': 'stories', 'text': 'Which sample data can be used for testing?'},
+            {'id': 'errors', 'phase': 'design', 'text': 'What should happen when a step fails?'},
+            {'id': 'operations', 'phase': 'deployment', 'text': 'Where will the workflows run, and who maintains them after handover?'},
         ],
     },
 }
@@ -499,8 +501,22 @@ def answers(memory):
     return result
 
 
+def _question_phase(spec, question_ids):
+    """The earliest template phase that the answered questions belong to."""
+    order = {phase['key']: index for index, phase in enumerate(spec['phases'])}
+    selected = set(question_ids)
+    keys = [question['phase'] for question in spec['questions']
+            if question['id'] in selected and question.get('phase') in order]
+    return min(keys, key=lambda key: order[key]) if keys else spec['phases'][0]['key']
+
+
 def answer_kickoff(memory, *, question_ids, text, actor, request_key, evidence=None, episode_id=None):
-    """Record a note that answers kickoff questions. The note belongs to the first phase unless an episode is named."""
+    """Record a note that answers kickoff questions.
+
+    The note belongs to the earliest phase that the answered questions cover, so
+    an answer about credentials is recorded on the phase that inventories them,
+    unless the caller names another work item.
+    """
     value = setting(memory)
     if not value:
         raise InvalidRecord('This project has no template, so it has no kickoff questions.')
@@ -512,12 +528,23 @@ def answer_kickoff(memory, *, question_ids, text, actor, request_key, evidence=N
         raise InvalidRecord('These kickoff question ids are not part of the template: ' + ', '.join(unknown) + '.',
                             known=sorted(known))
     if episode_id is None:
-        episode_id = _phase_episode(memory, value['template'], spec['phases'][0]['key'])
+        episode_id = _phase_episode(memory, value['template'], _question_phase(spec, question_ids))
+        if episode_id is None:
+            episode_id = _phase_episode(memory, value['template'], spec['phases'][0]['key'])
         if episode_id is None:
             raise InvalidRecord('The first template phase was not found. Run the template setup again.')
     return memory.record(episode_id, 'note', {'text': text, 'kickoff_answers': list(question_ids)},
                          expected_version=memory.episode(episode_id)['version'], request_key=request_key,
                          actor=actor, evidence=evidence)
+
+
+def _phase_documents(spec, phase_key):
+    """The starter documents that one phase is responsible for filling in."""
+    phase = next((item for item in spec['phases'] if item['key'] == phase_key), None)
+    if phase is None:
+        return []
+    return [relative for relative in spec['documents']
+            if any(relative == pattern or relative.startswith(pattern.rstrip('/') + '/') for pattern in phase['paths'])]
 
 
 def _document_status(root, relative, expected):
@@ -567,29 +594,39 @@ def kickoff(memory):
     for relative, text in spec['documents'].items():
         documents.append({'path': relative, 'status': _document_status(root, relative, hashes.get(relative) or _hash(text))})
     answered = answers(memory)
-    questions = [{'id': question['id'], 'text': question['text'], 'answered': question['id'] in answered,
-                  'answered_by': answered.get(question['id'])} for question in spec['questions']]
+    questions = [{'id': question['id'], 'text': question['text'], 'phase': question.get('phase'),
+                  'answered': question['id'] in answered, 'answered_by': answered.get(question['id'])}
+                 for question in spec['questions']]
     open_questions = [question['id'] for question in questions if not question['answered']]
     unfilled = [entry['path'] for entry in documents if entry['status'] in ('missing', 'unchanged')]
     pending = [phase for phase in phases if phase['state'] not in DONE_STATES]
+    current_phase = pending[0] if pending else None
+    # Only the documents of the phase that is running can be filled in now. A later phase records findings and a
+    # deliverable list from work that has not happened yet, so demanding every document would stop kickoff here.
+    due = [path for path in unfilled
+           if path in _phase_documents(spec, current_phase['key'] if current_phase else None)]
     if open_questions:
         step = {'action': 'answer_kickoff', 'question_ids': open_questions,
-                'reason': 'Ask the user the open kickoff questions. Record the answers in a note whose kickoff_answers lists the question ids.'}
-    elif unfilled:
-        step = {'action': 'fill_documents', 'paths': unfilled,
-                'reason': 'Fill in the starter documents with the answers and the evidence that the user provides, and capture each document after it changes.'}
+                'reason': 'Ask the user the open kickoff questions. Record the answers in a note whose kickoff_answers lists the question ids. '
+                          'Each question names the phase it belongs to, so record answers about different phases in separate notes.'}
+    elif due:
+        step = {'action': 'fill_documents', 'paths': due, 'phase': current_phase['key'], 'episode_id': current_phase['episode_id'],
+                'reason': 'Fill in the starter documents of the phase ' + current_phase['title'] + ' with the answers and the '
+                          'evidence that the user provides, and capture each document after it changes.'}
     elif baseline['status'] == 'not_established':
         step = {'action': 'approve_requirements',
                 'reason': 'Propose requirements from the recorded answers and documents, and ask the user to approve the requirements baseline.'}
     elif research:
         step = {'action': 'research', 'episode_ids': [item['episode_id'] for item in research],
                 'reason': 'Complete or explicitly defer the open research items before a decision depends on their answers.'}
-    elif pending:
-        step = {'action': 'continue_phase', 'episode_id': pending[0]['episode_id'],
-                'reason': 'Continue with the phase ' + pending[0]['title'] + '.'}
+    elif current_phase:
+        step = {'action': 'continue_phase', 'episode_id': current_phase['episode_id'], 'phase': current_phase['key'],
+                'reason': 'Continue with the phase ' + current_phase['title'] + '. ' + PHASE_MOVE}
     else:
         step = {'action': 'kickoff_complete', 'reason': 'Every kickoff step and every template phase is recorded as finished.'}
     return {'template': template, 'title': spec['title'], 'description': spec['description'], 'layer': spec['layer'],
             'subjects': spec['subjects'], 'baseline': baseline, 'phases': phases, 'research': research,
             'documents': documents, 'questions': questions, 'next_step': step,
-            'note': 'Kickoff status comes from recorded notes, documents and plans. It does not approve requirements or grant permission.'}
+            'current_phase': current_phase['key'] if current_phase else None,
+            'note': 'Kickoff status comes from recorded notes, documents and plans. It does not approve requirements '
+                    'or grant permission. ' + PHASE_MOVE}

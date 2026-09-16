@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.6.0b1 (16 September 2026)
+
+The same project model now serves a software product, a consulting engagement and a workflow automation. `project-memory init` creates a project from one of three templates, with starter documents, phase work items and kickoff questions. `memory_get kickoff` reports the open questions, the research still needed and the documents that are not yet filled, and `answer_kickoff` records the answers the user gives. Work items carry a type, acceptance criteria and a parent, so phases, epics, stories, research items, deliverables and workflows form one hierarchy. Interface text describes work items, deliverables and components rather than assuming that work is code.
+
+The workspace is replaced by a control panel with ten views: Now, Plan, Work, Architecture, Dependencies, Decisions, Learning, Agents, Records and Requirements. The panel and the MCP tools now read through one API layer, so both show the same bounded responses, and an offline export embeds those responses instead of a separate rendering. Labels follow the project template.
+
+Architecture is extracted from Python, JavaScript, TypeScript and Dart imports, from package manifests and from exported n8n workflow files, and it can be combined with authored components such as systems, stakeholders and deliverables. An item that an agent authors stays proposed until the user confirms it. A typed link table records lineage, work dependencies and explicit relationships between records, components and packages.
+
+An accepted lesson with a trigger becomes a guard. A decision must list every matching guard with an explicit applicability and a reason, otherwise it is rejected. A work plan can list the paths it may change; the lifecycle hooks then block an edit outside them, record the block and leave the tool unrun. The user widens the paths in the control panel. Recurring failure types and failed outcomes without a lesson are reported.
+
+Delegated work runs a work item in its own git worktree on its own branch, limited to the recorded paths, and another host reviews the diff before the user merges it. A usage limit, a rate limit or a missing login marks a host unavailable and reroutes the run once to the other configured host. A merge needs a passing work review, or an explicit override by the user. Setup supports several clients in one project, and agent checks prefer a host other than the one that did the work.
+
+Skills, project maps, the separate dependency module and the separate review log module are removed, together with their views and operations. Distribution is now GitHub Releases and PyPI only. The documentation is rewritten for a first time reader: `docs/control-panel.md` replaces the workspace and work board documents, `docs/agents.md` replaces the workspace agents document, and the removed channels are gone.
+
+No productivity, token or correction rate is claimed or measured.
+
 ## 0.5.0b9 — 15 September 2026
 
 The viewer opens on a project overview with current work, attention items and recent decisions. Five primary sections expose contextual views and filters. Work supports Board and List formats; record summaries retain a Table option. Expanded reading, document outlines and decision pages make the evidence easier to follow. Expected and observed consequences remain tied to the exact decision, including earlier failures, later revisions and stale evidence. No data migration, model call or runtime dependency is added.
@@ -43,7 +59,7 @@ Work intent now connects to an explicit next action, scope, dependencies and spr
 - Setup opens the current viewer after an upgrade instead of reusing an older process.
 - Existing records remain intact. The first plan write extends the existing event validation trigger transactionally; no dependency, task database or agent scheduler is added.
 
-See [work board and continuation](docs/work-board.md) for usage and boundaries.
+The work board and continuation rules of this release were documented separately at the time. Their current form is in the control panel and record field documents.
 
 ## 0.5.0b3 — 14 September 2026
 

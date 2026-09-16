@@ -150,7 +150,10 @@ class KickoffTests(unittest.TestCase):
         state = templates.kickoff(self.m)
         self.assertTrue(all(question['answered'] for question in state['questions']))
         self.assertEqual(state['next_step']['action'], 'fill_documents')
-        self.assertEqual(len(state['next_step']['paths']), 5)
+        # Only the documents of the phase that is running are due. Findings and the deliverable list belong to later
+        # phases and cannot exist yet, so kickoff no longer waits for work that has not happened.
+        self.assertEqual(state['next_step']['paths'], ['engagement/brief.md'])
+        self.assertEqual(state['current_phase'], 'scope')
 
         for relative in templates.TEMPLATES['engagement']['documents']:
             (self.project / relative).write_text('# Filled\n\nThe team recorded the client answers.\n', encoding='utf-8')

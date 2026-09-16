@@ -7,7 +7,7 @@ import unittest
 from unittest.mock import patch
 
 from memory_module import Memory, InvalidRecord, dumps
-from memory_module import codex_host, delegation, guards, hosts, reviews, templates
+from memory_module import codex_host, delegation, guards, hosts, reviews, shared, templates
 from memory_module import mcp
 from memory_module.mcp import OPERATIONS, TOOLS, VIEWS, dispatch, serve, tool_result, write
 from memory_module.planning import latest
@@ -84,6 +84,18 @@ class ToolTableTests(unittest.TestCase):
                     self.assertTrue(entry[0].endswith('.'))
                     self.assertEqual(entry[0].count('. '), 0, 'Each table entry is one sentence.')
                     self.assertNotIn(' - ', entry[0])
+
+    def test_the_adapter_uses_one_shared_implementation_and_one_dispatch_path(self):
+        """Budget fitting, request key replay and run summaries have one implementation, and every table entry is wired."""
+        for name in ('tool_result', 'size', 'bounded', 'trim', 'shrink', 'largest', 'prior_result', 'store_result', 'run_summary'):
+            with self.subTest(helper=name):
+                self.assertIs(getattr(mcp, name), getattr(shared, name))
+        for name, entry in OPERATIONS.items():
+            with self.subTest(operation=name):
+                self.assertTrue(callable(entry[1].target()), 'Every operation resolves the function it calls.')
+        for name, entry in VIEWS.items():
+            with self.subTest(view=name):
+                self.assertTrue(callable(entry[1]), 'Every view has a handler.')
 
     def test_schema_view_documents_new_operations_and_fields(self):
         for name, entry in OPERATIONS.items():

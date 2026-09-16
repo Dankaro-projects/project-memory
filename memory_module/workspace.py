@@ -11,8 +11,9 @@ processes or run git. Their own request keys make them idempotent.
 """
 from . import codex_host
 from .core import InvalidRecord, Conflict, USER_ACTOR as USER, dumps, _text, _digest
-from .mcp import needs_done_check, prior_result, with_done_check, write
+from .mcp import needs_done_check, with_done_check, write
 from .planning import latest
+from .shared import prior_result, run_summary, store_result
 
 KEY_REUSED = 'This action key was already used for different changes.'
 RECORD_OPERATIONS = ('plan', 'sprint', 'comment', 'requirements', 'lesson_review', 'allow_paths', 'link', 'component',
@@ -83,7 +84,7 @@ def action(memory, operation, data, request_key):
             if prior is not None:
                 return prior
             result = RECORD_HANDLERS[operation](memory, data, request_key)
-            memory.db.execute('INSERT INTO adapter_requests VALUES (?,?,?)', (request_key, signature, dumps(result)))
+            store_result(memory, request_key, signature, result)
         return result
     except InvalidRecord as exc:
         # The rejected Done transition is rolled back before the missing outcome check is requested.
@@ -253,9 +254,11 @@ def component(memory, data, request_key):
     if data.get('path'):
         sentences.append('The component describes the project path ' + str(data['path']) + '.')
     evidence = _user_source(memory, request_key, 'Component ' + title, sentences)
+    # An omitted path keeps the stored one, so a form that sends only the changed fields does not clear it.
+    optional = {'path': data['path']} if 'path' in data else {}
     return save_component(memory, component_id=data.get('component_id'), title=data['title'], kind=data['kind'],
                           description=data['description'], status=data['status'], actor=USER,
-                          request_key=request_key + ':component', evidence=evidence, path=data.get('path'))
+                          request_key=request_key + ':component', evidence=evidence, **optional)
 
 
 def answer_kickoff(memory, data, request_key):
@@ -281,7 +284,7 @@ def _run_action(memory, operation, data, request_key, signature):
     prior = prior_result(memory, request_key, signature, KEY_REUSED)
     result = RUN_HANDLERS[operation](memory, data, request_key, first=prior is None)
     with memory._write():
-        memory.db.execute('INSERT OR IGNORE INTO adapter_requests VALUES (?,?,?)', (request_key, signature, dumps(result)))
+        store_result(memory, request_key, signature, result, keep_existing=True)
     return result
 
 
@@ -301,7 +304,7 @@ def delegate(memory, data, request_key, first):
     run = delegation.request_work(memory, data['episode_id'], **arguments)
     if first and run['state'] == 'queued':
         delegation.launch(memory, run)
-    return delegation.summary(memory, run)
+    return run_summary(memory, run)
 
 
 def merge(memory, data, request_key, first):
@@ -316,19 +319,19 @@ def discard(memory, data, request_key, first):
 
 
 def review(memory, data, request_key, first):
-    from . import delegation, reviews
+    from . import reviews
     if data['role'] not in reviews.ROLES:
         raise InvalidRecord('The check role must be outcome, intent or recovery.')
     arguments = {'request_key': request_key + ':review', 'retry': data.get('retry', False)}
     if 'max_seconds' in data:
         arguments['max_seconds'] = data['max_seconds']
     run = reviews.request(memory, data['episode_id'], data['role'], **arguments)
-    return delegation.summary(memory, _launch(memory, run, first))
+    return run_summary(memory, _launch(memory, run, first))
 
 
 def cancel_run(memory, data, request_key, first):
-    from . import delegation, reviews
-    return delegation.summary(memory, reviews.cancel(memory, data['run_id']))
+    from . import reviews
+    return run_summary(memory, reviews.cancel(memory, data['run_id']))
 
 
 def request_work_review(memory, data, request_key, first):
@@ -338,7 +341,7 @@ def request_work_review(memory, data, request_key, first):
     if 'max_seconds' in data:
         arguments['max_seconds'] = data['max_seconds']
     follow = delegation.retry_review(memory, data['run_id'], **arguments)
-    return delegation.summary(memory, _launch(memory, follow, first))
+    return run_summary(memory, _launch(memory, follow, first))
 
 
 RUN_HANDLERS = {'delegate': delegate, 'merge': merge, 'discard': discard, 'review': review, 'cancel_run': cancel_run,

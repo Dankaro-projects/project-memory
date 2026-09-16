@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from unittest import mock
 
-from memory_module import Memory, architecture, planning
+from memory_module import Memory, arch_code, architecture, guards, planning
 from memory_module.architecture import declarations, dependency_sections, model, project_root, pubspec
 from memory_module.core import InvalidRecord
 
@@ -242,7 +242,7 @@ class LimitsAndCacheTests(ArchitectureTestCase):
         result = model(self.m)
         self.assertTrue(any(i['path'] == 'large.py' and '1 MB' in i['message'] for i in result['issues']))
         self.assertEqual(result['languages']['python']['files'], 3)
-        with mock.patch.object(architecture, 'MAX_SOURCE_FILES', 2):
+        with mock.patch.object(arch_code, 'MAX_SOURCE_FILES', 2):
             limited = model(self.m)
         self.assertTrue(limited['truncated'])
         self.assertEqual(limited['languages']['python']['files'], 2)
@@ -251,7 +251,7 @@ class LimitsAndCacheTests(ArchitectureTestCase):
         python_project(self.root)
         cache = {}
         model(self.m, cache=cache)
-        with mock.patch.object(architecture, '_parse_python', side_effect=AssertionError('parsed again')):
+        with mock.patch.object(arch_code, '_parse_python', side_effect=AssertionError('parsed again')):
             again = model(self.m, cache=cache)
         self.assertEqual(len(again['issues']), 1)
         path = self.root / 'app/util.py'
@@ -259,13 +259,13 @@ class LimitsAndCacheTests(ArchitectureTestCase):
         stat = path.stat()
         os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns + 1_000_000_000))
         calls = []
-        original = architecture._parse_python
+        original = arch_code._parse_python
 
         def counted(data):
             calls.append(data)
             return original(data)
 
-        with mock.patch.object(architecture, '_parse_python', side_effect=counted):
+        with mock.patch.object(arch_code, '_parse_python', side_effect=counted):
             changed = model(self.m, cache=cache)
         self.assertEqual(len(calls), 1)
         self.assertEqual(by_id(changed)['package:python:rich']['flags'], [])
@@ -364,9 +364,10 @@ class AttachmentTests(ArchitectureTestCase):
         self.assertFalse(self.m.db.execute("SELECT 1 FROM sqlite_master WHERE name='links'").fetchone())
 
 
-class FallbackMatcherTests(unittest.TestCase):
-    def test_fallback_matcher_follows_the_documented_pattern_semantics(self):
-        match = architecture._fallback_match
+class PathMatchingTests(ArchitectureTestCase):
+    """The model compares paths with the one matcher in guards, and with no copy of its own."""
+
+    def test_path_patterns_follow_the_documented_semantics(self):
         cases = [
             ('app/api/handlers.py', ['app/api'], True),
             ('app/apiary/x.py', ['app/api'], False),
@@ -379,19 +380,29 @@ class FallbackMatcherTests(unittest.TestCase):
         ]
         for path, patterns, expected in cases:
             with self.subTest(path=path, patterns=patterns):
-                self.assertEqual(match(path, patterns), expected)
+                self.assertEqual(guards.match_path(path, patterns), expected)
 
-    def test_note_reports_the_fallback_when_guards_is_absent(self):
-        with tempfile.TemporaryDirectory() as folder:
-            root = Path(folder).resolve()
-            write(root, 'a.py', '')
-            memory = Memory.create(root / '.memory' / 'memory.sqlite', 'Fallback', ['Keep evidence.'])
-            try:
-                with mock.patch.object(architecture, '_matcher', return_value=(architecture._fallback_match, False)):
-                    self.assertIn('temporary local matcher', model(memory)['note'])
-                self.assertNotIn('temporary local matcher', model(memory)['note'])
-            finally:
-                memory.close()
+    def test_the_model_attaches_work_through_the_guards_matcher(self):
+        python_project(self.root)
+        evidence = self.m.source('matcher-test', 'Scope', 'The user sets the scope.', 'Work on the API handlers.', 'user')
+        with trigger_fields_accepted():
+            planning.save(self.m, 'work_plan',
+                          payload={'state': 'ready', 'next_action': 'Inspect the files.', 'scope': 'Use the listed paths.',
+                                   'autonomy': 'suggest', 'reason': 'The user asks for it.', 'paths': ['app/api/**']},
+                          actor='test', evidence=[{'source_id': evidence['id'], 'reason': 'The user sets the scope.'}],
+                          title='api', objective='Change the handlers.', criterion='The change is checked.',
+                          request_key='plan-matcher')
+        calls = []
+        original = guards.match_path
+
+        def counted(path, patterns, **options):
+            calls.append(path)
+            return original(path, patterns, **options)
+
+        with mock.patch.object(guards, 'match_path', counted):
+            nodes = by_id(model(self.m))
+        self.assertTrue(calls)
+        self.assertEqual(nodes['component:app/api']['work_total'], 1)
 
 
 class ManifestTests(ArchitectureTestCase):

@@ -43,7 +43,7 @@ A project created from a template stores the setting `project_template`. A `note
 
 `assumptions`, `alternatives` and `queries` are lists of strings. Review `findings` is a list of objects with exactly `location`, `issue` and `severity`. An empty findings list represents a completed review without findings, not proof that the reviewed work is correct. A review can be recorded in any subject: it can examine code, a report, a deck, a workflow or another deliverable. Record the exact version that was reviewed in `revision`, such as a code revision or a named draft, use `location` for a file and line, a section or a slide, and attach the captured work or review output as evidence.
 
-Use the atomic `plan` and `sprint` write operations to create or intentionally revise plans; they preserve the earlier version using the supplied episode version. Use `progress` for routine work state or next-action changes while retaining scope, dependencies, links and evidence. Work dependencies are `[{episode_id, reason}]`. The [work board guide](work-board.md) defines states and continuation rules. Decisions automatically retain their current project revision and, when present, `work_plan_id`. These references do not grant permission or accept the plan's interpretation as fact.
+Use the atomic `plan` and `sprint` write operations to create or intentionally revise plans; they preserve the earlier version using the supplied episode version. Use `progress` for routine work state or next-action changes while retaining scope, dependencies, links and evidence. Work dependencies are `[{episode_id, reason}]`. Decisions automatically retain their current project revision and, when present, `work_plan_id`. These references do not grant permission or accept the plan's interpretation as fact.
 
 Outcome assessments are `pending`, `unknown`, `good`, `bad`. Severity is `none`, `minor`, `major`, `unknown`; review finding severity excludes `none`. Execution status is `completed`, `failed`, `unknown`. Lesson review status is `accepted`, `rejected`, `retired`. Episode status transitions are active/reopened to settled/abandoned, and settled/abandoned to reopened.
 
@@ -56,7 +56,25 @@ Checks validate structure and references, not whether the source proves the clai
 Codex decision capture additionally requires evidence, uncertainty and an alternatives list. Empty alternatives explicitly records that none were considered. Writing corrections submitted through capture belong to writing episodes. All capture triggers require evidence, including research. The low-level API remains compatible with older records.
 
 `completion` is `complete`, `partial`, `blocked` or `abandoned`. `pattern_type` is `practice`, `anti_pattern` or `recovery`. Numeric effort fields are nonnegative integer measurements; omit unmeasured values. `tokens` is caller-reported and must identify its meaning in the evidence. The live evaluator uses Codex's reported cumulative input/output usage and keeps automated rubric corrections separate from human corrections.
-# Record wording
+## Work item states and continuation
+
+A work item state is `backlog`, `ready`, `in_progress`, `blocked`, `review`, `done` or `cancelled`. `memory_get next` returns the intended result, the criterion, the current plan, the checked issues and one suggested step:
+
+| Result | Meaning |
+|---|---|
+| `continue` | The work is ready or belongs to this session. Continue only within the recorded scope and the current user authorisation. |
+| `reconcile` | A host call may already have run. Inspect its real effect before deciding whether a retry is appropriate. |
+| `inspect_execution` | Execution exists without an assessed outcome. Inspect existing results before following an outdated next action. |
+| `review_outcome` | A failed or uncertain outcome needs review. A failed or unknown outcome does not authorise a retry. |
+| `inspect_owner` | Another session recorded work in progress. Inspect its result before taking over. |
+| `propose` | The recorded scope calls for a proposal or a human step. |
+| `plan` | The work item has no explicit plan yet. |
+| `finalize` | Current evidence establishes completion. Update the plan without repeating the action. |
+| `stop` | The work is complete or cancelled. |
+
+Without an explicit work item or an active bound decision, `next` returns a paged selection rather than a chosen objective. `autonomy: act` requires current user origin evidence in the record. That is a consistency check, not authentication: a stored statement cannot grant tool permissions, and the host must still interpret scope against the actual user request. Moving a card cannot manufacture a result. Done requires an evidenced good outcome with `completion: complete`, current supporting evidence, no unresolved execution, and, where agent checks are configured, a current passing outcome check.
+
+## Record wording
 
 New explanatory fields use complete sentences with a named actor or object and a verb. For example, write “This correction applies to claims about features that have not been evaluated.” instead of “Claims about untested features.” A current rule uses present tense; an observed outcome uses the tense of the observation. An expected consequence remains explicitly conditional. Short titles and status values remain labels.
 

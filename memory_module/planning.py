@@ -4,6 +4,7 @@ from datetime import date
 
 STATES = ('backlog', 'ready', 'in_progress', 'blocked', 'review', 'done', 'cancelled')
 ITEM_TYPES = ('phase', 'epic', 'story', 'task', 'research', 'deliverable', 'workflow')
+CARD_LIMIT = 5000
 FIELDS = {
     'work_plan': ({'state', 'next_action', 'scope', 'autonomy', 'reason'},
                   {'sprint_id', 'depends_on', 'owner', 'priority', 'session_id', 'paths',
@@ -121,15 +122,9 @@ def validate_parent(memory, episode, parent_id):
 
 
 def unresolved(memory, episode_id):
-    from . import codex_host
-    if not codex_host.exists(memory):
-        return 0
-    return memory.db.execute('''SELECT count(*) FROM host_receipts p WHERE p.episode_id=? AND p.event_name='PreToolUse'
-        AND NOT EXISTS (SELECT 1 FROM host_receipts r WHERE r.event_name='PostToolUse'
-          AND r.session_id=p.session_id AND r.tool_use_id=p.tool_use_id
-          AND coalesce(json_extract(r.payload,'$.host'),'codex')=coalesce(json_extract(p.payload,'$.host'),'codex'))
-        AND NOT EXISTS (SELECT 1 FROM host_receipts r WHERE r.event_name='Reconciled'
-          AND json_extract(r.payload,'$.receipt_id')=p.id AND json_extract(r.payload,'$.resolution')!='unknown')''', (episode_id,)).fetchone()[0]
+    """How many tool calls of this work item have no confirmed result."""
+    from .shared import unconfirmed_total
+    return unconfirmed_total(memory, episode_id=episode_id)
 
 
 def completion(memory, episode_id):
@@ -307,6 +302,30 @@ def card(memory, episode_id):
     if outcome and outcome.get('completion')=='complete' or recorded=='done':
         item['completion_next'] = completion_guidance(memory, item)
     return item
+
+
+def cards(memory, *, limit=CARD_LIMIT):
+    """Every work item card, hashing the project once. Sprints are not work items."""
+    from .reviews import shared_tree
+    rows = memory.db.execute("SELECT id FROM episodes WHERE task_type!='sprint' ORDER BY created_at,id LIMIT ?",
+                             (limit + 1,)).fetchall()
+    with shared_tree(memory):
+        values = {row[0]: card(memory, row[0]) for row in rows[:limit]}
+    return {'cards': values, 'truncated': len(rows) > limit}
+
+
+def card_states(found):
+    """Map each work item id to its evidence checked state, from a cards() result."""
+    return {episode_id: item['state'] for episode_id, item in found['cards'].items()}
+
+
+def card_summary(item):
+    """The bounded summary of one card, as lists and the Now view show it."""
+    plan = item['plan'] or {}
+    return {'id': item['id'], 'title': item['title'], 'subject': item['subject'], 'state': item['state'],
+            'priority': plan.get('priority', 'normal'), 'next_action': plan.get('next_action'),
+            'issues': len(item['issues']), 'owner': plan.get('owner', 'agent') if plan else None,
+            'item_type': plan.get('item_type', 'task')}
 
 
 def completion_guidance(memory, item):
@@ -509,15 +528,43 @@ def sprints(memory, limit=25, offset=0, episode_id=None):
     return {'sprints': result, 'offset': offset, 'more': len(rows)>limit}
 
 
-def next_work(memory, *, episode_id=None, session_id=None, limit=5, offset=0, subject=None):
+SELECTABLE = ('in_progress', 'ready')
+
+
+def selection(memory, *, limit=5, offset=0, subject=None, state=None):
+    """The work a caller may choose from: the requested page, and the items that can start now.
+
+    The board is ordered by priority and age, so template phases that wait for an
+    earlier phase can fill the first page. `ready` names the work that can start
+    now, so asking what to do next does not hide it behind a page boundary or a
+    character budget.
+    """
+    from .reviews import shared_tree
+    with shared_tree(memory):
+        page = _board(memory, limit=limit, offset=offset, subject=subject, state=state)
+        result = {'selection_required': True, 'board': page,
+                  'next_step': 'Select work that matches the current user request. A queued task is not permission to switch objectives.'}
+        if state is None:
+            grouped = _board(memory, limit=limit, subject=subject, grouped=True)
+            startable = [item for name in SELECTABLE for item in grouped['groups'][name]]
+            result['ready'] = [card_summary(item) for item in startable[:limit]]
+            result['ready_total'] = sum(grouped['counts'][name] for name in SELECTABLE)
+            if result['ready_total']:
+                result['next_step'] = ('Select work that matches the current user request. The items under ready can start now; '
+                                       'the board also lists work that waits for an earlier item. '
+                                       'A queued task is not permission to switch objectives.')
+    return result
+
+
+def next_work(memory, *, episode_id=None, session_id=None, limit=5, offset=0, subject=None, state=None):
     from . import codex_host
     from .core import InvalidRecord
-    state = codex_host.status(memory, session_id, limit=3) if session_id and codex_host.exists(memory) else None
-    if not episode_id and state and state['active']:
-        episode_id = state['active']['episode_id']
+    status = codex_host.status(memory, session_id, limit=3) if session_id and codex_host.exists(memory) else None
+    if not episode_id and status and status['active']:
+        episode_id = status['active']['episode_id']
     if not episode_id:
-        return {'selection_required': True, 'board': board(memory, limit=limit, offset=offset, subject=subject),
-                'next_step': 'Select work that matches the current user request. A queued task is not permission to switch objectives.'}
+        return selection(memory, limit=limit, offset=offset, subject=subject, state=state)
+    state = status
     item = card(memory, episode_id)
     if subject and item['subject'] != subject:
         raise InvalidRecord('The selected work does not match the requested subject.')

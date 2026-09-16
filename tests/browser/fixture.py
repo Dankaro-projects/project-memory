@@ -39,6 +39,88 @@ USER = 'workspace-user'
 AGENT = 'assistant'
 
 
+HOST_PROGRAM = '''import json, os, pathlib, sys
+
+argv = sys.argv[1:]
+
+
+def option(name):
+    return argv[argv.index(name) + 1] if name in argv else None
+
+
+codex = '--output-last-message' in argv
+folder = pathlib.Path(option('--output-last-message')).parent if codex else None
+schema = json.loads((folder / 'schema.json').read_text()) if codex else json.loads(option('--json-schema'))
+properties = schema['properties']
+host = 'codex' if codex else 'claude'
+mode = 'review' if 'verdict' in properties else 'work'
+plan_path = pathlib.Path(os.environ['MEMORY_FAKE_HOST_PLAN'])
+plan = json.loads(plan_path.read_text())
+key = host + ':' + mode
+calls = plan.setdefault('calls', {})
+index = calls.get(key, 0)
+calls[key] = index + 1
+plan_path.write_text(json.dumps(plan))
+specs = plan.get(key) or []
+spec = specs[index] if index < len(specs) else (specs[-1] if specs else {})
+for name, text in (spec.get('write') or {}).items():
+    path = pathlib.Path(name)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text)
+if spec.get('unavailable'):
+    event = {'type': 'error', 'message': spec['unavailable']} if codex else {'type': 'result', 'is_error': True, 'result': spec['unavailable']}
+    print(json.dumps(event), flush=True)
+    sys.exit(1)
+if mode == 'review':
+    verdict = spec.get('verdict', 'pass')
+    outcome = 'met' if verdict == 'pass' else 'unmet'
+    names = properties['checks']['items']['properties']['criterion'].get('enum', ['C001'])
+    report = {'verdict': verdict, 'summary': spec.get('summary', 'The reviewer inspected the recorded work.'),
+              'checks': [{'criterion': name, 'evidence': 'The recorded work shows this result.', 'result': outcome}
+                         for name in names],
+              'findings': [], 'lesson_proposals': spec.get('lessons', [])}
+    if 'constraint_checks' in properties:
+        report['constraint_checks'] = [
+            {'constraint': name, 'applicability': 'applies', 'reason': 'The constraint applies to this work.',
+             'evidence': 'The recorded work.', 'result': outcome}
+            for name in properties['constraint_checks']['items']['properties']['constraint']['enum']]
+else:
+    report = {'summary': spec.get('summary', 'The worker changed the files the plan allows.'), 'result': 'complete',
+              'changed_files': sorted(spec.get('write') or {}),
+              'checks_run': [{'command': 'Compare the result with the sample data.', 'outcome': 'The sample data matches.'}],
+              'notes': '', 'lesson_proposals': spec.get('lessons', [])}
+if spec.get('report'):
+    report = spec['report']
+if codex:
+    (folder / 'answer.json').write_text(json.dumps(report))
+    print(json.dumps({'type': 'turn.completed', 'usage': {'input_tokens': 10}}), flush=True)
+else:
+    print(json.dumps({'type': 'result', 'structured_output': report, 'usage': {'input_tokens': 10}}), flush=True)
+'''
+
+
+def fake_hosts(directory, plan=None):
+    """Write a host program that stands in for Codex and Claude, and return the environment that selects it.
+
+    The program never contacts a model. It reads the report schema that Project
+    Memory prepared for the run, so it answers a delegated work run and an agent
+    check with a valid report. The plan file selects what each call does: files to
+    write inside the worktree, a verdict, lesson proposals, a replacement report or
+    a usage limit message that makes the host report itself as unavailable. Its
+    keys are `<host>:work` and `<host>:review`, and each key holds one entry per
+    call, so the first call of a host can fail and the next one can succeed.
+    """
+    directory = Path(directory)
+    directory.mkdir(parents=True, exist_ok=True)
+    program = directory / 'fake-host.py'
+    program.write_text('#!' + sys.executable + '\n' + HOST_PROGRAM, encoding='utf-8')
+    program.chmod(0o755)
+    plan_path = directory / 'host-plan.json'
+    plan_path.write_text(json.dumps(plan or {}), encoding='utf-8')
+    return {'PROJECT_MEMORY_CODEX_BIN': str(program), 'PROJECT_MEMORY_CLAUDE_BIN': str(program),
+            'MEMORY_FAKE_HOST_PLAN': str(plan_path), 'CODEX_HOME': str(directory / 'codex-home')}
+
+
 def policy(title, purpose, rows, exception):
     """A short Markdown document with a table, an exception, a list, a quote and a link."""
     table = '\n'.join('| ' + first + ' | ' + second + ' |' for first, second in rows)

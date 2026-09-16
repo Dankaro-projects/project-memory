@@ -11,16 +11,15 @@ kept there; the live server resets that dictionary whenever its revision changes
 """
 import json
 
-from . import codex_host
+from . import codex_host, planning, shared
 from .core import InvalidRecord
-from .graph import EVENT_TITLE_KEYS as TITLE_KEYS, _table_exists as _table
+from .graph import event_title, title_sql, _table_exists as _table
 RECORD_VIEWS = ('episodes', 'pending', 'decisions', 'drift', 'documents', 'sources', 'direction', 'research',
                 'corrections', 'lessons', 'patterns', 'events', 'captures')
 SUMMARY_LIMIT = 10
 ATTENTION_LIMIT = 20
 GUARD_LIMIT = 50
 RUN_REVIEW_LIMIT = 20
-CARD_LIMIT = 5000
 BODY_SLICE = 12000
 FOLLOW_UP_RECEIPTS = ('LessonProposalsNotRecorded', 'HostAvailabilityNotRecorded', 'DelegationFollowUpNotStarted')
 PRIORITY_RANK = {'high': 0, 'normal': 1, 'low': 2}
@@ -76,10 +75,6 @@ def _cached(memory, key, compute):
 
 # Records.
 
-def event_title(payload, kind):
-    return next((payload[key] for key in TITLE_KEYS if key in payload), kind)
-
-
 def row(memory, rid, *, body_offset=None):
     """One record of any kind as the panel shows it, with an optional slice of a source body."""
     if not isinstance(rid, str) or not rid:
@@ -114,15 +109,9 @@ def row(memory, rid, *, body_offset=None):
         if not codex_host.exists(memory):
             raise InvalidRecord('Host receipt was not found.')
         detail = codex_host.read_receipt(memory, rid)
-        reported = memory.db.execute("""SELECT 1 FROM host_receipts WHERE session_id=? AND tool_use_id=? AND event_name='PostToolUse'
-            AND coalesce(json_extract(payload,'$.host'),'codex')=?""",
-                                     (detail['session_id'], detail['tool_use_id'], detail['payload'].get('host', 'codex'))).fetchone()
-        reconciled = memory.db.execute("""SELECT 1 FROM host_receipts WHERE event_name='Reconciled'
-            AND json_extract(payload,'$.receipt_id')=? AND json_extract(payload,'$.resolution')!='unknown'""", (rid,)).fetchone()
-        unconfirmed = detail['event_name'] == 'PreToolUse' and not reported and not reconciled
         episode = detail['episode_id']
         return {'id': rid, 'kind': 'host_receipt', 'subject': memory.episode(episode)['subject'] if episode else 'general',
-                'status': 'execution_unconfirmed' if unconfirmed else 'observed',
+                'status': 'execution_unconfirmed' if shared.is_unconfirmed(memory, rid) else 'observed',
                 'title': detail['event_name'] + ': ' + (detail['tool_name'] or 'Host session'),
                 'date': detail['created_at'], 'episode_id': episode or '', 'detail': detail}
     detail = memory.read(rid)
@@ -146,10 +135,6 @@ def row(memory, rid, *, body_offset=None):
     return result
 
 
-def _title_sql():
-    return 'coalesce(' + ','.join(f"json_extract(payload,'$.{key}')" for key in TITLE_KEYS) + ',kind)'
-
-
 def page(memory, params):
     """A filtered, ordered page of records for one records view."""
     view = params.get('view', 'episodes')
@@ -171,7 +156,7 @@ def page(memory, params):
                 'more': offset + len(ids) < total}
     selections = [
         "SELECT id,'episode' AS kind,subject,id AS episode_id,created_at AS date,title,title||' '||objective AS text FROM episodes",
-        'SELECT id,kind,subject,episode_id,created_at AS date,' + _title_sql() + ' AS title,payload AS text FROM events',
+        'SELECT id,kind,subject,episode_id,created_at AS date,' + title_sql() + ' AS title,payload AS text FROM events',
         "SELECT id,'source' AS kind,subject,'' AS episode_id,checked_at AS date,title,title||' '||summary||' '||body AS text FROM sources"]
     if codex_host.exists(memory):
         selections.append("""SELECT id,'host_receipt' AS kind,coalesce((SELECT subject FROM episodes WHERE episodes.id=host_receipts.episode_id),'general') AS subject,
@@ -261,29 +246,13 @@ def latest_decisions(memory, limit=3):
 # Work state.
 
 def cards(memory):
-    """Every work item card, computed once per request. Sprints are not work items."""
-    def compute():
-        from .planning import card
-        from .reviews import shared_tree
-        rows = memory.db.execute("SELECT id FROM episodes WHERE task_type!='sprint' ORDER BY created_at,id LIMIT ?",
-                                 (CARD_LIMIT + 1,)).fetchall()
-        with shared_tree(memory):
-            values = {item[0]: card(memory, item[0]) for item in rows[:CARD_LIMIT]}
-        return {'cards': values, 'truncated': len(rows) > CARD_LIMIT}
-    return _cached(memory, 'cards', compute)
+    """Every work item card, computed once per request."""
+    return _cached(memory, 'cards', lambda: planning.cards(memory))
 
 
 def card_states(memory):
-    """Map each work item id to its evidence checked state."""
-    return {episode_id: item['state'] for episode_id, item in cards(memory)['cards'].items()}
-
-
-def card_summary(item):
-    plan = item['plan'] or {}
-    return {'id': item['id'], 'title': item['title'], 'subject': item['subject'], 'state': item['state'],
-            'priority': plan.get('priority', 'normal'), 'next_action': plan.get('next_action'),
-            'issues': len(item['issues']), 'owner': plan.get('owner', 'agent') if plan else None,
-            'item_type': plan.get('item_type', 'task')}
+    """Map each work item id to its evidence checked state, from the cards of this request."""
+    return planning.card_states(cards(memory))
 
 
 def _receipts(memory, names, limit, episode_id=None):
@@ -300,18 +269,18 @@ def _receipts(memory, names, limit, episode_id=None):
 
 
 def active_runs(memory):
-    from . import delegation, reviews
-    return [delegation.summary(memory, run) for run in reviews.active_runs(memory)]
+    from . import reviews
+    return [shared.run_summary(memory, run) for run in reviews.active_runs(memory)]
 
 
 def awaiting_merge(memory, limit=50):
     """Completed delegated work with changed files that is neither merged nor discarded."""
-    from . import delegation, reviews
+    from . import reviews
     if not reviews.exists(memory):
         return []
     rows = memory.db.execute("SELECT id FROM review_runs WHERE role='work' AND state='completed' ORDER BY rowid DESC LIMIT ?",
                              (limit,)).fetchall()
-    summaries = [delegation.summary(memory, reviews.read(memory, item[0])) for item in rows]
+    summaries = [shared.run_summary(memory, reviews.read(memory, item[0])) for item in rows]
     return [summary for summary in summaries if summary['changed_files'] and not summary['merge']]
 
 
@@ -383,7 +352,7 @@ def _decision_summary(record):
 
 def _sorted_summaries(items):
     ordered = sorted(items, key=lambda item: (PRIORITY_RANK.get((item['plan'] or {}).get('priority', 'normal'), 1), item['date']))
-    return [card_summary(item) for item in ordered[:SUMMARY_LIMIT]]
+    return [planning.card_summary(item) for item in ordered[:SUMMARY_LIMIT]]
 
 
 # Endpoints.
@@ -412,10 +381,9 @@ def now(memory, params):
     from . import guards
     from .capture_errors import summary as capture_summary
     from .coverage import sessions
-    from .planning import STATES
     found = cards(memory)
     items = list(found['cards'].values())
-    counts = dict.fromkeys(STATES, 0)
+    counts = dict.fromkeys(planning.STATES, 0)
     for item in items:
         counts[item['state']] += 1
     by_state = {state: [item for item in items if item['state'] == state] for state in ('in_progress', 'blocked', 'review', 'ready')}
@@ -483,8 +451,7 @@ def now(memory, params):
 
 def board(memory, params):
     """Work item cards filtered by subject, sprint, state, search text or one work item."""
-    from .planning import board as planning_board
-    return planning_board(memory, limit=_int(params, 'limit', 25, 1, 100), offset=_int(params, 'offset', 0, 0, 10**9),
+    return planning.board(memory, limit=_int(params, 'limit', 25, 1, 100), offset=_int(params, 'offset', 0, 0, 10**9),
                           subject=_text(params, 'subject', limit=50), query=_text(params, 'query', limit=500) or '',
                           sprint_id=_text(params, 'sprint_id', limit=200), state=_text(params, 'state', limit=50),
                           episode_id=_text(params, 'episode', limit=200) or _text(params, 'episode_id', limit=200),
@@ -493,15 +460,13 @@ def board(memory, params):
 
 def sprints(memory, params):
     """A page of sprints with their schedules, used by the sprint filter of the work view."""
-    from .planning import sprints as planning_sprints
-    return planning_sprints(memory, _int(params, 'limit', 25, 1, 100), _int(params, 'offset', 0, 0, 10**9),
+    return planning.sprints(memory, _int(params, 'limit', 25, 1, 100), _int(params, 'offset', 0, 0, 10**9),
                             _text(params, 'episode', limit=200))
 
 
 def work(memory, params):
     """One work item: its card, next step, lineage, agent runs, checks and a page of history."""
     from . import delegation, graph, reviews
-    from .planning import next_work
     episode_id = _text(params, 'id', required=True, limit=200)
     offset = _int(params, 'offset', 0, 0, 10**9)
     limit = _int(params, 'limit', 50, 1, 100)
@@ -513,9 +478,8 @@ def work(memory, params):
     item = cards(memory)['cards'].get(episode_id) if _cache(memory) is not None else None
     with reviews.shared_tree(memory):
         if item is None:
-            from .planning import card
-            item = card(memory, episode_id)
-        step = next_work(memory, episode_id=episode_id)
+            item = planning.card(memory, episode_id)
+        step = planning.next_work(memory, episode_id=episode_id)
         checks = reviews.listing(memory, episode_id, limit=10, offset=check_offset)
     for run in checks['runs']:
         snapshot = json.loads(memory.db.execute('SELECT snapshot FROM review_runs WHERE id=?', (run['id'],)).fetchone()[0])
@@ -626,16 +590,16 @@ def agents(memory, params):
 
 def run(memory, params):
     """One agent run with its report, metrics, diff source, plan paths, reviews and merge state, without the snapshot."""
-    from . import delegation, reviews
+    from . import reviews
     run_id = _text(params, 'id', required=True, limit=200)
     value = reviews.read(memory, run_id)
     snapshot = value.pop('snapshot') or {}
-    result = {**value, **delegation.summary(memory, value), 'paths': snapshot.get('paths'),
+    result = {**value, **shared.run_summary(memory, value), 'paths': snapshot.get('paths'),
               'diff_source': (value['metrics'] or {}).get('diff_source')}
     if value['role'] == 'work':
         rows = memory.db.execute("SELECT id FROM review_runs WHERE parent_run=? AND role='work_review' ORDER BY rowid DESC LIMIT ?",
                                  (run_id, RUN_REVIEW_LIMIT)).fetchall()
-        result['reviews'] = [delegation.summary(memory, reviews.read(memory, item[0])) for item in rows]
+        result['reviews'] = [shared.run_summary(memory, reviews.read(memory, item[0])) for item in rows]
     return {'run': result}
 
 
@@ -670,9 +634,8 @@ def kickoff(memory, params):
 
 def plan(memory, params):
     """The hierarchy of phases, epics, stories, research, deliverables and workflows with progress roll ups."""
-    from .planning import hierarchy
-    return hierarchy(memory, root=_text(params, 'root', limit=200), limit=_int(params, 'limit', 500, 1, 5000),
-                     states=card_states(memory))
+    return planning.hierarchy(memory, root=_text(params, 'root', limit=200), limit=_int(params, 'limit', 500, 1, 5000),
+                              states=card_states(memory))
 
 
 def components(memory, params):

@@ -17,7 +17,8 @@ from memory_module import codex_host
 from memory_module.documents import sync
 from memory_module.health import inspect, diagnose_hooks
 from memory_module.install import setup
-from memory_module.live import page, start, Viewer
+from memory_module.api import page
+from memory_module.live import start, Viewer
 from memory_module.mcp import dispatch, tool_result
 
 

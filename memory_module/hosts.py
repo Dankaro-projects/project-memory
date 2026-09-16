@@ -1,9 +1,9 @@
-"""Agent host executables, command lines, run log parsing and host availability.
+"""Agent host executables, command lines, run supervision, log parsing and availability.
 
-This module never starts a host process. Callers build a command line here and
-run it themselves. Run logs are read in bounded chunks, and metrics never copy
-command output or host messages; a detected unavailability is reported as a
-short category and an optional time.
+Callers build a command line here and run it through Supervisor, which owns the
+one loop that agent checks and delegated work share. Run logs are read in
+bounded chunks, and metrics never copy command output or host messages; a
+detected unavailability is reported as a short category and an optional time.
 """
 from datetime import datetime, timedelta, timezone
 import json
@@ -11,6 +11,9 @@ import os
 from pathlib import Path
 import re
 import shutil
+import signal
+import subprocess
+import time
 import uuid
 
 from .core import InvalidRecord, _text, _time
@@ -323,7 +326,119 @@ class RunLog:
             self.metrics['unparsed_events'] += 1
 
 
-ReviewLog = RunLog
+class Supervisor:
+    """Run one host process with progress reporting, cancellation, deadline and termination handling.
+
+    Agent checks and delegated work share this loop. `status` returns the state
+    of the run, so a cancellation terminates the process, and `flush` records the
+    metrics while the host works. The caller always calls stop() in a finally
+    block, so a process is terminated even after an error.
+    """
+
+    def __init__(self, log, metrics, *, timeout, started, cancelled_message, timeout_message, status, flush):
+        self.log = log
+        self.metrics = metrics
+        self.timeout = timeout
+        self.started = started
+        self.cancelled_message = cancelled_message
+        self.timeout_message = timeout_message
+        self.status = status
+        self.flush = flush
+        self.process = None
+
+    @property
+    def returncode(self):
+        return self.process.returncode if self.process else None
+
+    def run(self, args, *, cwd, folder):
+        """Start the host with prompt.txt as input and wait. Return (state, error) when stopped early, otherwise (None, '')."""
+        metrics = self.metrics
+        state, error = None, ''
+        with (folder/'output.jsonl').open('w') as out, (folder/'stderr.log').open('w') as err, (folder/'prompt.txt').open() as incoming:
+            self.process = subprocess.Popen(args, cwd=cwd, stdin=incoming, stdout=out, stderr=err,
+                                            text=True, start_new_session=os.name != 'nt')
+            flushed = 0
+            while self.process.poll() is None:
+                metrics.update(self.log.read())
+                elapsed = time.monotonic()-self.started
+                metrics.update(duration_ms=round(elapsed*1000), remaining_seconds=round(max(0, self.timeout-elapsed), 1))
+                if self.status() == 'cancelling':
+                    state, error = 'cancelled', self.cancelled_message
+                    metrics['termination_reason'] = 'cancelled'
+                    break
+                if elapsed >= self.timeout:
+                    state, error = 'timed_out', self.timeout_message
+                    metrics['termination_reason'] = 'execution_deadline'
+                    break
+                if elapsed >= flushed:
+                    self.flush(metrics)
+                    flushed = elapsed+2
+                time.sleep(min(.25, max(0, self.timeout-elapsed)))
+            if self.process.poll() is not None and metrics['termination_reason'] is None:
+                metrics['termination_reason'] = 'completed' if self.process.returncode == 0 else 'host_exit'
+        return state, error
+
+    def stop(self):
+        """Terminate the process group when the host is still running."""
+        process = self.process
+        if not process or process.poll() is not None:
+            return
+        try:
+            if os.name == 'nt':
+                process.terminate()
+            else:
+                os.killpg(process.pid, signal.SIGTERM)
+            try:
+                process.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                if os.name == 'nt':
+                    process.kill()
+                else:
+                    os.killpg(process.pid, signal.SIGKILL)
+                process.wait()
+        except ProcessLookupError:
+            process.wait()
+
+
+def host_answer(host, folder, log):
+    """Return the structured answer a host produced, or None."""
+    if host == 'codex' and (folder/'answer.json').exists():
+        return json.loads((folder/'answer.json').read_text())
+    if log.result:
+        candidate = log.result.get('structured_output')
+        if candidate is None and log.result.get('result'):
+            candidate = json.loads(log.result['result'])
+        return candidate
+    return None
+
+
+def unavailable_error(host, found):
+    text = f'The {host} host did not accept the run ({found["reason"].replace("_", " ")}).'
+    if found.get('until'):
+        text += f' It reports that it accepts work again at {found["until"]}.'
+    return text + ' Project Memory records the host as unavailable.'
+
+
+def run_state(host, metrics, report, *, missing_report, exit_message):
+    """The state, error text and termination reason after a host process, or None when the caller decides.
+
+    A host that refused the work becomes host_unavailable; a host error or a
+    missing report becomes failed; a run that finished with a valid report is
+    completed, which the caller turns into its own final state.
+    """
+    reason = metrics['termination_reason']
+    found = metrics.get('host_unavailable')
+    if reason in {'completed', 'host_exit'} and found:
+        return 'host_unavailable', unavailable_error(host, found), 'host_unavailable'
+    if reason == 'completed':
+        if metrics.get('host_error_events'):
+            return 'failed', 'The host reported an error. Inspect its private event log.', 'host_error'
+        if not report:
+            return 'failed', metrics.get('report_error', missing_report), 'invalid_report'
+        return 'completed', '', None
+    if reason == 'host_exit':
+        return 'failed', exit_message, None
+    return None
 
 
 def _record(memory, host, event_name, payload):

@@ -1,22 +1,28 @@
-"""Conditional, durable review runs through the user's installed host CLI."""
+"""Conditional, durable review runs through the user's installed host CLI.
+
+This module owns the run table that agent checks and delegated work share: the
+snapshot, the execution pipeline and the lifecycle of a run. Delegated work adds
+its roles in delegation.py, the report contract lives in reports.py and the host
+process is supervised in hosts.py.
+"""
 import argparse
 from collections import Counter
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 import os
 from pathlib import Path
-import re
 import shlex
-import signal
 import sqlite3
 import subprocess
 import time
 import uuid
 
 from .core import Memory, InvalidRecord, Conflict, dumps, _text
-from . import codex_host
+from . import codex_host, hosts
+from .reports import REPORT_MAX_CHARACTERS, REPORT_SCHEMA, report_schema, validate_lesson_proposals, validate_report
+from .shared import latest_source, project_paths, run_summary, tree_signature
 
 ROLES = ('outcome', 'intent', 'recovery')
 ACTIVE = ('queued', 'running', 'cancelling')
@@ -32,8 +38,6 @@ PROJECT_ACTIVE_LIMIT = 2
 RUN_COLUMNS = ('parent_run', 'workspace', 'branch')
 CHECK_CANCELLED = 'The check was cancelled. It did not approve this work.'
 CHECK_TIMED_OUT = 'The reviewer reached its execution deadline. It did not approve this work.'
-REPORT_MAX_CHARACTERS = 16000
-REPORT_TARGET_CHARACTERS = 12000
 SCHEMA = '''
 CREATE TABLE IF NOT EXISTS review_runs (
  id TEXT PRIMARY KEY, episode_id TEXT NOT NULL REFERENCES episodes(id), role TEXT NOT NULL,
@@ -54,21 +58,13 @@ CREATE TRIGGER IF NOT EXISTS immutable_review_input BEFORE UPDATE ON review_runs
 
 
 def configured(memory):
-    """Return the agent check setting; legacy values gain a hosts list.
-
-    A setting whose hosts were all removed by uninstall counts as not configured.
-    """
+    """The agent check setting, or None when no configured host remains. Legacy values gain a hosts list."""
     row = memory.db.execute("SELECT value FROM settings WHERE key='review_host'").fetchone()
-    if not row:
-        return None
-    value = json.loads(row[0])
+    value = json.loads(row[0]) if row else None
     if not isinstance(value, dict):
         return None
-    if 'hosts' not in value:
-        value['hosts'] = [value['host']] if value.get('host') else []
-    if not value['hosts']:
-        return None
-    return value
+    value.setdefault('hosts', [value['host']] if value.get('host') else [])
+    return value if value['hosts'] else None
 
 
 def configure(memory, project, host):
@@ -76,11 +72,11 @@ def configure(memory, project, host):
     if host not in {'codex', 'claude'}:
         raise InvalidRecord('Select Codex or Claude for agent checks.')
     previous = configured(memory)
-    hosts = sorted(set(previous.get('hosts', []) if previous else []) | {host})
+    names = sorted(set(previous.get('hosts', []) if previous else []) | {host})
     ensure_run_columns(memory)
     with memory._write():
         memory.db.execute("INSERT OR REPLACE INTO settings VALUES ('review_host',?)",
-                          (dumps({'project': str(Path(project).resolve()), 'host': host, 'hosts': hosts,
+                          (dumps({'project': str(Path(project).resolve()), 'host': host, 'hosts': names,
                                   'enabled_at': previous['enabled_at'] if previous else memory.now()}),))
 
 
@@ -89,9 +85,8 @@ def remove_host(memory, host):
     config = configured(memory)
     if not config or host not in config['hosts']:
         return config
-    hosts = [name for name in config['hosts'] if name != host]
-    value = {**config, 'hosts': hosts}
-    value['host'] = config['host'] if config.get('host') in hosts else (hosts[-1] if hosts else None)
+    names = [name for name in config['hosts'] if name != host]
+    value = {**config, 'hosts': names, 'host': config['host'] if config.get('host') in names else (names[-1] if names else None)}
     if value.get('work_host') == host:
         value.pop('work_host')
     with memory._write():
@@ -117,16 +112,13 @@ def ensure_run_columns(memory):
             for statement in _statements(SCHEMA):
                 memory.db.execute(statement)
         present = {row[1] for row in memory.db.execute('PRAGMA table_info(review_runs)')}
-        for column in RUN_COLUMNS:
-            if column not in present:
-                memory.db.execute(f'ALTER TABLE review_runs ADD COLUMN {column} TEXT')
+        for column in (name for name in RUN_COLUMNS if name not in present):
+            memory.db.execute(f'ALTER TABLE review_runs ADD COLUMN {column} TEXT')
 
 
 def active_runs(memory):
     """Runs that are queued, running or cancelling and still report progress."""
-    if not exists(memory):
-        return []
-    rows = memory.db.execute("SELECT id FROM review_runs WHERE state IN ('queued','running','cancelling')").fetchall()
+    rows = memory.db.execute("SELECT id FROM review_runs WHERE state IN ('queued','running','cancelling')").fetchall() if exists(memory) else []
     return [run for run in (read(memory, row[0]) for row in rows) if run['state'] in ACTIVE]
 
 
@@ -140,12 +132,27 @@ def require_capacity(memory, episode_id, role):
         raise Conflict('Two agent runs are already active for this project. Wait for one of them or cancel it first.')
 
 
-def implementer_host(memory, episode_id, parent_run=None):
-    """Return the host that implemented the work.
+def new_run_id():
+    return 'check_' + uuid.uuid4().hex
 
-    For a work review this is the host of the work run. Otherwise it is the host
-    named by the latest DecisionBound receipt of the work item; Codex receipts
-    omit the host, so the default is codex.
+
+def insert_run(memory, *, run_id, episode_id, role, host, snapshot, request_key, session_id, signature=None,
+               parent_run=None, workspace=None, branch=None, event_name, payload=None):
+    """Insert one queued run and its receipt inside an open write, after checking the concurrency limits."""
+    require_capacity(memory, episode_id, role)
+    now = memory.now()
+    memory.db.execute('INSERT INTO review_runs (id,episode_id,role,signature,host,session_id,state,created_at,updated_at,request_key,snapshot,parent_run,workspace,branch) '
+                      'VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+                      (run_id, episode_id, role, signature or hashlib.sha256(dumps(snapshot).encode()).hexdigest(), host,
+                       session_id, 'queued', now, now, request_key, dumps(snapshot), parent_run, workspace, branch))
+    codex_host.receipt(memory, session_id=session_id or run_id, event_name=event_name, episode_id=episode_id,
+                       payload={'run_id': run_id, 'role': role, **(payload or {})}, key=run_id + ':requested')
+
+
+def implementer_host(memory, episode_id, parent_run=None):
+    """The host of the work run for a work review, otherwise the host of the latest DecisionBound receipt.
+
+    Codex receipts omit the host field, so the default is codex.
     """
     if parent_run:
         return read(memory, parent_run)['host']
@@ -158,13 +165,12 @@ def implementer_host(memory, episode_id, parent_run=None):
 
 
 def review_host(memory, config, implementer):
-    """Choose the reviewing host: a configured host other than the implementer when one is available.
+    """Choose a configured host other than the implementer when one is available.
 
-    A host that is not found on this process's search path still receives the
-    check when no other host can run, as before hosts were tracked; the run then
-    fails visibly at execution. A host marked unavailable is never chosen.
+    A host that this process cannot find still receives the check when no other
+    host can run; the run then fails visibly at execution. A host marked
+    unavailable is never chosen.
     """
-    from . import hosts
     allowed = list(config['hosts'])
     others = [name for name in allowed if name != implementer]
     preferred = others[0] if others else allowed[0]
@@ -178,11 +184,8 @@ def review_host(memory, config, implementer):
 
 
 def task_checklist(memory, episode_id, criterion):
-    """Return the checklist and the latest intent assessment.
-
-    The checklist holds the criterion, each acceptance criterion of the latest
-    plan, and the requirements of the latest intent assessment.
-    """
+    """The checklist of the criterion, the acceptance criteria of the latest plan and the requirements
+    of the latest intent assessment, with that assessment."""
     from .planning import latest
     intent = memory.db.execute("SELECT id,payload FROM host_receipts WHERE episode_id=? AND event_name='IntentAssessed' AND json_array_length(payload,'$.requirements')>0 ORDER BY rowid DESC LIMIT 1", (episode_id,)).fetchone() if codex_host.exists(memory) else None
     plan = latest(memory, episode_id, 'work_plan')
@@ -204,9 +207,8 @@ def task_constraints(memory, scope):
 
 def required(memory, episode_id):
     config = configured(memory)
-    if not config: return False
-    return bool(memory.db.execute("SELECT 1 FROM events WHERE episode_id=? AND kind='outcome' AND created_at>=?", (episode_id,config['enabled_at'])).fetchone()
-                or memory.db.execute("SELECT 1 FROM review_runs WHERE episode_id=? AND role='outcome'",(episode_id,)).fetchone())
+    return bool(config and (memory.db.execute("SELECT 1 FROM events WHERE episode_id=? AND kind='outcome' AND created_at>=?", (episode_id,config['enabled_at'])).fetchone()
+                            or memory.db.execute("SELECT 1 FROM review_runs WHERE episode_id=? AND role='outcome'",(episode_id,)).fetchone()))
 
 
 def exists(memory):
@@ -224,11 +226,8 @@ def project_tree(memory):
 @contextmanager
 def shared_tree(memory):
     """Hash the project tree once for every card read inside the block. A failed hash leaves each card to hash again."""
-    if getattr(memory, '_review_tree', None) is not None:
-        yield
-        return
     try:
-        signature = project_tree(memory)
+        signature = None if getattr(memory, '_review_tree', None) is not None else project_tree(memory)
     except (OSError, subprocess.SubprocessError, InvalidRecord):
         signature = None
     if signature is None:
@@ -241,68 +240,19 @@ def shared_tree(memory):
         del memory._review_tree
 
 
-def project_paths(project):
-    root = Path(project).resolve()
-    try:
-        result = subprocess.run(['git', '-C', str(root), 'ls-files', '-z', '--cached', '--others', '--exclude-standard'],
-                                capture_output=True, timeout=10)
-    except FileNotFoundError:
-        result = None
-    if result and result.returncode == 0 and result.stdout.strip(b'\0'):
-        paths = sorted(set(result.stdout.decode('utf-8').split('\0')) - {''})
-    else:
-        paths = []
-        for folder, dirs, files in os.walk(root):
-            dirs[:] = sorted(d for d in dirs if d not in {'.memory', '.git', '.venv', 'node_modules', '__pycache__'} and not d.endswith('.capture-errors'))
-            paths.extend(str((Path(folder)/f).relative_to(root)) for f in sorted(files))
-    return root, [name for name in paths if Path(name).parts[0]!='.memory'
-                  and not any(part.endswith('.capture-errors') for part in Path(name).parts)
-                  and not name.endswith(('.sqlite','.sqlite-wal','.sqlite-shm','.pyc','.capture-error.json'))]
+def task_snapshot(memory, episode, role, *, project, scope, intent_key='intent'):
+    """The fields every run snapshot shares: the task, the project requirements, the checklist and the constraints.
 
-
-def tree_signature(project, *, cache=None):
-    """Viewer reads reuse unchanged files; review requests hash fresh content."""
-    # Windows ctime can be creation time, so it cannot detect writes that restore mtime.
-    if os.name!='posix': cache=None
-    root, paths = project_paths(project)
-    fingerprints = []
-    for name in paths:
-        try:
-            value = (root/name).lstat()
-            fingerprints.append((name,value.st_ino,value.st_mode,value.st_size,value.st_mtime_ns,value.st_ctime_ns))
-        except FileNotFoundError:
-            fingerprints.append((name,None))
-    if cache is not None and cache.get('root')==str(root) and cache.get('files')==fingerprints:
-        return cache['signature']
-    digest = hashlib.sha256()
-    for name in paths:
-        path = root/name
-        digest.update(name.encode('utf-8'))
-        if path.is_symlink():
-            digest.update(b'symlink:' + os.readlink(path).encode())
-        elif path.is_file():
-            with path.open('rb') as source:
-                for block in iter(lambda: source.read(65536), b''):
-                    digest.update(block)
-        elif path.exists():
-            digest.update(b'directory')
-        else:
-            digest.update(b'deleted')
-    signature = digest.hexdigest()
-    if cache is not None:
-        # Do not retain a hash if a write raced this read.
-        for fingerprint in fingerprints:
-            name = fingerprint[0]
-            try:
-                value = (root/name).lstat()
-                after = (name,value.st_ino,value.st_mode,value.st_size,value.st_mtime_ns,value.st_ctime_ns)
-            except FileNotFoundError:
-                after = (name,None)
-            if after!=fingerprint:
-                cache.clear()
-                raise InvalidRecord('Project files changed during the freshness check. Retry after the save completes.')
-        cache.update(root=str(root),files=fingerprints,signature=signature)
-    return signature
+    Delegated work names the objective, reviews name it intent, so the caller gives the key.
+    """
+    checklist, assessment = task_checklist(memory, episode['id'], episode['criterion'])
+    value = {'role': role, 'project': project, 'subject': episode['subject'], intent_key: episode['objective'],
+             'criterion': episode['criterion'], 'requirements': memory.requirements,
+             'direction_version': memory.direction()['version'], 'checklist': checklist,
+             'constraints': task_constraints(memory, scope)}
+    if assessment:
+        value['intent_assessment'] = assessment
+    return value
 
 
 def snapshot(memory, episode_id, role):
@@ -325,9 +275,7 @@ def snapshot(memory, episode_id, role):
         records.extend(memory.read(r[0]) for r in memory.db.execute(
             "SELECT id FROM events WHERE decision_id=? AND kind IN ('outcome','action','action_result') ORDER BY seq", (decision['id'],)))
     source_ids = {e['source_id'] for record in records for e in record.get('evidence', [])}
-    for source_id in tuple(source_ids):
-        current_source=memory.db.execute('SELECT id FROM sources WHERE source_key=(SELECT source_key FROM sources WHERE id=?) ORDER BY version DESC LIMIT 1',(source_id,)).fetchone()
-        if current_source:source_ids.add(current_source[0])
+    source_ids |= {latest_source(memory, source_id) for source_id in tuple(source_ids)}
     sources = [memory.read(rid, detail=True) for rid in sorted(source_ids)]
     for record in records:
         if record['kind'] == 'work_plan':
@@ -338,15 +286,9 @@ def snapshot(memory, episode_id, role):
                 record.pop(key, None)
     receipts = [codex_host.read_receipt(memory, r[0]) for r in memory.db.execute(
         "SELECT id FROM host_receipts WHERE episode_id=? AND event_name IN ('PreToolUse','PostToolUse','Interrupt','Reconciled') ORDER BY rowid", (episode_id,))]
-    value = {'role': role, 'project': config['project'], 'subject': ep['subject'],
-             'intent': ep['objective'], 'criterion': ep['criterion'], 'requirements': memory.requirements,
-             'direction_version': memory.direction()['version'], 'records': records, 'sources': sources,
-             'receipts': receipts, 'tree_signature': getattr(memory,'_review_tree',None) or tree_signature(config['project'],cache=getattr(memory,'_review_tree_cache',None))}
-    checklist, assessment = task_checklist(memory, episode_id, ep['criterion'])
-    if assessment:
-        value['intent_assessment'] = assessment
-    value['checklist'] = checklist
-    value['constraints'] = task_constraints(memory, plan['scope'])
+    value = {**task_snapshot(memory, ep, role, project=config['project'], scope=plan['scope']),
+             'records': records, 'sources': sources, 'receipts': receipts,
+             'tree_signature': getattr(memory,'_review_tree',None) or tree_signature(config['project'],cache=getattr(memory,'_review_tree_cache',None))}
     signature=hashlib.sha256(dumps(value).encode()).hexdigest()
     if exists(memory):
         history=memory.db.execute("SELECT id,role,state,report,error FROM review_runs WHERE episode_id=? AND role=? AND state NOT IN ('queued','running','cancelling') ORDER BY rowid DESC LIMIT 2",(episode_id,role)).fetchall()
@@ -358,9 +300,7 @@ def read(memory, run_id):
     row = memory.db.execute('SELECT * FROM review_runs WHERE id=?', (run_id,)).fetchone() if exists(memory) else None
     if not row:
         raise InvalidRecord('The agent check was not found.')
-    value = dict(row)
-    for column in RUN_COLUMNS:
-        value.setdefault(column, None)
+    value = {**{column: None for column in RUN_COLUMNS}, **dict(row)}
     for key in ('snapshot', 'report', 'metrics'):
         value[key] = json.loads(value[key]) if value[key] else None
     if value['metrics'] and value['state'] in ACTIVE:
@@ -401,9 +341,7 @@ def listing(memory, episode_id, limit=10, offset=0):
         return {'runs': [], 'more': False, 'configured': False, 'current':None}
     rows = memory.db.execute('SELECT id FROM review_runs WHERE episode_id=? ORDER BY rowid DESC LIMIT ? OFFSET ?',
                              (episode_id, limit+1, offset)).fetchall()
-    runs = []
-    for row in rows[:limit]:
-        value = read(memory, row[0]); value.pop('snapshot'); runs.append(value)
+    runs = [{key: value for key, value in read(memory, row[0]).items() if key != 'snapshot'} for row in rows[:limit]]
     return {'runs': runs, 'more': len(rows)>limit, 'next_offset': offset+len(runs), 'configured': bool(configured(memory)),
             'current':current(memory,episode_id)}
 
@@ -426,8 +364,7 @@ def current(memory, episode_id, role='outcome'):
             value['state'] = 'stale'
     except (InvalidRecord, OSError, subprocess.SubprocessError) as exc:
         value['state'] = 'stale'; value['error'] = str(exc)
-    return {**{k: value[k] for k in ('id', 'role', 'state', 'report', 'error', 'updated_at')},
-            'run_state':run_state}
+    return {**{k: value[k] for k in ('id','role','state','report','error','updated_at')}, 'run_state':run_state}
 
 
 def request(memory, episode_id, role='outcome', *, request_key, session_id='', retry=False, max_seconds=300):
@@ -450,17 +387,14 @@ def request(memory, episode_id, role='outcome', *, request_key, session_id='', r
             old = read(memory, rows[0][0])
             if old['state'] in ACTIVE or not retry:
                 return old
-        require_capacity(memory, episode_id, role)
         implementer = implementer_host(memory, episode_id)
         host = review_host(memory, config, implementer)
         # The signature covers the evidence only, so a later host choice does not make a check stale.
         value['implementer_host'] = implementer
         value['independence'] = 'other_host' if host != implementer else 'same_host'
-        rid = 'check_' + uuid.uuid4().hex
-        memory.db.execute('INSERT INTO review_runs (id,episode_id,role,signature,host,session_id,state,created_at,updated_at,request_key,snapshot) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
-                          (rid, episode_id, role, signature, host, session_id, 'queued', memory.now(), memory.now(), request_key, dumps(value)))
-        codex_host.receipt(memory, session_id=session_id or rid, event_name='ReviewRequested', episode_id=episode_id,
-                           payload={'run_id': rid, 'role': role, 'signature': signature}, key=rid+':requested')
+        rid = new_run_id()
+        insert_run(memory, run_id=rid, episode_id=episode_id, role=role, host=host, snapshot=value, signature=signature,
+                   request_key=request_key, session_id=session_id, event_name='ReviewRequested', payload={'signature': signature})
     return read(memory, rid)
 
 
@@ -485,126 +419,9 @@ def cancel(memory, run_id):
     return read(memory, run_id)
 
 
-REPORT_SCHEMA = {
-    'type': 'object', 'additionalProperties': False,
-    'properties': {
-        'verdict': {'type': 'string', 'enum': ['pass', 'changes_required', 'uncertain']},
-        'summary': {'type': 'string'},
-        'checks': {'type': 'array', 'items': {'type': 'object', 'additionalProperties': False,
-            'properties': {k: {'type': 'string'} for k in ('criterion', 'evidence', 'result')},
-            'required': ['criterion', 'evidence', 'result']}},
-        'findings': {'type': 'array', 'items': {'type': 'string'}},
-        'lesson_proposals': {'type': 'array', 'items': {'type': 'object', 'additionalProperties': False,
-            'properties': {k: {'type': 'string'} for k in ('proposal', 'basis', 'conditions', 'exceptions')},
-            'required': ['proposal', 'basis', 'conditions', 'exceptions']}}
-    }, 'required': ['verdict', 'summary', 'checks', 'findings', 'lesson_proposals']}
-
-
-def report_schema(snapshot):
-    schema = json.loads(dumps(REPORT_SCHEMA))
-    text_fields = len(snapshot.get('checklist', [])) + 2 * len(snapshot.get('constraints', []))
-    evidence_limit = min(600, 8000 // max(1, text_fields))
-    schema['description'] = (
-        f'The complete serialized JSON report must not exceed {REPORT_MAX_CHARACTERS:,} characters, '
-        f'including field names, punctuation and escaped text. Aim for at most {REPORT_TARGET_CHARACTERS:,} characters. '
-        'Budget space across every required check before drafting. Use short file/line or record references; '
-        'do not repeat requirement text or the same explanation in several fields. '
-        f'For this review, draft each evidence string and constraint reason within {evidence_limit * 2 // 3} characters; '
-        f'the schema allows at most {evidence_limit}. Write complete short sentences; never cut a sentence or word to fit. '
-        'Keep findings and lesson_proposals together within 2,000 characters. '
-        'Preserve all required IDs, distinct findings, conditions, exceptions and uncertainty; shorten wording, not coverage. '
-        'Return compact JSON and check its total length before submitting.')
-    schema['properties']['summary']['maxLength'] = 600
-    checks = schema['properties']['checks']
-    checks['items']['properties']['evidence']['maxLength'] = evidence_limit
-    checks['items']['properties']['result']['enum'] = ['met','unmet','unknown']
-    if snapshot.get('checklist'):
-        checks['items']['properties']['criterion']['enum'] = [item['id'] for item in snapshot['checklist']]
-        checks.update(minItems=len(snapshot['checklist']),maxItems=len(snapshot['checklist']))
-    if 'constraints' in snapshot:
-        schema['properties']['constraint_checks'] = {
-            'type':'array', 'items':{'type':'object', 'additionalProperties':False,
-                'properties':{k:{'type':'string'} for k in ('constraint','applicability','reason','evidence','result')},
-                'required':['constraint','applicability','reason','evidence','result']}}
-        schema['required'].append('constraint_checks')
-        mapping = schema['properties']['constraint_checks']
-        for field in ('reason', 'evidence'):
-            mapping['items']['properties'][field]['maxLength'] = evidence_limit
-        mapping['items']['properties']['constraint']['enum'] = [item['id'] for item in snapshot['constraints']]
-        mapping['items']['properties']['applicability']['enum'] = ['applies','not_applicable','uncertain']
-        mapping['items']['properties']['result']['enum'] = ['met','unmet','unknown','not_applicable']
-        mapping.update(minItems=len(snapshot['constraints']),maxItems=len(snapshot['constraints']))
-    return schema
-
-
 def command(host, project, folder, prompt):
     from .hosts import review_command
     return review_command(host, project, folder, prompt)
-
-
-def validate_report(report, checklist=None, constraints=None):
-    required_fields = set(REPORT_SCHEMA['required']) | ({'constraint_checks'} if constraints is not None else set())
-    if not isinstance(report, dict) or set(report) != required_fields:
-        raise InvalidRecord('The reviewer did not return the required report fields.')
-    if report['verdict'] not in {'pass', 'changes_required', 'uncertain'}:
-        raise InvalidRecord('The reviewer returned an invalid verdict.')
-    _text(report['summary'], 'review summary', 6000)
-    if not isinstance(report['checks'], list) or not report['checks'] or len(report['checks'])>100:
-        raise InvalidRecord('The reviewer must provide explicit criterion checks.')
-    for item in report['checks']:
-        if not isinstance(item, dict) or set(item) != {'criterion','evidence','result'}:
-            raise InvalidRecord('Each check needs a criterion, evidence and result.')
-        for key, value in item.items(): _text(value, key, 6000)
-        if item['result'] not in {'met','unmet','unknown'}:
-            raise InvalidRecord('A check result must be met, unmet or unknown.')
-    if report['verdict']=='pass' and any(x['result']!='met' for x in report['checks']):
-        raise InvalidRecord('A passing report cannot contain unmet or unknown checks.')
-    if checklist is not None:
-        expected = {item['id'] for item in checklist}
-        observed = [item['criterion'] for item in report['checks']]
-        if set(observed) != expected or len(observed) != len(expected):
-            raise InvalidRecord('The reviewer must assess every checklist ID exactly once; missing proof must be unknown.')
-    if constraints is not None:
-        mapping = report['constraint_checks']
-        if not isinstance(mapping,list) or len(mapping)!=len(constraints):
-            raise InvalidRecord('Explain the applicability of every project constraint exactly once.')
-        ids = []
-        mandatory = {item['id'] for item in constraints if item.get('always_applies')}
-        for item in mapping:
-            if not isinstance(item,dict) or set(item)!={'constraint','applicability','reason','evidence','result'}:
-                raise InvalidRecord('Each constraint needs applicability, reason, evidence and result.')
-            for key,value in item.items(): _text(value,key,6000)
-            ids.append(item['constraint'])
-            if item['applicability'] not in {'applies','not_applicable','uncertain'}:
-                raise InvalidRecord('Constraint applicability must be applies, not_applicable or uncertain.')
-            if item['constraint'] in mandatory and item['applicability']=='not_applicable':
-                raise InvalidRecord('The recorded scope always applies to this task.')
-            allowed = {'not_applicable'} if item['applicability']=='not_applicable' else {'unknown'} if item['applicability']=='uncertain' else {'met','unmet','unknown'}
-            if item['result'] not in allowed:
-                raise InvalidRecord('The constraint result must agree with its applicability.')
-            if report['verdict']=='pass' and item['result'] not in {'met','not_applicable'}:
-                raise InvalidRecord('A passing report cannot leave an applicable or uncertain constraint unresolved.')
-        if set(ids)!={item['id'] for item in constraints} or len(set(ids))!=len(ids):
-            raise InvalidRecord('Explain the applicability of every project constraint exactly once.')
-    for key in ('findings','lesson_proposals'):
-        if not isinstance(report[key], list) or len(report[key])>30:
-            raise InvalidRecord('The review contains too many findings or proposals.')
-    for value in report['findings']: _text(value, 'finding', 6000)
-    validate_lesson_proposals(report['lesson_proposals'])
-    if len(dumps(report))>REPORT_MAX_CHARACTERS:
-        raise InvalidRecord(f'The review report exceeds {REPORT_MAX_CHARACTERS:,} characters.')
-    return report
-
-
-def validate_lesson_proposals(items):
-    """Check lesson proposals shared by review and work reports."""
-    if not isinstance(items, list) or len(items) > 30:
-        raise InvalidRecord('The review contains too many findings or proposals.')
-    for item in items:
-        if not isinstance(item,dict) or set(item)!={'proposal','basis','conditions','exceptions'}:
-            raise InvalidRecord('A lesson proposal needs its basis, conditions and exceptions.')
-        for key,value in item.items(): _text(value,key,6000)
-    return items
 
 
 def review_evidence(snapshot, folder):
@@ -636,10 +453,9 @@ def evidence_manifest(snapshot, folder):
             path.write_text(body, encoding='utf-8')
             if group=='records' and len(body)<=3000:
                 packet[group].append(record)
-            else:
-                summary = {k:v for k,v in record.items() if k in {'id','kind','title','source_key','version','status','role','state'}}
-                summary.update(file=str(path), characters=len(body))
-                packet[group].append(summary)
+                continue
+            summary = {k:v for k,v in record.items() if k in {'id','kind','title','source_key','version','status','role','state'}}
+            packet[group].append({**summary, 'file':str(path), 'characters':len(body)})
     execution = evidence['execution']
     packet['execution'] = {k:v for k,v in execution.items() if k not in {'unconfirmed','reported_failures','interruptions_and_reconciliations'}}
     for group in ('unconfirmed','reported_failures','interruptions_and_reconciliations'):
@@ -651,98 +467,69 @@ def evidence_manifest(snapshot, folder):
     return packet
 
 
-class Supervisor:
-    """Run one host process with heartbeat, cancellation, deadline and termination handling.
+def run_status(memory, run_id):
+    """The state of a run as the database holds it."""
+    return memory.db.execute('SELECT state FROM review_runs WHERE id=?', (run_id,)).fetchone()[0]
 
-    Review checks and delegated work share this loop. The caller always calls
-    stop() in a finally block, so a process is terminated even after an error.
+
+def begin_run(memory, run, timeout, *, cancelled_message, timeout_message, **extra):
+    """Take a queued run and return its folder, log, metrics, supervisor, start time and deadline.
+
+    Return None when another worker already took the run. Only the extra metrics differ between run roles.
     """
+    with memory._write():
+        changed = memory.db.execute("UPDATE review_runs SET state='running',updated_at=? WHERE id=? AND state='queued'",
+                                    (memory.now(), run['id'])).rowcount
+    if not changed:
+        return None
+    started = time.monotonic()
+    deadline = datetime.now(timezone.utc)+timedelta(seconds=timeout)
+    folder = memory.path.parent/'agent-runs'/run['id']
+    metrics = {'input_characters':None, 'provider_usage':None, 'execution_limit_seconds':timeout,
+               'deadline_at':deadline.isoformat(), 'termination_reason':None, 'report_valid':False, **extra}
+    log = hosts.RunLog(folder)
 
-    def __init__(self, memory, run_id, log, metrics, *, timeout, started, cancelled_message, timeout_message):
-        self.memory = memory
-        self.run_id = run_id
-        self.log = log
-        self.metrics = metrics
-        self.timeout = timeout
-        self.started = started
-        self.cancelled_message = cancelled_message
-        self.timeout_message = timeout_message
-        self.process = None
+    def flush(values):
+        with memory._write():
+            memory.db.execute("UPDATE review_runs SET updated_at=?,metrics=? WHERE id=? AND state='running'",
+                              (memory.now(), dumps(values), run['id']))
 
-    @property
-    def returncode(self):
-        return self.process.returncode if self.process else None
-
-    def run(self, args, *, cwd, folder):
-        """Start the host with prompt.txt as input and wait. Return (state, error) when stopped early, otherwise (None, '')."""
-        metrics = self.metrics
-        state, error = None, ''
-        with (folder/'output.jsonl').open('w') as out, (folder/'stderr.log').open('w') as err, (folder/'prompt.txt').open() as incoming:
-            self.process = subprocess.Popen(args,cwd=cwd,stdin=incoming,stdout=out,stderr=err,
-                                            text=True,start_new_session=os.name!='nt')
-            flushed = 0
-            while self.process.poll() is None:
-                metrics.update(self.log.read())
-                elapsed = time.monotonic()-self.started
-                metrics.update(duration_ms=round(elapsed*1000),remaining_seconds=round(max(0,self.timeout-elapsed),1))
-                status = self.memory.db.execute('SELECT state FROM review_runs WHERE id=?',(self.run_id,)).fetchone()[0]
-                if status=='cancelling':
-                    state,error = 'cancelled',self.cancelled_message
-                    metrics['termination_reason'] = 'cancelled'
-                    break
-                if elapsed>=self.timeout:
-                    state,error = 'timed_out',self.timeout_message
-                    metrics['termination_reason'] = 'execution_deadline'
-                    break
-                if elapsed>=flushed:
-                    with self.memory._write():
-                        self.memory.db.execute("UPDATE review_runs SET updated_at=?,metrics=? WHERE id=? AND state='running'",
-                                               (self.memory.now(),dumps(metrics),self.run_id))
-                    flushed = elapsed+2
-                time.sleep(min(.25,max(0,self.timeout-elapsed)))
-            if self.process.poll() is not None and metrics['termination_reason'] is None:
-                metrics['termination_reason'] = 'completed' if self.process.returncode==0 else 'host_exit'
-        return state, error
-
-    def stop(self):
-        """Terminate the process group when the host is still running."""
-        process = self.process
-        if not process or process.poll() is not None:
-            return
-        try:
-            if os.name=='nt': process.terminate()
-            else: os.killpg(process.pid,signal.SIGTERM)
-            try: process.wait(timeout=3)
-            except subprocess.TimeoutExpired:
-                if os.name=='nt': process.kill()
-                else: os.killpg(process.pid,signal.SIGKILL)
-                process.wait()
-        except ProcessLookupError:
-            process.wait()
+    supervisor = hosts.Supervisor(log, metrics, timeout=timeout, started=started, cancelled_message=cancelled_message,
+                                  timeout_message=timeout_message, status=lambda: run_status(memory, run['id']), flush=flush)
+    return folder, log, metrics, supervisor, started, deadline
 
 
-def host_answer(host, folder, log):
-    """Return the structured answer a host produced, or None."""
-    if host=='codex' and (folder/'answer.json').exists():
-        return json.loads((folder/'answer.json').read_text())
-    if log.result:
-        candidate = log.result.get('structured_output')
-        if candidate is None and log.result.get('result'):
-            candidate = json.loads(log.result['result'])
-        return candidate
+def read_report(run, folder, log, supervisor, metrics, validate):
+    """Read the final log and the host's structured answer, and return the validated report or None."""
+    try:
+        metrics.update(log.read(final=True))
+        metrics['exit_code'] = supervisor.returncode
+        candidate = hosts.host_answer(run['host'], folder, log)
+        if candidate is not None:
+            report = validate(candidate)
+            metrics['report_valid'] = True
+            return report
+    except (OSError,ValueError,InvalidRecord) as exc:
+        metrics['report_error'] = str(exc)
     return None
 
 
-def unavailable_error(host, found):
-    text = f'The {host} host did not accept the run ({found["reason"].replace("_", " ")}).'
-    if found.get('until'):
-        text += f' It reports that it accepts work again at {found["until"]}.'
-    return text + ' Project Memory records the host as unavailable.'
+def record_result(memory, run, state, error, *, metrics, report, started, cancelled_message, event_name, payload):
+    """Write the final state of a run with its receipt. A cancellation requested meanwhile wins."""
+    metrics.update(duration_ms=round((time.monotonic()-started)*1000), remaining_seconds=0)
+    with memory._write():
+        if run_status(memory, run['id'])=='cancelling':
+            state, error = 'cancelled', cancelled_message
+            metrics['termination_reason'] = 'cancelled'
+        memory.db.execute("UPDATE review_runs SET state=?,updated_at=?,report=?,metrics=?,error=? WHERE id=? AND state IN ('running','cancelling')",
+                          (state, memory.now(), dumps(report) if report else None, dumps(metrics), error, run['id']))
+        codex_host.receipt(memory, session_id=run['session_id'] or run['id'], event_name=event_name, episode_id=run['episode_id'],
+                           payload={'run_id':run['id'], 'state':state, 'error':error, **payload}, key=run['id']+':finished')
+    return state, error
 
 
 def note_host(memory, host, metrics):
     """Record host availability from the log of a finished run."""
-    from . import hosts
     found = metrics.get('host_unavailable')
     try:
         if found:
@@ -755,24 +542,22 @@ def note_host(memory, host, metrics):
                                payload={'host':host,'error':str(exc)}, key='host-availability-error:'+uuid.uuid4().hex)
 
 
+def current_evidence(memory, run):
+    """True when the evidence a finished check examined is still the current evidence."""
+    if run['role'] in ROLES:
+        return snapshot(memory, run['episode_id'], run['role'])[1]==run['signature']
+    from .delegation import review_current
+    return review_current(memory, run)
+
+
 def execute(memory, run_id, timeout=None):
-    from datetime import timedelta
-    from .hosts import RunLog
     run = read(memory, run_id)
     if timeout is None: timeout = run['snapshot'].get('execution_limit_seconds',300)
-    with memory._write():
-        changed = memory.db.execute("UPDATE review_runs SET state='running',updated_at=? WHERE id=? AND state='queued'", (memory.now(), run_id)).rowcount
-    if not changed: return
-    started = time.monotonic()
-    deadline = datetime.now(timezone.utc)+timedelta(seconds=timeout)
-    folder = memory.path.parent/'agent-runs'/run_id
+    begun = begin_run(memory, run, timeout, cancelled_message=CHECK_CANCELLED, timeout_message=CHECK_TIMED_OUT)
+    if not begun: return
+    folder, log, metrics, supervisor, started, deadline = begun
     report = None
-    log = RunLog(folder)
     state, error = 'failed', ''
-    metrics = {'input_characters':None, 'provider_usage':None, 'execution_limit_seconds':timeout,
-               'deadline_at':deadline.isoformat(), 'termination_reason':None, 'report_valid':False}
-    supervisor = Supervisor(memory, run_id, log, metrics, timeout=timeout, started=started,
-                            cancelled_message=CHECK_CANCELLED, timeout_message=CHECK_TIMED_OUT)
     try:
         folder.mkdir(parents=True, exist_ok=True)
         schema = report_schema(run['snapshot'])
@@ -810,59 +595,24 @@ def execute(memory, run_id, timeout=None):
         metrics['termination_reason'] = 'worker_error'
     finally:
         supervisor.stop()
-        try:
-            metrics.update(log.read(final=True))
-            metrics['exit_code'] = supervisor.returncode
-            candidate = host_answer(run['host'], folder, log)
-            if candidate is not None:
-                validate_report(candidate,run['snapshot'].get('checklist'),run['snapshot'].get('constraints'))
-                report = candidate
-                metrics['report_valid'] = True
-        except (OSError,ValueError,InvalidRecord) as exc:
-            metrics['report_error'] = str(exc)
-        unavailable = metrics.get('host_unavailable')
-        if metrics['termination_reason'] in {'completed','host_exit'} and unavailable:
-            state,error = 'host_unavailable',unavailable_error(run['host'],unavailable)
-            metrics['termination_reason'] = 'host_unavailable'
-        elif metrics['termination_reason']=='completed':
-            if metrics.get('host_error_events'):
-                state,error = 'failed','The host reported an error. Inspect its private event log.'
-                metrics['termination_reason'] = 'host_error'
-            elif not report:
-                state,error = 'failed',metrics.get('report_error','The reviewer did not return a report.')
-                metrics['termination_reason'] = 'invalid_report'
-            else:
+        report = read_report(run, folder, log, supervisor, metrics, lambda candidate: validate_report(
+            candidate, run['snapshot'].get('checklist'), run['snapshot'].get('constraints')))
+        found = hosts.run_state(run['host'], metrics, report, missing_report='The reviewer did not return a report.',
+                                exit_message='The host review process exited unsuccessfully. Inspect its private event and stderr logs.')
+        if found:
+            state, error, reason = found
+            if reason: metrics['termination_reason'] = reason
+            if state=='completed':
                 try:
-                    if run['role'] in ROLES:
-                        _,signature = snapshot(memory,run['episode_id'],run['role'])
-                        current_evidence = signature==run['signature']
-                    else:
-                        from .delegation import review_current
-                        current_evidence = review_current(memory, run)
-                    state = report['verdict'] if current_evidence else 'stale'
-                    if state=='stale': error = 'The work or its evidence changed during the check. It cannot approve the current work.'
+                    state = report['verdict'] if current_evidence(memory, run) else 'stale'
+                    error = 'The work or its evidence changed during the check. It cannot approve the current work.' if state=='stale' else ''
                 except (OSError,InvalidRecord,subprocess.SubprocessError) as exc:
                     state,error = 'stale',str(exc)
-        elif metrics['termination_reason']=='host_exit':
-            error = 'The host review process exited unsuccessfully. Inspect its private event and stderr logs.'
-        metrics.update(duration_ms=round((time.monotonic()-started)*1000),remaining_seconds=0)
-        with memory._write():
-            status = memory.db.execute('SELECT state FROM review_runs WHERE id=?',(run_id,)).fetchone()[0]
-            if status=='cancelling':
-                state,error = 'cancelled',CHECK_CANCELLED
-                metrics['termination_reason'] = 'cancelled'
-            memory.db.execute("UPDATE review_runs SET state=?,updated_at=?,report=?,metrics=?,error=? WHERE id=? AND state IN ('running','cancelling')",
-                              (state,memory.now(),dumps(report) if report else None,dumps(metrics),error,run_id))
-            codex_host.receipt(memory,session_id=run['session_id'] or run_id,event_name='ReviewFinished',episode_id=run['episode_id'],
-                              payload={'run_id':run_id,'role':run['role'],'state':state,'report':report,'metrics':metrics,'error':error},key=run_id+':finished')
+        record_result(memory, run, state, error, metrics=metrics, report=report, started=started,
+                      cancelled_message=CHECK_CANCELLED, event_name='ReviewFinished',
+                      payload={'role':run['role'], 'report':report, 'metrics':metrics})
     note_host(memory, run['host'], metrics)
     propose_lessons(memory, run_id)
-
-
-def checked_outcome(run):
-    """Return the id of the last outcome record in a check snapshot, or None."""
-    outcomes = [record.get('id') for record in (run.get('snapshot') or {}).get('records', []) if record.get('kind')=='outcome']
-    return outcomes[-1] if outcomes and outcomes[-1] else None
 
 
 def record_lesson_proposals(memory, run):
@@ -878,15 +628,14 @@ def record_lesson_proposals(memory, run):
     episode = memory.episode(run['episode_id'])
     source_key = 'run-report:' + run['id']
     row = memory.db.execute('SELECT id FROM sources WHERE source_key=? ORDER BY version DESC LIMIT 1', (source_key,)).fetchone()
-    if row:
-        source_id = row[0]
-    else:
-        role = run['role'].replace('_', ' ')
-        source_id = memory.source(source_key, f'Report of the {role} run {run["id"]}',
-                                  f'The {run["host"]} host returned this report with {len(proposals)} lesson proposals.',
-                                  dumps(report), 'tool', subject=episode['subject'])['id']
+    source_id = row[0] if row else memory.source(
+        source_key, f'Report of the {run["role"].replace("_", " ")} run {run["id"]}',
+        f'The {run["host"]} host returned this report with {len(proposals)} lesson proposals.',
+        dumps(report), 'tool', subject=episode['subject'])['id']
     links = []
-    outcome_id = checked_outcome(run) if run['role'] in ROLES else None
+    # The last outcome in the snapshot is the one an agent check examined.
+    checked = [r.get('id') for r in run['snapshot'].get('records', []) if r.get('kind')=='outcome'] if run['role'] in ROLES else []
+    outcome_id = checked[-1] if checked else None
     if outcome_id and memory.db.execute('SELECT 1 FROM events WHERE id=?', (outcome_id,)).fetchone():
         links = [{'event_id': outcome_id, 'reason': 'The agent check examined this outcome when it proposed the lesson.'}]
     evidence = [{'source_id': source_id, 'reason': 'The agent run report states this proposal with its basis, conditions and exceptions.'}]
@@ -937,10 +686,9 @@ def request_for_done(memory, episode_id, *, session_id=''):
     step = completion_guidance(memory, item)
     if step.get('action') != 'request_review':
         return {'requested': False, 'state': 'not_requested', 'reason': step['reason'], 'next_step': step}
-    from .delegation import summary
     run = request(memory, episode_id, 'outcome', request_key='done-check:'+item['outcome']['id'], session_id=session_id)
     launch(memory, run)
-    result = {'requested': True, **summary(memory, run), 'read_with': {'view': 'reviews', 'id': episode_id}}
+    result = {'requested': True, **run_summary(memory, run), 'read_with': {'view': 'reviews', 'id': episode_id}}
     if run['state'] in ACTIVE:
         result['wait_command'] = wait_command(memory, run['id'])
     return result
@@ -968,7 +716,6 @@ def hook(memory, event, host):
     role = 'recovery' if unresolved(memory,ep) else 'intent' if reasons else 'outcome'
     if name=='UserPromptSubmit' and role=='outcome':return {}
     if role=='outcome':
-        decision = latest(memory,ep,'decision')
         if not decision or not memory.db.execute("SELECT 1 FROM events WHERE decision_id=? AND kind='outcome' AND json_extract(payload,'$.completion')='complete'",(decision['id'],)).fetchone(): return {}
     try:
         run = request(memory, ep, role, request_key='hook:'+session+':'+str(event.get('turn_id') or event.get('prompt_id') or uuid.uuid4().hex)+':'+role, session_id=session)
@@ -978,8 +725,8 @@ def hook(memory, event, host):
             reason += 'Wait for this existing check using '+wait_command(memory,run['id'])+'. '
         else:
             reason += 'This check is no longer running. Inspect its result before requesting another check. '
-        reason += f'Read memory_get next with id {ep} for current completion blockers. '
-        reason += 'A missing, failed or stale check cannot establish completion. Do not repeat completed implementation work.'
+        reason += (f'Read memory_get next with id {ep} for current completion blockers. '
+                   'A missing, failed or stale check cannot establish completion. Do not repeat completed implementation work.')
         prompt = memory.db.execute("SELECT id FROM host_receipts WHERE session_id=? AND event_name='UserPromptSubmit' ORDER BY rowid DESC LIMIT 1", (session,)).fetchone()
         coverage_blocked = prompt and memory.db.execute("SELECT 1 FROM host_receipts WHERE session_id=? AND event_name='CoverageBlockIssued' AND json_extract(payload,'$.prompt_id')=?", (session,prompt[0])).fetchone()
         if name=='Stop' and run['state']!='pass' and not event.get('stop_hook_active') and not coverage_blocked:
@@ -998,15 +745,14 @@ def hook(memory, event, host):
 def main():
     parser=argparse.ArgumentParser();parser.add_argument('--db',required=True);parser.add_argument('--run',required=True)
     args=parser.parse_args()
+    from . import delegation
     with Memory(args.db) as memory:
         if read(memory,args.run)['role'] in DELEGATED_ROLES:
-            from .delegation import execute as execute_delegated
-            execute_delegated(memory,args.run)
+            delegation.execute(memory,args.run)
         else:
             execute(memory,args.run)
             # A finished check frees capacity, so a work review that could not start earlier can start now.
-            from .delegation import start_missing_reviews
-            start_missing_reviews(memory)
+            delegation.start_missing_reviews(memory)
 
 
 if __name__=='__main__': main()

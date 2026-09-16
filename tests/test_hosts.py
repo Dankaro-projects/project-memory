@@ -124,9 +124,6 @@ class RunLogTests(unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
-    def test_review_log_name_is_an_alias_of_the_run_log(self):
-        self.assertIs(hosts.ReviewLog, hosts.RunLog)
-
     def test_codex_usage_limit_across_split_lines(self):
         event = json.dumps({'type': 'error', 'message': "You've hit your usage limit. Try again in 2 hours."}) + '\n'
         self.output.write_text(event[:25])

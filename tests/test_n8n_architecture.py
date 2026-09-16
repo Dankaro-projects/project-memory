@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from unittest import mock
 
-from memory_module import Memory, architecture, graph, planning
+from memory_module import Memory, arch_n8n, architecture, graph, planning
 from memory_module.architecture import credential_service, model, node_service
 from memory_module.core import InvalidRecord
 
@@ -281,7 +281,7 @@ class ComponentLevelTests(N8nFixture):
     def test_cache_reuses_unchanged_workflow_files(self):
         cache = {}
         model(self.m, cache=cache)
-        with mock.patch.object(architecture, '_read_workflow', side_effect=AssertionError('read again')):
+        with mock.patch.object(arch_n8n, '_read_workflow', side_effect=AssertionError('read again')):
             again = model(self.m, cache=cache)
         self.assertIn(LEAD, by_id(again))
         (self.root / 'workflows/nightly.json').unlink()
@@ -290,7 +290,7 @@ class ComponentLevelTests(N8nFixture):
         self.assertFalse(any(key[1].endswith('nightly.json') for key in cache if isinstance(key, tuple) and key[0] == 'n8n'))
 
     def test_workflow_count_is_bounded(self):
-        with mock.patch.object(architecture, 'MAX_WORKFLOWS', 2):
+        with mock.patch.object(arch_n8n, 'MAX_WORKFLOWS', 2):
             result = model(self.m, layers=['n8n'])
         self.assertTrue(result['truncated'])
         self.assertEqual(sum(node['kind'] == 'workflow' for node in result['nodes']), 2)

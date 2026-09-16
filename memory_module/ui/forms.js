@@ -360,7 +360,11 @@
         h("div", { class: "form-grid" }, P.field("Kind", P.select("kind", COMPONENT_KINDS, item.kind || context.kind || defaultKind())),
           P.field("Status", P.select("status", [["proposed", "Proposed"], ["confirmed", "Confirmed by you"], ["retired", "Retired"]], item.status || "proposed"))),
         P.field("Description", area("description", item.description, "4")),
-        P.field("Project path", P.input("path", item.path || context.path), "Optional. Enter a project folder that this item describes, such as src/app or workflows."));
+        P.field("Project path", P.input("path", item.path || context.path),
+          "Optional. Enter the part of the project that this item describes, such as src/app, workflows, service:slack or "
+          + "n8n:workflows/lead-intake.json. Open the Architecture view first and copy the exact name it shows, because a "
+          + "service name comes from the workflow export. An item without a path, such as a stakeholder or a workstream, "
+          + "shows its work only when a link records the relation."));
     },
     submit(values, context) {
       need(values.title, "Write the title.");
