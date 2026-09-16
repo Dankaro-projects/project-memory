@@ -1,3 +1,4 @@
+import shutil
 import json
 from contextlib import chdir
 from pathlib import Path
@@ -16,7 +17,7 @@ class ProductTests(unittest.TestCase):
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory(ignore_cleanup_errors=True);self.project=Path(self.temp.name)
         self.launch=[sys.executable,'-m','memory_module.cli']
-    def tearDown(self):self.temp.cleanup()
+    def tearDown(self):shutil.rmtree(self.temp.name, ignore_errors=True)
     def setup(self,**kwargs):return install.setup(self.project,_launcher=self.launch,**kwargs)
     def test_generic_setup_actual_process_and_uninstall_preserve_data(self):
         first=self.setup(requirements=['Keep data locally.'])

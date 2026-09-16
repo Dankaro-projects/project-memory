@@ -1,3 +1,4 @@
+import shutil
 import concurrent.futures
 import json
 from pathlib import Path
@@ -26,7 +27,7 @@ class MemoryTests(unittest.TestCase):
 
     def tearDown(self):
         self.m.close()
-        self.tmp.cleanup()
+        shutil.rmtree(self.tmp.name, ignore_errors=True)
 
     def record(self, kind, payload, **kw):
         self.key += 1

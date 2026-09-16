@@ -1,3 +1,4 @@
+import shutil
 import io
 import json
 from pathlib import Path
@@ -17,7 +18,7 @@ class CodexTests(unittest.TestCase):
         self.m=Memory.create(self.root/'memory.sqlite','Tests',['Preserve exceptions.'])
         codex_host.initialize(self.m)
     def tearDown(self):
-        self.m.close();self.temp.cleanup()
+        self.m.close();shutil.rmtree(self.temp.name, ignore_errors=True)
     def event(self,name,**kw):
         return {'hook_event_name':name,'session_id':'session','turn_id':'turn','tool_name':'Bash','tool_use_id':'call','tool_input':{'command':'python3 secret'},**kw}
     def decision(self):

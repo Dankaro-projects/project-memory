@@ -1,4 +1,5 @@
 """Tests for authored components, their links and the authored architecture layer."""
+import shutil
 from pathlib import Path
 import tempfile
 import unittest
@@ -23,7 +24,7 @@ class ComponentFixture(unittest.TestCase):
 
     def tearDown(self):
         self.m.close()
-        self.temp.cleanup()
+        shutil.rmtree(self.temp.name, ignore_errors=True)
 
     def key(self):
         self.counter += 1

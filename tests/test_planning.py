@@ -1,4 +1,5 @@
 """Exercise continuation gates and board state against real SQLite history."""
+import shutil
 import json
 from pathlib import Path
 import tempfile
@@ -18,7 +19,7 @@ class PlanningTests(unittest.TestCase):
         self.evidence=[{'source_id':self.source['id'],'reason':'The user defines the goal and the exception.'}]
         self.counter=0
     def tearDown(self):
-        self.m.close();self.tmp.cleanup()
+        self.m.close();shutil.rmtree(self.tmp.name, ignore_errors=True)
     def key(self):
         self.counter+=1;return str(self.counter)
     def plan(self, **changes):

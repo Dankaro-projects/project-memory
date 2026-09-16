@@ -1,4 +1,5 @@
 """Regression tests for review findings that span documents, guards and templates for non-code projects."""
+import shutil
 import io
 import json
 from pathlib import Path
@@ -26,7 +27,7 @@ class DocumentCaptureTests(unittest.TestCase):
 
     def tearDown(self):
         self.m.close()
-        self.temp.cleanup()
+        shutil.rmtree(self.temp.name, ignore_errors=True)
 
     def test_office_and_text_files_are_captured_as_text(self):
         office_file(self.root / 'deck.pptx', {'ppt/slides/slide1.xml':
@@ -92,7 +93,7 @@ class McpWriteScopeTests(unittest.TestCase):
 
     def tearDown(self):
         self.m.close()
-        self.temp.cleanup()
+        shutil.rmtree(self.temp.name, ignore_errors=True)
 
     def evidence(self):
         return [{'source_id': self.source['id'], 'reason': 'The user sets the scope.'}]

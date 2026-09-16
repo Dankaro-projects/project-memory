@@ -1,4 +1,5 @@
 """Data contracts of the read API, the live server over it and the offline export."""
+import shutil
 import json
 from pathlib import Path
 import queue
@@ -128,7 +129,7 @@ class ApiTests(unittest.TestCase):
 
     def tearDown(self):
         self.m.close()
-        self.temp.cleanup()
+        shutil.rmtree(self.temp.name, ignore_errors=True)
 
     def test_now_reports_work_attention_agents_decisions_and_learning_counts(self):
         value = api.now(self.m, {})
@@ -331,7 +332,7 @@ class LiveApiTests(unittest.TestCase):
         self.server.shutdown()
         self.thread.join()
         self.m.close()
-        self.temp.cleanup()
+        shutil.rmtree(self.temp.name, ignore_errors=True)
 
     def get(self, route, headers=None):
         with urlopen(Request(self.base + route, headers=headers or {}), timeout=10) as response:
@@ -427,7 +428,7 @@ class ExportTests(unittest.TestCase):
 
     def tearDown(self):
         self.m.close()
-        self.temp.cleanup()
+        shutil.rmtree(self.temp.name, ignore_errors=True)
 
     def data(self, path):
         text = path.read_text().split('<script id="memory-data" type="application/json">')[1].split('</script>')[0]

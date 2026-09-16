@@ -1,4 +1,5 @@
 """Review contracts and real process termination; no provider calls in unit tests."""
+import shutil
 import contextlib
 import io
 import json
@@ -35,7 +36,7 @@ class ReviewDiagnosticsTests(unittest.TestCase):
 
     def tearDown(self):
         self.m.close()
-        self.temp.cleanup()
+        shutil.rmtree(self.temp.name, ignore_errors=True)
 
     def request(self):
         return reviews.request(self.m,self.ep,request_key='check',retry=True)

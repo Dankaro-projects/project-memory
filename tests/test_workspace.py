@@ -1,3 +1,4 @@
+import shutil
 import json
 from pathlib import Path
 import sqlite3
@@ -29,7 +30,7 @@ class WorkspaceTests(unittest.TestCase):
         self.data={'title':'Repair parsing','objective':'Preserve both encoding paths.','criterion':'Strict UTF-8 rejects invalid bytes. Tagged legacy Latin-1 succeeds.',
                    'subject':'code','payload':self.payload}
         self.work=action(self.m,'plan',self.data,'first')
-    def tearDown(self):self.m.close();self.temp.cleanup()
+    def tearDown(self):self.m.close();shutil.rmtree(self.temp.name, ignore_errors=True)
     def completed(self):
         ep=self.work['episode_id'];source=self.m.source('test','Actual parser result','Both routes were checked.','The fixture result is recorded explicitly.','tool',subject='code')
         evidence=[{'source_id':source['id'],'reason':'This fixture supplies the observed result.'}]

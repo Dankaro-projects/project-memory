@@ -1,4 +1,5 @@
 """Delegated work with fake host processes and real git in temporary repositories. No real host runs."""
+import shutil
 import base64
 from datetime import datetime, timezone
 import io
@@ -129,7 +130,7 @@ class DelegationTests(unittest.TestCase):
 
     def tearDown(self):
         self.m.close()
-        self.temp.cleanup()
+        shutil.rmtree(self.temp.name, ignore_errors=True)
 
     def git(self, *args, cwd=None):
         result = subprocess.run(['git', '-C', str(cwd or self.project), *args], capture_output=True, text=True)
@@ -594,7 +595,7 @@ class RunTableTests(unittest.TestCase):
                                   (episode['id'], memory.now(), memory.now()))
 
     def tearDown(self):
-        self.temp.cleanup()
+        shutil.rmtree(self.temp.name, ignore_errors=True)
 
     def test_reads_tolerate_missing_columns_and_columns_are_added_once(self):
         with Memory(self.path, read_only=True) as memory:

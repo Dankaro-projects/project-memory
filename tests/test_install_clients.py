@@ -1,4 +1,5 @@
 """Several clients in one project: setup, uninstall, legacy upgrade and doctor."""
+import shutil
 import contextlib
 import importlib.util
 import io
@@ -24,7 +25,7 @@ class InstallClientsTests(unittest.TestCase):
         self.launch = [sys.executable, '-m', 'memory_module.cli']
 
     def tearDown(self):
-        self.temp.cleanup()
+        shutil.rmtree(self.temp.name, ignore_errors=True)
 
     def setup(self, **kwargs):
         kwargs.setdefault('_launcher', self.launch)

@@ -1,3 +1,4 @@
+import shutil
 import json
 import sqlite3
 import tempfile
@@ -14,7 +15,7 @@ class ImprovementTests(unittest.TestCase):
         self.ep=self.m.start('Decoder','Decode documented bytes','repair','Both fixtures pass',subject='code')
         self.s=self.m.source('contract','Contract','UTF-8','UTF-8','document',subject='code')['id']
         self.refs=[{'source_id':self.s,'reason':'Agreed contract.'}]
-    def tearDown(self):self.m.close();self.temp.cleanup()
+    def tearDown(self):self.m.close();shutil.rmtree(self.temp.name, ignore_errors=True)
     def record(self,kind,payload,**kw):
         v=self.m.episode(self.ep['id'])['version']
         return self.m.record(self.ep['id'],kind,payload,expected_version=v,request_key=str(v),actor='evaluator',**kw)

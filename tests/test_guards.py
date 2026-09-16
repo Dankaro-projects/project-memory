@@ -1,4 +1,5 @@
 """Lesson guards, decision acknowledgement and file scope enforcement against real SQLite history."""
+import shutil
 import json
 from pathlib import Path
 import subprocess
@@ -125,7 +126,7 @@ class Fixture(unittest.TestCase):
 
     def tearDown(self):
         self.m.close()
-        self.temp.cleanup()
+        shutil.rmtree(self.temp.name, ignore_errors=True)
 
     def key(self):
         self.counter += 1

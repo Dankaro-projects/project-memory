@@ -1,4 +1,5 @@
 """Tests for the n8n workflow layer of the architecture model."""
+import shutil
 import json
 from pathlib import Path
 import tempfile
@@ -112,7 +113,7 @@ class N8nFixture(unittest.TestCase):
 
     def tearDown(self):
         self.m.close()
-        self.temp.cleanup()
+        shutil.rmtree(self.temp.name, ignore_errors=True)
 
 
 class ServiceNameTests(unittest.TestCase):

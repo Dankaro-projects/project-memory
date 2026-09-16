@@ -1,4 +1,5 @@
 """Regression cases from first-beta use; use invented project data only."""
+import shutil
 import hashlib
 import json
 import os
@@ -27,7 +28,7 @@ class FeedbackTests(unittest.TestCase):
         self.temp=tempfile.TemporaryDirectory(ignore_cleanup_errors=True);self.root=Path(self.temp.name).resolve()
         self.info=setup(self.root);self.m=Memory(self.info['database'])
     def tearDown(self):
-        self.m.close();self.temp.cleanup()
+        self.m.close();shutil.rmtree(self.temp.name, ignore_errors=True)
     def test_local_viewer_starts_without_hostname_resolution(self):
         from unittest.mock import patch
         with patch('socket.getfqdn',side_effect=OSError('DNS is unavailable')):
@@ -156,7 +157,7 @@ class LiveProcessTests(unittest.TestCase):
         for process in self.processes:
             if process.poll() is None:process.terminate()
             process.wait(timeout=5)
-        self.m.close();self.temp.cleanup()
+        self.m.close();shutil.rmtree(self.temp.name, ignore_errors=True)
     def get(self,route='',headers=None):
         return urlopen(Request(self.server['url']+route,headers=headers or {}),timeout=3)
     def test_read_only_origin_auth_etag_and_external_wal_commits(self):

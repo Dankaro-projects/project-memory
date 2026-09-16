@@ -1,4 +1,5 @@
 """Claude Code host compatibility: aliases, compaction context, project configuration."""
+import shutil
 import json
 from pathlib import Path
 import subprocess
@@ -17,7 +18,7 @@ class ClaudeCaptureTests(unittest.TestCase):
         self.m=Memory.create(self.root/'memory.sqlite','Tests',['Preserve exceptions.'])
         codex_host.initialize(self.m)
     def tearDown(self):
-        self.m.close();self.temp.cleanup()
+        self.m.close();shutil.rmtree(self.temp.name, ignore_errors=True)
     def event(self,name,**kw):
         # Claude Code sends no turn_id; it sends transcript_path, cwd and permission_mode instead.
         base={'hook_event_name':name,'session_id':'claude-session','transcript_path':'/tmp/t.jsonl','cwd':str(self.root),'permission_mode':'default'}
@@ -103,7 +104,7 @@ class ClaudeInstallTests(unittest.TestCase):
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory(ignore_cleanup_errors=True);self.project=Path(self.temp.name)
         self.launch=[sys.executable,'-m','memory_module.cli']
-    def tearDown(self):self.temp.cleanup()
+    def tearDown(self):shutil.rmtree(self.temp.name, ignore_errors=True)
     def setup(self,**kwargs):return install.setup(self.project,_launcher=self.launch,**kwargs)
     def test_claude_setup_writes_project_files_repeats_and_uninstalls_cleanly(self):
         (self.project/'.mcp.json').write_text(json.dumps({'mcpServers':{'other':{'command':'x'}}}))

@@ -1,3 +1,4 @@
+import shutil
 import json
 import queue
 from pathlib import Path
@@ -23,7 +24,7 @@ class CoverageTests(unittest.TestCase):
         codex_host.initialize(self.m);self.n=0
         self.source=self.m.source('request','The user requests both paths.','Preserve both encodings.','Strict UTF-8 rejects invalid bytes. Tagged Latin-1 succeeds.','user',subject='code')
         self.evidence=[{'source_id':self.source['id'],'reason':'The user states the required exception.'}]
-    def tearDown(self):self.m.close();self.temp.cleanup()
+    def tearDown(self):self.m.close();shutil.rmtree(self.temp.name, ignore_errors=True)
     def event(self,name,**kw):
         return {'hook_event_name':name,'session_id':'s','turn_id':'1',**kw}
     def capture(self,name,**kw):

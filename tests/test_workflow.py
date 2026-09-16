@@ -1,3 +1,4 @@
+import shutil
 import json
 from pathlib import Path
 import sqlite3
@@ -24,7 +25,7 @@ class WorkflowTests(unittest.TestCase):
         self.n = 0
 
     def tearDown(self):
-        self.m.close(); self.temp.cleanup()
+        self.m.close(); shutil.rmtree(self.temp.name, ignore_errors=True)
 
     def record(self, kind, payload, **kwargs):
         self.n += 1

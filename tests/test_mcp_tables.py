@@ -1,4 +1,5 @@
 """Check the MCP tools generated from the view and operation tables, and the data each new view and operation returns."""
+import shutil
 import io
 import json
 from pathlib import Path
@@ -35,7 +36,7 @@ class Fixture(unittest.TestCase):
 
     def tearDown(self):
         self.m.close()
-        self.temp.cleanup()
+        shutil.rmtree(self.temp.name, ignore_errors=True)
 
     def key(self):
         self.counter += 1
@@ -347,7 +348,7 @@ class KickoffOperationTests(unittest.TestCase):
 
     def tearDown(self):
         self.m.close()
-        self.temp.cleanup()
+        shutil.rmtree(self.temp.name, ignore_errors=True)
 
     def test_answer_kickoff_records_answers_once_and_the_plan_view_lists_phases(self):
         state = dispatch(self.m, 'memory_get', {'view': 'kickoff', 'max_chars': 20000})
@@ -526,7 +527,7 @@ class ReservedActorTests(unittest.TestCase):
 
     def tearDown(self):
         self.memory.close()
-        self.temp.cleanup()
+        shutil.rmtree(self.temp.name, ignore_errors=True)
 
     def answer(self, actor, request_key):
         return dispatch(self.memory, 'memory_write', {

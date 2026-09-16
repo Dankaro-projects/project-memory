@@ -1,4 +1,5 @@
 """Tests for project templates, kickoff, the work item hierarchy and the related wave 1 follow ups."""
+import shutil
 from contextlib import redirect_stdout
 import io
 import json
@@ -25,7 +26,7 @@ class ScaffoldTests(unittest.TestCase):
         self.base = Path(self.temp.name).resolve()
 
     def tearDown(self):
-        self.temp.cleanup()
+        shutil.rmtree(self.temp.name, ignore_errors=True)
 
     def test_each_template_is_idempotent_with_phases_dependencies_and_documents(self):
         for template, clients in (('product', ['codex', 'claude']), ('engagement', []), ('automation', ['claude'])):
@@ -114,7 +115,7 @@ class KickoffTests(unittest.TestCase):
 
     def tearDown(self):
         self.m.close()
-        self.temp.cleanup()
+        shutil.rmtree(self.temp.name, ignore_errors=True)
 
     def key(self):
         self.counter += 1
@@ -214,7 +215,7 @@ class HierarchyTests(unittest.TestCase):
 
     def tearDown(self):
         self.m.close()
-        self.temp.cleanup()
+        shutil.rmtree(self.temp.name, ignore_errors=True)
 
     def key(self):
         self.counter += 1
@@ -311,7 +312,7 @@ class PlanPathScopeTests(unittest.TestCase):
 
     def tearDown(self):
         self.m.close()
-        self.temp.cleanup()
+        shutil.rmtree(self.temp.name, ignore_errors=True)
 
     def key(self):
         self.counter += 1
@@ -380,7 +381,7 @@ class ScopeBlockRedeliveryTests(unittest.TestCase):
 
     def tearDown(self):
         self.m.close()
-        self.temp.cleanup()
+        shutil.rmtree(self.temp.name, ignore_errors=True)
 
     def event(self, target):
         return {'hook_event_name': 'PreToolUse', 'session_id': 'session', 'turn_id': 'turn-1', 'tool_name': 'Edit',

@@ -1,4 +1,5 @@
 """Tests for static code structure, package manifests and attachments of work to components."""
+import shutil
 from contextlib import contextmanager
 import json
 import os
@@ -120,7 +121,7 @@ class ArchitectureTestCase(unittest.TestCase):
 
     def tearDown(self):
         self.m.close()
-        self.temp.cleanup()
+        shutil.rmtree(self.temp.name, ignore_errors=True)
 
 
 class ProjectRootTests(ArchitectureTestCase):

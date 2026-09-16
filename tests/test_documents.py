@@ -1,3 +1,4 @@
+import shutil
 import json
 from pathlib import Path
 import subprocess
@@ -22,7 +23,7 @@ class DocumentTests(unittest.TestCase):
 
     def tearDown(self):
         self.m.close()
-        self.temp.cleanup()
+        shutil.rmtree(self.temp.name, ignore_errors=True)
 
     def decision(self, source):
         ep = self.m.start('Amberlake rollout', 'Check the storage approach.', 'review', 'The exception survives.', subject='code')

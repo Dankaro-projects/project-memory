@@ -1,4 +1,5 @@
 """Regression cases for capture loss, connection recovery and bounded reads."""
+import shutil
 import json
 import os
 from pathlib import Path
@@ -31,7 +32,7 @@ class FailureRecoveryTests(unittest.TestCase):
 
     def tearDown(self):
         self.m.close()
-        self.temp.cleanup()
+        shutil.rmtree(self.temp.name, ignore_errors=True)
 
     def hook(self, event):
         return subprocess.run([sys.executable,'-m','memory_module.codex_host','--db',str(self.m.path)],

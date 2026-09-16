@@ -1,4 +1,5 @@
 """Host command lines, run log detection and availability. No host process is started."""
+import shutil
 from datetime import datetime, timedelta, timezone
 import json
 import os
@@ -44,7 +45,7 @@ class CommandTests(unittest.TestCase):
 
     def tearDown(self):
         self.env.stop()
-        self.temp.cleanup()
+        shutil.rmtree(self.temp.name, ignore_errors=True)
 
     def test_executable_prefers_environment_override(self):
         with patch.object(hosts.shutil, 'which', return_value='/usr/local/bin/codex') as which:
@@ -122,7 +123,7 @@ class RunLogTests(unittest.TestCase):
         self.output = self.folder / 'output.jsonl'
 
     def tearDown(self):
-        self.temp.cleanup()
+        shutil.rmtree(self.temp.name, ignore_errors=True)
 
     def test_codex_usage_limit_across_split_lines(self):
         event = json.dumps({'type': 'error', 'message': "You've hit your usage limit. Try again in 2 hours."}) + '\n'
@@ -267,7 +268,7 @@ class AvailabilityTests(unittest.TestCase):
         self.env.stop()
         self.which.stop()
         self.memory.close()
-        self.temp.cleanup()
+        shutil.rmtree(self.temp.name, ignore_errors=True)
 
     def test_read_only_connection_without_receipts_table(self):
         with Memory(self.path, read_only=True) as reader:

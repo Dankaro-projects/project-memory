@@ -1,4 +1,5 @@
 """Tests for typed links, derived edges, lineage and the work dependency graph."""
+import shutil
 from pathlib import Path
 import sqlite3
 import tempfile
@@ -27,7 +28,7 @@ class GraphFixture(unittest.TestCase):
 
     def tearDown(self):
         self.m.close()
-        self.tmp.cleanup()
+        shutil.rmtree(self.tmp.name, ignore_errors=True)
 
     def key(self):
         self.counter += 1
