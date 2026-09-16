@@ -12,7 +12,7 @@ from check_publication import check_member
 
 REQUIRED_MODULES = (
     'api', 'arch_authored', 'arch_base', 'arch_code', 'arch_n8n', 'architecture', 'capture_errors', 'cli',
-    'codex_host', 'core', 'coverage', 'delegation', 'direction', 'documents', 'graph', 'guards', 'health',
+    'codex_host', 'core', 'coverage', 'delegation', 'direction', 'documents', 'focus', 'graph', 'guards', 'health',
     'hooks', 'hosts', 'install', 'live', 'machine', 'mcp', 'planning', 'reports', 'reviews', 'schema', 'setup_codex',
     'shared', 'templates', 'viewer', 'workflow', 'workspace', 'worktree',
 )
