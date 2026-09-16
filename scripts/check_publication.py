@@ -26,11 +26,15 @@ FIXED_FILES = {
     'examples/episode.json',
 }
 RUNTIME_ASSETS = {
-    'memory_module/agents/intent.md', 'memory_module/agents/outcome.md',
-    'memory_module/agents/recovery.md',
     'memory_module/assets/manrope-latin-400.woff2',
     'memory_module/assets/manrope-latin-700.woff2',
 }
+
+
+def agent_role_file(name):
+    """Role instructions shipped with the package, one Markdown file per run role."""
+    path = PurePosixPath(name)
+    return path.parent.as_posix() == 'memory_module/agents' and path.suffix == '.md'
 PRIVATE_PATTERNS = {
     'possible credential': re.compile(
         rb'(?:gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{30,}'
@@ -45,7 +49,7 @@ PRIVATE_PATTERNS = {
 
 def runtime_file(name):
     path = PurePosixPath(name)
-    return name in RUNTIME_ASSETS or (path.parent.as_posix() in {'memory_module/ui', 'memory_module/vendor'}
+    return name in RUNTIME_ASSETS or agent_role_file(name) or (path.parent.as_posix() in {'memory_module/ui', 'memory_module/vendor'}
         and path.suffix in {'.js', '.css'}) or (
         path.parent.as_posix() == 'memory_module' and path.suffix in {'.py', '.html'})
 
