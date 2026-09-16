@@ -45,7 +45,7 @@ class PatternTests(unittest.TestCase):
         self.assertFalse(guards.match_path('/other/src/a.py', ['src'], root='/project'))
 
     def test_relative_globs_never_match_paths_outside_the_root(self):
-        for path in ['/etc/x.json', '/home/user/.claude/settings.json', '/etc/passwd']:
+        for path in ['/etc/x.json', '/etc/agent-settings.json', '/etc/passwd']:
             for patterns in (['**/*.json'], ['**'], ['*'], ['**/passwd'], ['.']):
                 with self.subTest(path=path, patterns=patterns):
                     self.assertFalse(guards.match_path(path, patterns, root='/project'))
