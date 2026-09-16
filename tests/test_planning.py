@@ -1,4 +1,5 @@
 """Exercise continuation gates and board state against real SQLite history."""
+import shutil
 import json
 from pathlib import Path
 import tempfile
@@ -11,14 +12,14 @@ from memory_module.planning import board, card, latest, next_work
 
 class PlanningTests(unittest.TestCase):
     def setUp(self):
-        self.tmp=tempfile.TemporaryDirectory();self.root=Path(self.tmp.name)
+        self.tmp=tempfile.TemporaryDirectory(ignore_cleanup_errors=True);self.root=Path(self.tmp.name)
         self.m=Memory.create(self.root/'memory.sqlite','Planning',['Keep strict UTF-8 except on the tagged legacy endpoint.'])
         codex_host.initialize(self.m)
         self.source=self.m.source('user','Scope','User instruction','Preserve strict UTF-8 and the tagged legacy Latin-1 endpoint.','user')
         self.evidence=[{'source_id':self.source['id'],'reason':'The user defines the goal and the exception.'}]
         self.counter=0
     def tearDown(self):
-        self.m.close();self.tmp.cleanup()
+        self.m.close();shutil.rmtree(self.tmp.name, ignore_errors=True)
     def key(self):
         self.counter+=1;return str(self.counter)
     def plan(self, **changes):
@@ -126,6 +127,120 @@ class PlanningTests(unittest.TestCase):
         self.revise(work,state='review',scope='A new explicitly authorised scope needs an additional endpoint.')
         self.assertTrue(any('scope' in i['reason'] for i in card(self.m,work['episode_id'])['issues']))
         with self.assertRaises(InvalidRecord):self.revise(work,state='done')
+    def test_corrected_outcome_reassesses_inherited_source_without_rewriting_history(self):
+        work=self.work()
+        measured=self.m.source('measurement','Measured result','Original observation','Both cases were inspected.','tool')
+        user_evidence=self.evidence
+        self.evidence=[*user_evidence,{'source_id':measured['id'],'reason':'The original inspection informs the decision.'}]
+        outcome=self.complete(work)
+        self.evidence=user_evidence
+        original=self.m._event(outcome['id'])
+        current=self.m.source('measurement','Measured result','Corrected observation','The strict and tagged legacy cases are verified.','tool')
+        self.assertTrue(self.m._needs_review(outcome['id']))
+        corrected=self.m.record(work['episode_id'],'outcome',original['payload'],
+            expected_version=self.m.episode(work['episode_id'])['version'],request_key=self.key(),actor='test',
+            decision_id=original['decision_id'],supersedes=outcome['id'],
+            evidence=[{'source_id':current['id'],'reason':'The corrected evidence explicitly reassesses the result.'}])
+        self.assertFalse(self.m._needs_review(corrected['id']))
+        self.assertTrue(self.m._needs_review(original['decision_id']))
+        self.assertEqual(self.m._event(outcome['id']),original)
+        self.revise(work,state='done')
+        self.assertEqual(card(self.m,work['episode_id'])['state'],'done')
+        self.m.source('measurement','Measured result','Later change','The result now needs a new assessment.','tool')
+        self.assertTrue(self.m._needs_review(corrected['id']))
+        self.assertNotEqual(card(self.m,work['episode_id'])['state'],'done')
+
+    def test_reassessment_requires_current_matching_evidence_and_keeps_direct_stale_references(self):
+        for case in ('unrelated','direct_stale','review_due'):
+            with self.subTest(case=case):
+                work=self.work()
+                measured=self.m.source(case,'Measured result','Original observation','Both cases were inspected.','tool')
+                user_evidence=self.evidence
+                stale={'source_id':measured['id'],'reason':'The original observation informs the decision.'}
+                self.evidence=[*user_evidence,stale]
+                outcome=self.complete(work);original=self.m._event(outcome['id'])
+                self.evidence=user_evidence
+                current=self.m.source(case,'Measured result','Correction',case,'tool',
+                    **({'review_after':'2000-01-01T00:00:00+00:00'} if case=='review_due' else {}))
+                if case=='unrelated':
+                    current=self.m.source('different-key','Other source','Other observation','This does not reassess the changed source.','tool')
+                evidence=[{'source_id':current['id'],'reason':'This fixture tests the boundary of reassessment.'}]
+                if case=='direct_stale':evidence.append(stale)
+                corrected=self.m.record(work['episode_id'],'outcome',original['payload'],
+                    expected_version=self.m.episode(work['episode_id'])['version'],request_key=self.key(),actor='test',
+                    decision_id=original['decision_id'],supersedes=outcome['id'],evidence=evidence)
+                self.assertTrue(self.m._needs_review(corrected['id']))
+                with self.assertRaises(InvalidRecord):self.revise(work,state='done')
+    def test_review_guidance_waits_only_for_the_existing_active_check(self):
+        import shlex
+        from memory_module import reviews
+        reviews.configure(self.m,self.root,'codex')
+        work=self.work();self.complete(work);ep=work['episode_id']
+        self.assertEqual(next_work(self.m,episode_id=ep)['action'],'request_review')
+        run=reviews.request(self.m,ep,request_key=self.key())
+        step=next_work(self.m,episode_id=ep)['next_step']
+        self.assertEqual(step['action'],'wait_review')
+        self.assertEqual(step['check_id'],run['id'])
+        self.assertEqual(shlex.split(step['wait_command'])[4:6],['--wait',run['id']])
+        expired=reviews.wait(self.m,run['id'],seconds=0)
+        self.assertTrue(expired['wait_expired']);self.assertEqual(expired['id'],run['id'])
+        with self.assertRaises(InvalidRecord) as caught:self.revise(work,state='done')
+        self.assertEqual(caught.exception.details['next_step']['check_id'],run['id'])
+        self.assertEqual(self.m.db.execute('SELECT count(*) FROM review_runs').fetchone()[0],1)
+        with self.m._write():self.m.db.execute("UPDATE review_runs SET state='pass' WHERE id=?",(run['id'],))
+        ready=next_work(self.m,episode_id=ep)
+        self.assertEqual(ready['action'],'finalize');self.assertNotIn('wait_command',ready['next_step'])
+        self.revise(work,state='done');self.assertEqual(card(self.m,ep)['state'],'done')
+
+    def test_passed_review_with_changed_evidence_names_the_source_instead_of_waiting(self):
+        from memory_module import reviews
+        reviews.configure(self.m,self.root,'codex')
+        work=self.work();outcome=self.complete(work);ep=work['episode_id']
+        original=self.m._event(outcome['id'])
+        run=reviews.request(self.m,ep,request_key=self.key())
+        with self.m._write():self.m.db.execute("UPDATE review_runs SET state='pass' WHERE id=?",(run['id'],))
+        current=self.m.source('user','Scope','Revised scope','The contract now needs a fresh assessment.','user')
+        next_step=next_work(self.m,episode_id=ep)['next_step']
+        self.assertEqual(next_step['action'],'refresh_evidence')
+        self.assertEqual(next_step['read_with'],{'view':'record','id':self.source['id']})
+        self.assertNotIn('wait_command',next_step)
+        check=card(self.m,ep)['agent_check']
+        self.assertEqual((check['state'],check['run_state']),('stale','pass'))
+        packet=dispatch(self.m,'memory_get',{'view':'reviews','id':ep})
+        self.assertEqual(packet['current']['state'],'stale')
+        self.assertEqual(packet['runs'][0]['state'],'pass')
+        self.evidence=[{'source_id':current['id'],'reason':'Current intent evidence.'}]
+        with self.assertRaises(InvalidRecord) as caught:
+            self.revise(work,state='done')
+        self.assertEqual(caught.exception.details['next_step']['action'],'refresh_evidence')
+        self.assertNotIn('wait_command',caught.exception.details['next_step'])
+        self.assertEqual(self.m._event(outcome['id']),original)
+
+    def test_stale_project_files_and_finished_review_states_never_offer_wait(self):
+        from memory_module import reviews
+        reviews.configure(self.m,self.root,'codex')
+        for state,action in [('changes_required','review_findings'),('uncertain','review_findings'),
+                             ('timed_out','inspect_review'),('failed','inspect_review'),('cancelled','inspect_review'),('pass','refresh_review')]:
+            with self.subTest(state=state):
+                work=self.work();self.complete(work);ep=work['episode_id']
+                run=reviews.request(self.m,ep,request_key=self.key())
+                with self.m._write():self.m.db.execute('UPDATE review_runs SET state=? WHERE id=?',(state,run['id']))
+                if state=='pass':(self.root/'changed.txt').write_text('The implementation changed after review.')
+                step=next_work(self.m,episode_id=ep)['next_step']
+                self.assertEqual(step['action'],action);self.assertNotIn('wait_command',step)
+                with self.assertRaises(InvalidRecord) as caught:self.revise(work,state='done')
+                self.assertEqual(caught.exception.details['next_step']['action'],action)
+
+    def test_completion_error_explains_missing_and_partial_outcomes(self):
+        for completion in (None,'partial'):
+            with self.subTest(completion=completion):
+                work=self.work()
+                if completion:self.complete(work,completion=completion)
+                with self.assertRaises(InvalidRecord) as caught:self.revise(work,state='done')
+                step=caught.exception.details['next_step']
+                self.assertEqual(step['action'],'review_outcome' if completion else 'assess_outcome')
+                self.assertNotIn('wait_command',step)
+
     def test_sprint_filters_and_closed_sprint_do_not_hide_unfinished_work(self):
         sprint=write(self.m,'sprint','sprint',{'title':'Sprint 1','objective':'Repair parsing.','criterion':'Both cases pass.','payload':{'starts_on':'2026-09-14','ends_on':'2026-09-21','status':'active','reason':'The iteration is scheduled.'},'actor':'assistant','evidence':self.evidence})
         work=self.work(sprint_id=sprint['episode_id']);self.work()

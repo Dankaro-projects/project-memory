@@ -1,3 +1,4 @@
+import shutil
 import json
 from pathlib import Path
 import sqlite3
@@ -13,7 +14,7 @@ from memory_module.core import SCHEMA
 
 class WorkflowTests(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory()
+        self.temp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.root = Path(self.temp.name)
         self.now = '2026-09-12T12:00:00+00:00'
         self.m = Memory.create(self.root/'memory.sqlite', 'Checks', ['Professional plain English.'], clock=lambda:self.now)
@@ -24,7 +25,7 @@ class WorkflowTests(unittest.TestCase):
         self.n = 0
 
     def tearDown(self):
-        self.m.close(); self.temp.cleanup()
+        self.m.close(); shutil.rmtree(self.temp.name, ignore_errors=True)
 
     def record(self, kind, payload, **kwargs):
         self.n += 1
@@ -58,7 +59,7 @@ class WorkflowTests(unittest.TestCase):
         self.assertNotIn(source,[r['id'] for r in self.m.search('Unicode',subject='code')['records']])
         self.assertIn(source,[r['id'] for r in self.m.search('Unicode',subject='code',include_general=True)['records']])
 
-    def test_review_requires_code_scope_revision_and_evidence(self):
+    def test_review_requires_revision_findings_and_evidence_in_any_subject(self):
         payload={'target':'parser.py','revision':'sha256:fixture','summary':'Missing case','findings':[
             {'location':'parse','issue':'Unicode not handled','severity':'major'}]}
         with self.assertRaises(InvalidRecord): self.record('review',payload)
@@ -66,8 +67,11 @@ class WorkflowTests(unittest.TestCase):
                              expected_version=0,request_key='review',evidence=self.refs)
         self.assertEqual(self.m.read(review['id'])['kind'],'review')
         with self.assertRaises(InvalidRecord): self.record('review',{**payload,'findings':[{'issue':'x'}]},evidence=self.refs)
+        # A client or quality review of a report is recorded in a writing episode.
         self.ep=self.m.start('Copy','Copy','writing','Clear',subject='writing')
-        with self.assertRaises(InvalidRecord): self.record('review',payload,evidence=self.refs)
+        report={'target':'deliverables/report.md','revision':'Draft 2 sent on 12 September','summary':'The client asked for one change.',
+                'findings':[{'location':'Section 3','issue':'The price table has no source.','severity':'minor'}]}
+        self.assertEqual(self.m.read(self.record('review',report,evidence=self.refs)['id'])['kind'],'review')
 
     def test_research_is_separate_from_code(self):
         with self.assertRaises(InvalidRecord):
@@ -217,8 +221,11 @@ class WorkflowTests(unittest.TestCase):
         for included in [False,True]:
             out=self.root/('bodies-'+str(included)+'.html');self.m.export_html(out,include_bodies=included)
             text=out.read_text().split('<script id="memory-data" type="application/json">')[1].split('</script>')[0]
-            data=json.loads(text);source=next(r for r in data['records'] if r['id']==self.sid)
+            data=json.loads(text);source=data['responses']['record?id='+self.sid]['record']
+            # With bodies the record key holds the live response, which carries the first body slice.
             self.assertEqual('body' in source['detail'],included)
+            sliced=data['responses'].get('record?body_offset=0&id='+self.sid)
+            self.assertEqual(sliced is not None and 'body' in sliced['record']['detail'],included)
 
     def test_sql_rejects_invalid_json_null_id_and_subject_change(self):
         with self.assertRaises(sqlite3.IntegrityError):

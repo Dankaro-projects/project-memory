@@ -3,11 +3,31 @@ import json
 from datetime import date
 
 STATES = ('backlog', 'ready', 'in_progress', 'blocked', 'review', 'done', 'cancelled')
+ITEM_TYPES = ('phase', 'epic', 'story', 'task', 'research', 'deliverable', 'workflow')
+CARD_LIMIT = 5000
 FIELDS = {
     'work_plan': ({'state', 'next_action', 'scope', 'autonomy', 'reason'},
-                  {'sprint_id', 'depends_on', 'owner', 'priority', 'session_id'}),
+                  {'sprint_id', 'depends_on', 'owner', 'priority', 'session_id', 'paths',
+                   'item_type', 'acceptance', 'parent_id'}),
     'sprint': ({'starts_on', 'ends_on', 'status', 'reason'}, set()),
 }
+# A revision of these plan fields changes what the work covers, so an earlier assessment no longer applies.
+# Allowed paths are an enforcement boundary rather than the task itself: widening them after a scope block lets
+# work continue, and guards.scope_changes lists path additions by agents for the user to inspect.
+SCOPE_FIELDS = ('scope', 'autonomy', 'depends_on')
+SENTENCE_END = ('.', '!', '?')
+
+
+def scope_value(plan, key):
+    """Return a plan field for scope comparison, treating an absent list as empty."""
+    if key in ('depends_on', 'paths'):
+        return plan.get(key) or []
+    return plan.get(key)
+
+
+def scope_changed(before, after):
+    """True when two plan payloads differ in a field that defines the scope of work."""
+    return any(scope_value(before, key) != scope_value(after, key) for key in SCOPE_FIELDS)
 
 
 def latest(memory, episode_id, kind):
@@ -36,6 +56,16 @@ def validate_payload(kind, payload):
                 raise InvalidRecord('Dependencies must be unique.')
         elif key == 'sprint_id' and value is None:
             continue
+        elif kind == 'work_plan' and key == 'paths':
+            from .guards import validate_patterns
+            validate_patterns(value)
+        elif kind == 'work_plan' and key == 'item_type':
+            if value not in ITEM_TYPES:
+                raise InvalidRecord(f'item_type must be one of {list(ITEM_TYPES)}.')
+        elif kind == 'work_plan' and key == 'acceptance':
+            validate_acceptance(value)
+        elif kind == 'work_plan' and key == 'parent_id':
+            _text(value, 'parent_id', 200)
         else:
             _text(value, key, 2000)
     if kind == 'sprint':
@@ -57,16 +87,44 @@ def validate_payload(kind, payload):
     return True
 
 
+def validate_acceptance(value):
+    """Acceptance criteria are 1 to 30 unique complete sentences."""
+    from .core import InvalidRecord, _text
+    if not isinstance(value, list) or not 1 <= len(value) <= 30:
+        raise InvalidRecord('acceptance must be a list of 1 to 30 acceptance criteria.')
+    for criterion in value:
+        _text(criterion, 'acceptance criterion', 2000)
+        if not criterion.rstrip().endswith(SENTENCE_END):
+            raise InvalidRecord('Each acceptance criterion must be a complete sentence that ends with a full stop, '
+                                'a question mark or an exclamation mark.')
+    if len(set(value)) != len(value):
+        raise InvalidRecord('Acceptance criteria must be unique.')
+    return value
+
+
+def validate_parent(memory, episode, parent_id):
+    """A parent is an existing work item that is not a sprint and is not a descendant of this item."""
+    from .core import InvalidRecord
+    if parent_id == episode['id']:
+        raise InvalidRecord('A work item cannot be its own parent.')
+    parent = memory.episode(parent_id)
+    if parent['task_type'] == 'sprint':
+        raise InvalidRecord('A sprint cannot be the parent of a work item. Assign the sprint with sprint_id instead.')
+    # Parents follow the latest plan of each item, as dependencies do.
+    found = memory.db.execute('''WITH RECURSIVE ancestors(id) AS (
+      SELECT ? UNION SELECT json_extract(e.payload,'$.parent_id') FROM ancestors a
+      JOIN events e ON e.episode_id=a.id AND e.kind='work_plan'
+        AND e.seq=(SELECT max(n.seq) FROM events n WHERE n.episode_id=e.episode_id AND n.kind='work_plan')
+      WHERE json_extract(e.payload,'$.parent_id') IS NOT NULL
+    ) SELECT 1 FROM ancestors WHERE id=?''', (parent_id, episode['id'])).fetchone()
+    if found:
+        raise InvalidRecord('Work item parents cannot contain a cycle.')
+
+
 def unresolved(memory, episode_id):
-    from . import codex_host
-    if not codex_host.exists(memory):
-        return 0
-    return memory.db.execute('''SELECT count(*) FROM host_receipts p WHERE p.episode_id=? AND p.event_name='PreToolUse'
-        AND NOT EXISTS (SELECT 1 FROM host_receipts r WHERE r.event_name='PostToolUse'
-          AND r.session_id=p.session_id AND r.tool_use_id=p.tool_use_id
-          AND coalesce(json_extract(r.payload,'$.host'),'codex')=coalesce(json_extract(p.payload,'$.host'),'codex'))
-        AND NOT EXISTS (SELECT 1 FROM host_receipts r WHERE r.event_name='Reconciled'
-          AND json_extract(r.payload,'$.receipt_id')=p.id AND json_extract(r.payload,'$.resolution')!='unknown')''', (episode_id,)).fetchone()[0]
+    """How many tool calls of this work item have no confirmed result."""
+    from .shared import unconfirmed_total
+    return unconfirmed_total(memory, episode_id=episode_id)
 
 
 def completion(memory, episode_id):
@@ -136,11 +194,15 @@ def validate_event(memory, episode, kind, payload, evidence):
         ) SELECT 1 FROM ancestors WHERE id=?''', (ref['episode_id'], episode['id'])).fetchone()
         if found:
             raise InvalidRecord('Work dependencies cannot contain a cycle.')
+    if payload.get('parent_id'):
+        validate_parent(memory, episode, payload['parent_id'])
     if payload['state'] == 'done' and not completion(memory, episode['id']):
-        raise InvalidRecord('Done requires a current, evidenced good outcome, no unresolved execution and a passing outcome agent check when configured. Read memory_get reviews; wait with project-memory review --wait CHECK_ID.')
+        step = completion_guidance(memory, card(memory, episode['id']))
+        raise InvalidRecord('Done requires current completion evidence. '+step['reason'],
+                            episode_id=episode['id'], next_step=step)
     if payload['state']=='done':
         prior=latest(memory,episode['id'],'work_plan')
-        if prior and any(prior.get(k,[] if k=='depends_on' else None)!=payload.get(k,[] if k=='depends_on' else None) for k in ('scope','autonomy','depends_on')):
+        if prior and scope_changed(prior, payload):
             raise InvalidRecord('Changed scope or dependencies require a new assessment before Done. Save the revised plan in Review first.')
 
 
@@ -202,8 +264,11 @@ def card(memory, episode_id):
         for ref in plan.get('depends_on', []):
             if not completion(memory, ref['episode_id']):
                 problems.append({'type': 'dependency', **ref})
+    outcome_row = memory.db.execute("SELECT id,payload FROM events WHERE kind='outcome' AND decision_id=? ORDER BY seq DESC LIMIT 1",
+                                    (decision['id'],)).fetchone() if decision else None
+    outcome = {'id': outcome_row['id'], **json.loads(outcome_row['payload'])} if outcome_row else None
     if decision:
-        for reason in memory.review_reasons(decision['id']):
+        for reason in memory.review_reasons(outcome['id'] if outcome else decision['id']):
             problems.append({'type': 'evidence_review', **reason})
     from .coverage import work_issues
     problems.extend(work_issues(memory,episode_id))
@@ -214,13 +279,11 @@ def card(memory, episode_id):
         problems.append({'type': 'completion_review', 'reason': 'Current completion evidence does not establish that the intended result is achieved.'})
     state = recorded
     if state != 'cancelled':
-        if any(p['type'] in {'execution_unconfirmed', 'dependency'} for p in problems):
+        # Backlog that waits for an unfinished prerequisite is not blocked: nothing is scheduled yet.
+        if any(p['type'] == 'execution_unconfirmed' or p['type'] == 'dependency' and recorded != 'backlog' for p in problems):
             state = 'blocked'
         elif problems and recorded not in {'backlog', 'blocked'}:
             state = 'review'
-    outcome_row = memory.db.execute("SELECT id,payload FROM events WHERE kind='outcome' AND decision_id=? ORDER BY seq DESC LIMIT 1",
-                                    (decision['id'],)).fetchone() if decision else None
-    outcome = {'id': outcome_row['id'], **json.loads(outcome_row['payload'])} if outcome_row else None
     from .reviews import required, current
     check = current(memory,episode_id) if required(memory,episode_id) else None
     if check and check['state']!='pass' and recorded!='cancelled' and (recorded=='done' or outcome and outcome.get('completion')=='complete'):
@@ -231,24 +294,107 @@ def card(memory, episode_id):
         check={k:v for k,v in check.items() if k!='report'}
         if report:check['summary']=report['summary']
         if check.get('id'):check['read_full_with']={'view':'record','id':check['id'],'max_chars':20000}
-    return {'id': episode_id, 'title': episode['title'], 'subject': episode['subject'], 'date': episode['created_at'],
+    item = {'id': episode_id, 'title': episode['title'], 'subject': episode['subject'], 'date': episode['created_at'],
             'version': episode['version'], 'intent': episode['objective'], 'done_when': episode['criterion'],
             'state': state, 'recorded_state': recorded, 'plan': plan, 'issues': problems,
             'decision_id': decision['id'] if decision else None, **({'agent_check':check} if check else {}),
             'outcome': {'id': outcome['id'], 'assessment': outcome['assessment'], 'completion': outcome.get('completion')} if outcome else None}
+    if outcome and outcome.get('completion')=='complete' or recorded=='done':
+        item['completion_next'] = completion_guidance(memory, item)
+    return item
+
+
+def cards(memory, *, limit=CARD_LIMIT):
+    """Every work item card, hashing the project once. Sprints are not work items."""
+    from .reviews import shared_tree
+    rows = memory.db.execute("SELECT id FROM episodes WHERE task_type!='sprint' ORDER BY created_at,id LIMIT ?",
+                             (limit + 1,)).fetchall()
+    with shared_tree(memory):
+        values = {row[0]: card(memory, row[0]) for row in rows[:limit]}
+    return {'cards': values, 'truncated': len(rows) > limit}
+
+
+def card_states(found):
+    """Map each work item id to its evidence checked state, from a cards() result."""
+    return {episode_id: item['state'] for episode_id, item in found['cards'].items()}
+
+
+def card_summary(item):
+    """The bounded summary of one card, as lists and the Now view show it."""
+    plan = item['plan'] or {}
+    return {'id': item['id'], 'title': item['title'], 'subject': item['subject'], 'state': item['state'],
+            'priority': plan.get('priority', 'normal'), 'next_action': plan.get('next_action'),
+            'issues': len(item['issues']), 'owner': plan.get('owner', 'agent') if plan else None,
+            'item_type': plan.get('item_type', 'task')}
+
+
+def completion_guidance(memory, item):
+    """Explain completion gates without granting permission or changing records."""
+    from .reviews import ACTIVE, wait_command
+    ep = item['id']
+    issues = item['issues']
+    if item['state']=='cancelled':
+        return {'action':'stop', 'reason':'This work is cancelled.'}
+    for kinds, action, reason in (
+        ({'execution_unconfirmed'}, 'reconcile', 'Inspect actual tool effects and reconcile uncertain execution before any retry.'),
+        ({'intent_unassessed','capture_gap'}, 'assess_coverage', 'Assess the unrecorded request or capture gap before completing this work.'),
+        ({'intent_review','evidence_review'}, 'refresh_evidence', 'Inspect the changed evidence listed below and record its reassessment. Waiting for a review will not refresh evidence.'),
+        ({'dependency'}, 'inspect_dependency', 'Inspect the unfinished prerequisite before completing this work.'),
+        ({'sprint_closed'}, 'review_plan', 'Reassign unfinished work from the closed sprint.'),
+    ):
+        blockers = [i for i in issues if i['type'] in kinds]
+        if blockers:
+            first = blockers[0]
+            read = {'view':'next', 'id':ep}
+            if first.get('source_id') or first.get('record_id'):
+                read = {'view':'record', 'id':first.get('source_id') or first['record_id']}
+            elif first['type']=='dependency':
+                read = {'view':'next', 'id':first['episode_id']}
+            elif action in {'reconcile','assess_coverage'}:
+                session = (item['plan'] or {}).get('session_id')
+                if not session:
+                    row = memory.db.execute("SELECT session_id FROM host_receipts WHERE episode_id=? AND event_name='DecisionBound' ORDER BY rowid DESC LIMIT 1", (ep,)).fetchone()
+                    session = row[0] if row else None
+                if session: read = {'view':'coverage', 'session_id':session}
+            return {'action':action, 'reason':reason, 'blockers':blockers, 'read_with':read}
+    outcome = item['outcome']
+    if not item['decision_id'] or not outcome:
+        return {'action':'assess_outcome', 'reason':'Inspect existing work and record the decision and evidenced outcome before completing it. Do not repeat completed actions.',
+                'read_with':{'view':'episode','id':ep}}
+    if outcome['assessment']!='good' or outcome['completion']!='complete':
+        return {'action':'review_outcome', 'reason':'The recorded outcome does not establish a good, complete result. Inspect its findings and remaining work.',
+                'read_with':{'view':'record','id':outcome['id']}}
+    if memory.pending(ep,limit=1)['total']:
+        return {'action':'assess_outcome', 'reason':'An earlier decision still has an unresolved outcome. Inspect its existing execution before recording an assessment.',
+                'read_with':{'view':'episode','id':ep}}
+    check = item.get('agent_check')
+    if check and check['state']!='pass':
+        state = check['state']
+        step = {'read_with':{'view':'reviews','id':ep}, 'check_id':check.get('id'), 'review_state':state}
+        if state in ACTIVE:
+            step.update(action='wait_review', reason='The outcome review is '+state+'. Wait for this existing check; the recorded implementation is complete.',
+                        wait_command=wait_command(memory,check['id']))
+        elif state=='stale':
+            step.update(action='refresh_review', reason='The previous review no longer covers current evidence or project files. Inspect the changes and reassess the outcome before requesting a new check.')
+        elif state=='missing':
+            step.update(action='request_review', reason='The complete outcome has no required agent check. Request an outcome review without repeating implementation.',
+                        schema={'view':'schema','id':'agent_check'})
+        elif state in {'changes_required','uncertain'}:
+            step.update(action='review_findings', reason='Inspect the review findings and missing evidence before deciding what work or reassessment is needed.')
+        else:
+            step.update(action='inspect_review', reason='The review '+state.replace('_',' ')+'. Inspect its retained report and execution before explicitly retrying the check. Do not repeat implementation because a review stopped.')
+        return step
+    if completion(memory,ep):
+        return {'action':'finalize', 'reason':'The recorded result and required review are current. Mark the work Done without repeating completed actions.'}
+    return {'action':'inspect_completion', 'reason':'Inspect the recorded decisions and completion evidence before marking this work Done.',
+            'read_with':{'view':'episode','id':ep}}
 
 
 def board(memory, *, limit=25, offset=0, sprint_id=None, subject=None, query='', state=None, episode_id=None, grouped=False):
-    from .reviews import configured, exists, tree_signature
-    from subprocess import SubprocessError
-    config=configured(memory)
-    cache=config and exists(memory) and memory.db.execute('SELECT 1 FROM review_runs LIMIT 1').fetchone()
-    if cache:
-        try:memory._review_tree=tree_signature(config['project'],cache=getattr(memory,'_review_tree_cache',None))
-        except (OSError,SubprocessError):cache=False
-    try:return _board(memory,limit=limit,offset=offset,sprint_id=sprint_id,subject=subject,query=query,state=state,episode_id=episode_id,grouped=grouped)
-    finally:
-        if cache:del memory._review_tree
+    from .reviews import shared_tree
+    with shared_tree(memory):
+        return _board(memory, limit=limit, offset=offset, sprint_id=sprint_id, subject=subject, query=query, state=state,
+                      episode_id=episode_id, grouped=grouped)
 
 
 def _board(memory, *, limit=25, offset=0, sprint_id=None, subject=None, query='', state=None, episode_id=None, grouped=False):
@@ -290,6 +436,85 @@ def _board(memory, *, limit=25, offset=0, sprint_id=None, subject=None, query=''
             'note': 'State is checked against recorded evidence. This view does not run work or grant permission.'}
 
 
+def hierarchy(memory, *, root=None, limit=500, states=None):
+    """Work items arranged by parent_id, with state counts rolled up over the descendants of each item.
+
+    States come from the optional `states` map {episode_id: state}; missing states
+    are computed once per included item from its card. Items whose parent is not a
+    work item in this project are roots. The result is bounded by `limit` items.
+    """
+    from .core import InvalidRecord
+    if type(limit) is not int or not 1 <= limit <= 5000:
+        raise InvalidRecord('limit must be an integer from 1 to 5000.')
+    if states is not None and not isinstance(states, dict):
+        raise InvalidRecord('states must map episode ids to states.')
+    if root is not None:
+        if memory.episode(root)['task_type'] == 'sprint':
+            raise InvalidRecord('A sprint is not part of the work item hierarchy.')
+    rows = memory.db.execute('''SELECT ep.id, ep.title, ep.subject, ep.created_at, p.id AS plan_id, p.payload
+        FROM episodes ep LEFT JOIN events p ON p.episode_id=ep.id AND p.kind='work_plan'
+          AND p.seq=(SELECT max(n.seq) FROM events n WHERE n.episode_id=ep.id AND n.kind='work_plan')
+        WHERE ep.task_type!='sprint' ORDER BY ep.created_at, ep.id''').fetchall()
+    items = {}
+    children = {}
+    for row in rows:
+        plan = json.loads(row['payload']) if row['payload'] else {}
+        items[row['id']] = {'id': row['id'], 'title': row['title'], 'subject': row['subject'], 'created_at': row['created_at'],
+                            'plan_id': row['plan_id'], 'item_type': plan.get('item_type', 'task'),
+                            'parent_id': plan.get('parent_id'), 'owner': plan.get('owner', 'agent') if plan else None,
+                            'priority': plan.get('priority', 'normal'), 'acceptance_total': len(plan.get('acceptance', []))}
+    for item in items.values():
+        if item['parent_id'] in items:
+            children.setdefault(item['parent_id'], []).append(item['id'])
+    if root is not None:
+        roots = [root]
+    else:
+        roots = [item_id for item_id, item in items.items() if item['parent_id'] not in items]
+    included = []
+    seen = set()
+    stack = list(reversed(roots))
+    truncated = False
+    while stack:
+        item_id = stack.pop()
+        if item_id in seen:
+            continue
+        if len(included) >= limit:
+            truncated = True
+            break
+        seen.add(item_id)
+        included.append(item_id)
+        stack.extend(reversed(children.get(item_id, [])))
+    states = states or {}
+    root_ids = set(roots)
+    nodes = {}
+    for item_id in included:
+        node = dict(items[item_id])
+        node['state'] = states.get(item_id) or card(memory, item_id)['state']
+        node['children'] = []
+        node['rollup'] = dict.fromkeys(STATES, 0)
+        node['descendants'] = 0
+        nodes[item_id] = node
+    # Included items are in depth-first order, so every child follows its parent.
+    for item_id in reversed(included):
+        node = nodes[item_id]
+        parent = nodes.get(node['parent_id']) if item_id not in root_ids else None
+        if parent is None:
+            continue
+        parent['children'].insert(0, node)
+        parent['descendants'] += 1 + node['descendants']
+        parent['rollup'][node['state']] += 1
+        for state, count in node['rollup'].items():
+            parent['rollup'][state] += count
+    counts = dict.fromkeys(STATES, 0)
+    for node in nodes.values():
+        counts[node['state']] += 1
+        active = node['descendants'] - node['rollup']['cancelled']
+        node['progress'] = round(node['rollup']['done'] / active, 4) if active else None
+    return {'roots': [nodes[item_id] for item_id in roots if item_id in nodes], 'total': len(nodes), 'counts': counts,
+            'truncated': truncated,
+            'note': 'Progress counts descendant work items that are done, excluding cancelled items. It does not measure effort.'}
+
+
 def sprints(memory, limit=25, offset=0, episode_id=None):
     from .core import InvalidRecord
     if type(limit) is not int or not 1<=limit<=100 or type(offset) is not int or offset<0:
@@ -303,15 +528,43 @@ def sprints(memory, limit=25, offset=0, episode_id=None):
     return {'sprints': result, 'offset': offset, 'more': len(rows)>limit}
 
 
-def next_work(memory, *, episode_id=None, session_id=None, limit=5, offset=0, subject=None):
+SELECTABLE = ('in_progress', 'ready')
+
+
+def selection(memory, *, limit=5, offset=0, subject=None, state=None):
+    """The work a caller may choose from: the requested page, and the items that can start now.
+
+    The board is ordered by priority and age, so template phases that wait for an
+    earlier phase can fill the first page. `ready` names the work that can start
+    now, so asking what to do next does not hide it behind a page boundary or a
+    character budget.
+    """
+    from .reviews import shared_tree
+    with shared_tree(memory):
+        page = _board(memory, limit=limit, offset=offset, subject=subject, state=state)
+        result = {'selection_required': True, 'board': page,
+                  'next_step': 'Select work that matches the current user request. A queued task is not permission to switch objectives.'}
+        if state is None:
+            grouped = _board(memory, limit=limit, subject=subject, grouped=True)
+            startable = [item for name in SELECTABLE for item in grouped['groups'][name]]
+            result['ready'] = [card_summary(item) for item in startable[:limit]]
+            result['ready_total'] = sum(grouped['counts'][name] for name in SELECTABLE)
+            if result['ready_total']:
+                result['next_step'] = ('Select work that matches the current user request. The items under ready can start now; '
+                                       'the board also lists work that waits for an earlier item. '
+                                       'A queued task is not permission to switch objectives.')
+    return result
+
+
+def next_work(memory, *, episode_id=None, session_id=None, limit=5, offset=0, subject=None, state=None):
     from . import codex_host
     from .core import InvalidRecord
-    state = codex_host.status(memory, session_id, limit=3) if session_id and codex_host.exists(memory) else None
-    if not episode_id and state and state['active']:
-        episode_id = state['active']['episode_id']
+    status = codex_host.status(memory, session_id, limit=3) if session_id and codex_host.exists(memory) else None
+    if not episode_id and status and status['active']:
+        episode_id = status['active']['episode_id']
     if not episode_id:
-        return {'selection_required': True, 'board': board(memory, limit=limit, offset=offset, subject=subject),
-                'next_step': 'Select work that matches the current user request. A queued task is not permission to switch objectives.'}
+        return selection(memory, limit=limit, offset=offset, subject=subject, state=state)
+    state = status
     item = card(memory, episode_id)
     if subject and item['subject'] != subject:
         raise InvalidRecord('The selected work does not match the requested subject.')
@@ -324,7 +577,8 @@ def next_work(memory, *, episode_id=None, session_id=None, limit=5, offset=0, su
     elif any(p['type'] == 'execution_unconfirmed' for p in item['issues']):
         action, reason = 'reconcile', 'This work contains unconfirmed execution from a host session.'
     elif item['issues'] and plan:
-        action, reason = 'review', 'Resolve the listed evidence or dependency issues before continuing.'
+        step = completion_guidance(memory,item)
+        action, reason = step['action'], step['reason']
     elif plan:
         if plan['state'] in {'done', 'cancelled'}:
             action, reason = 'stop', 'This work has no pending continuation.'
@@ -347,10 +601,9 @@ def next_work(memory, *, episode_id=None, session_id=None, limit=5, offset=0, su
         update = {'tool':'memory_write','operation':'progress','episode_id':episode_id,'expected_version':item['version'],
                   'schema':{'view':'schema','id':'progress'},
                   'note':'Supply actor and payload with reason and state or next_action. Pass this host session_id for in_progress. Progress preserves scope, dependencies, links and evidence. Use plan only for an intentional scope revision.'}
-    selected_skills = memory.db.execute("SELECT count(*) FROM sources s WHERE source_key LIKE ? AND version=(SELECT max(version) FROM sources WHERE source_key=s.source_key) AND json_extract(body,'$.state') != 'released'", ('workspace-skill-selection:' + episode_id + ':%',)).fetchone()[0]
+    step = completion_guidance(memory,item) if action in {'reconcile','refresh_evidence','assess_coverage','inspect_dependency','review_plan','wait_review','refresh_review','request_review','review_findings','inspect_review','finalize'} else None
     return {'work': item, 'action': action, 'reason': reason, 'update':update,
-            'skills': {'selected': selected_skills, 'read_with': {'view': 'skill_selections', 'id': episode_id},
-                       'note': 'Read selected versions and conditions before using them. Selection is not execution evidence.'},
+            **({'next_step':step} if step and step['action']==action else {}),
             'unconfirmed': state['unconfirmed'] if state and action == 'reconcile' else [],
             'recent_execution': state['recent'] if state and action == 'inspect_execution' else [],
             'requirements': {'version': memory.direction()['version'], 'read_with': 'memory_get requirements'},

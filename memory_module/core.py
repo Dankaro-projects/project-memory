@@ -15,6 +15,11 @@ from .workflow import Workflow, validate_payload, validate_event
 
 SCHEMA_VERSION = 2
 SUBJECTS = {"general", "code", "writing", "research"}
+# The actor of every change saved in the local control panel. MCP callers cannot use it.
+USER_ACTOR = "workspace-user"
+# Actor names that stand for the person. An assistant records what the user said in the
+# text of a record, under its own actor name, so every record keeps its true author.
+RESERVED_ACTORS = {USER_ACTOR, "user", "human", "owner", "customer", "client", "me"}
 KINDS = {"decision", "action", "outcome", "research", "lesson", "note", "review", "correction", "action_result", "follow_up", "episode_status", "lesson_review", "work_plan", "sprint"}
 ASSESSMENTS = {"pending", "good", "bad", "unknown"}
 
@@ -28,7 +33,9 @@ class Conflict(MemoryError):
 
 
 class InvalidRecord(MemoryError):
-    pass
+    def __init__(self, message, **details):
+        super().__init__(message)
+        self.details = details
 
 
 class BudgetTooSmall(MemoryError):
@@ -156,11 +163,12 @@ class Memory(Workflow):
         db.close()
         return cls(path, clock=clock)
 
-    def __init__(self, path, *, clock=None, read_only=False):
+    def __init__(self, path, *, clock=None, read_only=False, any_thread=False):
+        """any_thread allows a caller that serializes access itself to use the connection from several threads."""
         self.path = Path(path).resolve()
         self.clock = clock or (lambda: datetime.now(timezone.utc).isoformat())
         self.db = sqlite3.connect(self.path.as_uri() + ("?mode=ro" if read_only else "?mode=rw"), uri=True,
-                                  isolation_level=None, timeout=5)
+                                  isolation_level=None, timeout=5, check_same_thread=not any_thread)
         self.db.row_factory = sqlite3.Row
         try:
             if self.db.execute("PRAGMA user_version").fetchone()[0] != SCHEMA_VERSION:
@@ -293,8 +301,13 @@ class Memory(Workflow):
 
     def _validate_payload(self, kind, payload):
         from .planning import validate_payload as validate_plan
+        from . import guards
         if validate_plan(kind, payload):
             return
+        if kind == "lesson_review" and isinstance(payload, dict):
+            # Optional trigger overrides are validated here; the remaining fields keep their existing checks.
+            guards.validate_triggers(payload)
+            payload = {key: value for key, value in payload.items() if key not in guards.TRIGGERS}
         if validate_payload(kind, payload):
             return
         required = {
@@ -306,17 +319,26 @@ class Memory(Workflow):
             "note": {"text"},
         }[kind]
         optional = {
-            "decision": {"uncertainty", "assumptions", "alternatives", "review_after", "model", "follow_up_owner", "condition", "case_id", "project_revision", "work_plan_id"},
+            "decision": {"uncertainty", "assumptions", "alternatives", "review_after", "model", "follow_up_owner", "condition", "case_id", "project_revision", "work_plan_id", "lessons_considered"},
             "action": {"host_reference"},
             "outcome": {"tokens", "human_corrections", "duration_ms", "failure_type", "model",
                         "context_characters", "research_calls", "repeated_research", "maintenance_ms", "completion"},
             "research": {"queries", "refresh_reason"},
-            "lesson": {"pattern_type"}, "note": set(),
+            "lesson": {"pattern_type", "paths", "keywords", "failure_type"}, "note": {"kickoff_answers"},
         }[kind]
         if not isinstance(payload, dict) or set(payload) - required - optional or required - set(payload):
             raise InvalidRecord(f"{kind} requires {sorted(required)}; optional: {sorted(optional)}.")
         for key, value in payload.items():
-            if key in {"queries", "assumptions", "alternatives"}:
+            if kind == "decision" and key == "lessons_considered":
+                guards.validate_considered(value)
+            elif kind == "lesson" and key == "paths":
+                guards.validate_patterns(value, minimum=0)
+            elif kind == "lesson" and key == "keywords":
+                guards.validate_keywords(value)
+            elif kind == "note" and key == "kickoff_answers":
+                from .templates import validate_answers
+                validate_answers(value)
+            elif key in {"queries", "assumptions", "alternatives"}:
                 if not isinstance(value, list) or len(value) > 30:
                     raise InvalidRecord(f"{key} must be a list of at most 30 strings.")
                 for item in value:
@@ -428,6 +450,8 @@ class Memory(Workflow):
                     raise Conflict('The decision must use the current work plan.')
                 if plan:
                     payload['work_plan_id'] = plan['id']
+                from .guards import require_acknowledgement
+                require_acknowledgement(self, episode, payload)
             if kind in {'work_plan', 'sprint'}:
                 from .schema import enable_plans
                 enable_plans(self)
@@ -642,6 +666,7 @@ class Memory(Workflow):
             lines.append(f"{labels.get(key, key.replace('_', ' ').capitalize())}: " +
                          ("; ".join(item if isinstance(item, str) else
                           f"{item['episode_id']}: {item['reason']}" if key == 'depends_on' else
+                          f"{item['lesson_id']} (applies: {item['applies']}): {item['reason']}" if key == 'lessons_considered' else
                           f"{item['location']} ({item['severity']}): {item['issue']}" for item in value) if isinstance(value, list) else str(value)))
         if event["supersedes"]:
             lines.append("Replaces: " + event["supersedes"])

@@ -49,8 +49,7 @@ def validate_event(memory, episode, kind, payload, evidence, decision_id, links)
     from .core import InvalidRecord, Conflict
     if episode['status'] in {'settled', 'abandoned'} and kind not in {'episode_status', 'outcome', 'follow_up', 'action_result'}:
         raise InvalidRecord('Reopen this episode before adding new work.')
-    if kind == 'review' and episode['subject'] != 'code':
-        raise InvalidRecord('Code reviews belong in a code episode.')
+    # A review can examine code, a report, a deck or a workflow, so it is allowed in every subject.
     if kind == 'research' and episode['subject'] not in {'research', 'general'}:
         raise InvalidRecord('Research belongs in a research episode; link it from other work.')
     if kind in {'review', 'correction', 'lesson_review'} and not evidence:
@@ -132,19 +131,29 @@ class Workflow:
             WHERE e.kind='decision' AND coalesce(json_extract(e.payload,'$.project_revision'),0) != ? LIMIT 1''', (event_id,version)).fetchone() if version else None
         if old:
             reasons.append({'reason':'A decision used earlier project requirements.','record_id':old[0],'used_version':old[1],'current_version':version})
-        from .planning import latest
+        from .planning import latest, scope_changed
         for choice in self.db.execute(ancestors + '''SELECT e.id,e.episode_id,json_extract(e.payload,'$.work_plan_id') AS plan_id
                 FROM ancestors a JOIN events e ON e.id=a.id WHERE e.kind='decision'
                 AND json_extract(e.payload,'$.work_plan_id') IS NOT NULL''', (event_id,)):
             prior = self._event(choice['plan_id'])['payload']
             current = latest(self, choice['episode_id'], 'work_plan')
-            if current and any(prior.get(key, [] if key=='depends_on' else None) != current.get(key, [] if key=='depends_on' else None)
-                               for key in ('scope','autonomy','depends_on')):
+            # Scope, autonomy and dependencies define the work that the decision assessed.
+            if current and scope_changed(prior, current):
                 reasons.append({'reason':'The work scope or prerequisites changed after this decision.','record_id':choice['id'],
                                 'used_plan_id':choice['plan_id'],'current_plan_id':current['id']})
-        rows = self.db.execute(ancestors + 'SELECT DISTINCT d.source_id FROM dependencies d JOIN ancestors a ON d.event_id=a.id', (event_id,))
+        direct = {row['id']: row['source_key'] for row in self.db.execute(
+            'SELECT s.id,s.source_key FROM sources s JOIN dependencies d ON d.source_id=s.id WHERE d.event_id=?',
+            (event_id,))}
+        # A corrected outcome explicitly reassesses the current source. Its
+        # decision retains the older evidence that prompted the correction.
+        reassessed = {key for source_id, key in direct.items() if self.source_status(source_id)=='current_copy'} \
+            if self._event(event_id)['kind']=='outcome' else set()
+        rows = self.db.execute(ancestors + '''SELECT DISTINCT s.id,s.source_key FROM dependencies d
+            JOIN ancestors a ON d.event_id=a.id JOIN sources s ON s.id=d.source_id''', (event_id,))
         for row in rows:
             state=self.source_status(row[0])
+            if state=='superseded' and row[0] not in direct and row['source_key'] in reassessed:
+                continue
             if state!='current_copy':reasons.append({'reason':'Referenced evidence changed or requires a check.','source_id':row[0],'status':state})
         return reasons
 

@@ -1,3 +1,4 @@
+import shutil
 import concurrent.futures
 import json
 from pathlib import Path
@@ -13,7 +14,7 @@ from memory_module import Memory, Conflict, InvalidRecord, BudgetTooSmall, dumps
 
 class MemoryTests(unittest.TestCase):
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
+        self.tmp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.path = Path(self.tmp.name) / "project.sqlite"
         self.now = "2026-09-12T10:00:00+00:00"
         self.m = Memory.create(self.path, "test-project", ["Use professional plain English.",
@@ -26,7 +27,7 @@ class MemoryTests(unittest.TestCase):
 
     def tearDown(self):
         self.m.close()
-        self.tmp.cleanup()
+        shutil.rmtree(self.tmp.name, ignore_errors=True)
 
     def record(self, kind, payload, **kw):
         self.key += 1

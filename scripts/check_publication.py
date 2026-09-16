@@ -7,17 +7,16 @@ import subprocess
 
 ROOT_FILES = {
     '.gitignore', 'README.md', 'CHANGELOG.md', 'CONTRIBUTING.md', 'LICENSE',
-    'SECURITY.md', 'pyproject.toml', 'server.json', 'glama.json',
+    'SECURITY.md', 'pyproject.toml',
 }
 DOCS = {
-    'distribution.md', 'evidence.md', 'record-fields.md', 'releasing.md',
-    'setup.md', 'user-guide.md', 'work-board.md', 'workspace-agents.md',
-    'workspace-ui.md',
+    'agents.md', 'control-panel.md', 'evidence.md', 'record-fields.md',
+    'releasing.md', 'setup.md', 'user-guide.md',
 }
 FIXED_FILES = {
     '.agents/plugins/marketplace.json', '.claude-plugin/marketplace.json',
     '.github/ISSUE_TEMPLATE/bug_report.yml', '.github/workflows/ci.yml',
-    '.github/workflows/release.yml', 'bundle/manifest.json', 'bundle/server.py',
+    '.github/workflows/release.yml',
     'plugins/project-memory/.claude-plugin/plugin.json',
     'plugins/project-memory/.codex-plugin/plugin.json',
     'plugins/project-memory/.mcp.json', 'plugins/project-memory/claude-hooks.json',
@@ -26,11 +25,15 @@ FIXED_FILES = {
     'examples/episode.json',
 }
 RUNTIME_ASSETS = {
-    'memory_module/agents/intent.md', 'memory_module/agents/outcome.md',
-    'memory_module/agents/recovery.md',
     'memory_module/assets/manrope-latin-400.woff2',
     'memory_module/assets/manrope-latin-700.woff2',
 }
+
+
+def agent_role_file(name):
+    """Role instructions shipped with the package, one Markdown file per run role."""
+    path = PurePosixPath(name)
+    return path.parent.as_posix() == 'memory_module/agents' and path.suffix == '.md'
 PRIVATE_PATTERNS = {
     'possible credential': re.compile(
         rb'(?:gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{30,}'
@@ -45,10 +48,8 @@ PRIVATE_PATTERNS = {
 
 def runtime_file(name):
     path = PurePosixPath(name)
-    return name in RUNTIME_ASSETS or (path.parent.as_posix() == 'memory_module/ui'
-        and path.name in {'workspace.css', 'state.js', 'records.js', 'api.js', 'sync.js',
-                          'navigation.js', 'board.js', 'editor.js', 'reviews.js', 'boot.js',
-                          'skills.js', 'map.js', 'approvals.js', 'reading.js', 'overview.js'}) or (
+    return name in RUNTIME_ASSETS or agent_role_file(name) or (path.parent.as_posix() in {'memory_module/ui', 'memory_module/vendor'}
+        and path.suffix in {'.js', '.css'}) or (
         path.parent.as_posix() == 'memory_module' and path.suffix in {'.py', '.html'})
 
 
@@ -57,7 +58,7 @@ def source_file(name):
     return (
         name in ROOT_FILES or name in FIXED_FILES or runtime_file(name)
         or (path.parent.as_posix() == 'docs' and path.name in DOCS)
-        or (path.parent.as_posix() in {'scripts', 'tests', 'tests/integration'}
+        or (path.parent.as_posix() in {'scripts', 'tests', 'tests/integration', 'tests/browser'}
             and path.suffix == '.py' and not path.name.startswith('.'))
         or (path.parent.as_posix() == 'tests/browser' and path.suffix == '.cjs')
     )
@@ -72,8 +73,6 @@ def check_member(name, body, kind='source'):
                     and '/'.join(path.parts[1:]) in {
                         'METADATA', 'WHEEL', 'entry_points.txt', 'RECORD', 'licenses/LICENSE'})
         allowed = runtime_file(name) or metadata
-    elif kind == 'bundle':
-        allowed = runtime_file(name) or name in {'manifest.json', 'server.py', 'LICENSE'}
     else:
         allowed = source_file(name) or (kind == 'sdist' and name == 'PKG-INFO')
     if not allowed:

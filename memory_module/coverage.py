@@ -1,5 +1,5 @@
 """Mechanical omissions and explicit intent assessments over immutable host receipts."""
-from . import codex_host
+from . import codex_host, shared
 from .core import InvalidRecord, Conflict, _text, _digest
 
 
@@ -65,10 +65,7 @@ def inspect(memory, session_id, limit=10, offset=0):
     if open_total:
         issues.append({'type':'outcome_missing', 'count':open_total, 'reason':'Executed or selected decisions have no assessed outcome. Record partial or blocked work accurately.'})
     if state['unconfirmed_total']:
-        unassessed=memory.db.execute('''SELECT count(*) FROM host_receipts p WHERE p.session_id=? AND p.event_name='PreToolUse'
-          AND NOT EXISTS (SELECT 1 FROM host_receipts r WHERE r.session_id=p.session_id AND r.tool_use_id=p.tool_use_id AND r.event_name='PostToolUse'
-            AND coalesce(json_extract(r.payload,'$.host'),'codex')=coalesce(json_extract(p.payload,'$.host'),'codex'))
-          AND NOT EXISTS (SELECT 1 FROM host_receipts r WHERE r.event_name='Reconciled' AND json_extract(r.payload,'$.receipt_id')=p.id)''',(session_id,)).fetchone()[0]
+        unassessed=shared.unconfirmed_total(memory,session_id=session_id,clause=shared.UNASSESSED)
         issues.append({'type':'execution_unconfirmed', 'count':state['unconfirmed_total'], 'requires_assessment':bool(unassessed),
                        'reason':'Inspect actual effects before retrying; an absent receipt does not prove failure. Explicitly assessed unknown execution remains unresolved.'})
     gaps = [r[0] for r in memory.db.execute("SELECT id FROM host_receipts WHERE session_id=? AND event_name='CaptureRecovered' AND rowid>? ORDER BY rowid", (session_id, since))]

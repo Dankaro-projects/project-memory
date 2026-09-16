@@ -21,7 +21,7 @@ class PublicationTests(unittest.TestCase):
             b'http://127.0.0.1:1234/' + b'private-capability' * 2 + b'/',
         ]
         for body in samples:
-            for kind in ('source', 'wheel', 'sdist', 'bundle'):
+            for kind in ('source', 'wheel', 'sdist'):
                 with self.subTest(kind=kind, length=len(body)):
                     with self.assertRaises(ValueError) as error:
                         check_member('memory_module/cli.py', body, kind)
@@ -38,7 +38,7 @@ class PublicationTests(unittest.TestCase):
             check_member('project_memory_mcp-1.dist-info/results/session.json', b'{}', 'wheel')
 
     def test_repo_check_catches_staged_ignored_files_and_new_reports(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as directory:
             root = Path(directory)
             subprocess.run(['git', 'init', '-q', str(root)], check=True)
             (root / 'README.md').write_text('A synthetic project.\n')
@@ -59,18 +59,26 @@ class PublicationTests(unittest.TestCase):
 
     def test_actual_archives_reject_a_private_report(self):
         script = Path(__file__).resolve().parents[1] / 'scripts/check_artifacts.py'
-        with tempfile.TemporaryDirectory() as directory:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as directory:
             root = Path(directory)
             members = {'memory_module/viewer.html': b'<html></html>'}
             from memory_module.viewer import UI_SCRIPTS
-            for name in (*UI_SCRIPTS, 'workspace.css'):
+            sys.path.insert(0, str(script.parent))
+            try:
+                from check_artifacts import REQUIRED_MODULES
+            finally:
+                sys.path.remove(str(script.parent))
+            for module in REQUIRED_MODULES:
+                members[f'memory_module/{module}.py'] = b'"""Public fixture."""\n'
+            members['memory_module/viewer.py'] = ('UI_SCRIPTS = ' + repr(UI_SCRIPTS) + '\n').encode()
+            for name in (*UI_SCRIPTS, 'panel.css'):
                 members['memory_module/ui/' + name] = b'/* public fixture */'
+            members['memory_module/vendor/cytoscape.min.js'] = b'/* public fixture */'
             for weight in (400, 700):
                 members[f'memory_module/assets/manrope-latin-{weight}.woff2'] = b'wOF2fixture'
-            for name in ('fixture.whl', 'fixture.mcpb'):
-                with zipfile.ZipFile(root / name, 'w') as archive:
-                    for member, body in members.items():
-                        archive.writestr(member, body)
+            with zipfile.ZipFile(root / 'fixture.whl', 'w') as archive:
+                for member, body in members.items():
+                    archive.writestr(member, body)
 
             def source_archive(extra):
                 with tarfile.open(root / 'fixture.tar.gz', 'w:gz') as archive:
@@ -83,12 +91,6 @@ class PublicationTests(unittest.TestCase):
             result = subprocess.run([sys.executable, str(script), str(root)], capture_output=True)
             self.assertEqual(result.returncode, 0, result.stderr.decode())
             source_archive({'docs/verification-private.json': b'{"private": true}'})
-            result = subprocess.run([sys.executable, str(script), str(root)], capture_output=True)
-            self.assertNotEqual(result.returncode, 0)
-            self.assertIn(b'Unapproved public file', result.stderr)
-            source_archive({})
-            with zipfile.ZipFile(root / 'fixture.mcpb', 'a') as archive:
-                archive.writestr('trace.json', b'{}')
             result = subprocess.run([sys.executable, str(script), str(root)], capture_output=True)
             self.assertNotEqual(result.returncode, 0)
             self.assertIn(b'Unapproved public file', result.stderr)

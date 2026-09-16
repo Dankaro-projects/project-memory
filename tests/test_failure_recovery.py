@@ -1,4 +1,5 @@
 """Regression cases for capture loss, connection recovery and bounded reads."""
+import shutil
 import json
 import os
 from pathlib import Path
@@ -24,14 +25,14 @@ from memory_module.workspace import action
 
 class FailureRecoveryTests(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory()
+        self.temp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.root = Path(self.temp.name).resolve()
         self.info = setup(self.root,requirements=['Preserve the documented exception.'])
         self.m = Memory(self.info['database'])
 
     def tearDown(self):
         self.m.close()
-        self.temp.cleanup()
+        shutil.rmtree(self.temp.name, ignore_errors=True)
 
     def hook(self, event):
         return subprocess.run([sys.executable,'-m','memory_module.codex_host','--db',str(self.m.path)],
@@ -207,6 +208,8 @@ class FailureRecoveryTests(unittest.TestCase):
         thread = threading.Thread(target=serve,daemon=True)
         with patch.object(Path,'open',measured):
             thread.start();server = ready.get(timeout=3)
+            # Check project files on every request here; the default interval of 5 seconds is tested in test_api.
+            server.tree_interval = 0
             url = f'http://127.0.0.1:{server.server_port}/test-token/api/health'
             def get(tag=None):
                 try:

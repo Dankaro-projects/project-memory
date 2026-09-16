@@ -1,27 +1,167 @@
-"""Bounded, read-only HTML snapshots. No browser database engine or network."""
+"""Bounded, read-only HTML snapshots that embed api.py responses. No browser database engine or network.
 
-import hashlib
+The snapshot holds `{'live': False, 'project', 'exported_at', 'scope', 'source_bodies_included', 'responses', 'omitted'}`.
+Each response key is the endpoint name followed by its sorted query, for example
+`records?limit=100&view=decisions`, which is the request the control panel makes
+in live mode. The exported content is already limited to the scope, so keys do
+not repeat the scope filters. Project wide views (now, work_graph, architecture,
+learning, agents, kickoff, plan and components) are exported only when the
+export has no scope, because they list records outside it; a scoped snapshot
+names each of them in `omitted` with the reason. A record key holds the same
+response as the live request, including the first body slice of a source when
+bodies are included. A lineage graph shows the recorded neighbourhood of a decision and
+can name related records outside a scope, as evidence references always did.
+"""
 import base64
+import hashlib
 from pathlib import Path
+import re
+from subprocess import SubprocessError
+from urllib.parse import urlencode
+
+from . import api, delegation
 from .core import InvalidRecord, Conflict, dumps, _time
 
-
-UI_SCRIPTS = ('state.js', 'records.js', 'api.js', 'sync.js', 'navigation.js',
-              'board.js', 'editor.js', 'reviews.js', 'approvals.js', 'skills.js', 'map.js', 'reading.js', 'overview.js', 'boot.js')
+# The application script joins these files in this order. Every listed file is
+# required in a published package (scripts/check_artifacts.py). While the panel is
+# being built, html_template skips a listed file that does not exist yet.
+UI_SCRIPTS = ('core.js', 'graphs.js', 'views_work.js', 'views_knowledge.js', 'forms.js')
+UI_STYLES = ('panel.css',)
+VENDOR_SCRIPT = 'vendor/cytoscape.min.js'
+PLACEHOLDERS = re.compile(r'__(PANEL_CSS|VENDOR_JS|PANEL_JS)__')
+EXECUTABLE_SCRIPT = re.compile(r'<script>(.*?)</script>', re.S)
+PROJECT_VIEWS = ('now', 'work_graph', 'architecture', 'learning', 'agents', 'kickoff', 'plan', 'components')
+RECORD_LIMIT = '100'
 
 
 def html_template():
+    """The page with the stylesheet, the vendor script and the application script in place.
+
+    Content is inserted in one pass, so text inside an inserted file is never
+    treated as a placeholder.
+    """
     root = Path(__file__).parent
     template = (root / 'viewer.html').read_text(encoding='utf-8')
-    template = template.replace('__WORKSPACE_CSS__', (root / 'ui/workspace.css').read_text(encoding='utf-8'))
-    script = '\n'.join((root / 'ui' / name).read_text(encoding='utf-8') for name in UI_SCRIPTS)
-    template = template.replace('__WORKSPACE_JS__', script)
-    # Opening the source file shows launch instructions; rendered pages reveal the workspace.
-    template = template.replace('<div id="workspace-app" hidden>', '<div id="workspace-app">')
+    # Opening the source file shows launch instructions; a rendered page shows the panel.
+    template = template.replace('<section id="template-notice"', '<section id="template-notice" hidden', 1)
+    template = template.replace('<div id="app" class="shell" hidden>', '<div id="app" class="shell">', 1)
+    css = '\n'.join((root / 'ui' / name).read_text(encoding='utf-8') for name in UI_STYLES)
     for weight in (400, 700):
         font = (root / 'assets' / f'manrope-latin-{weight}.woff2').read_bytes()
-        template = template.replace(f'__MANROPE_{weight}__', base64.b64encode(font).decode())
-    return template
+        css = css.replace(f'__MANROPE_{weight}__', base64.b64encode(font).decode())
+    script = '\n'.join((root / 'ui' / name).read_text(encoding='utf-8') for name in UI_SCRIPTS if (root / 'ui' / name).exists())
+    parts = {'PANEL_CSS': css, 'VENDOR_JS': (root / VENDOR_SCRIPT).read_text(encoding='utf-8'), 'PANEL_JS': script}
+    for name, text in parts.items():
+        if '</' + ('style' if name == 'PANEL_CSS' else 'script') in text.lower():
+            raise ValueError(f'The {name} content must not contain a closing tag.')
+    return PLACEHOLDERS.sub(lambda match: parts[match.group(1)], template)
+
+
+def _digest(body):
+    return "'sha256-" + base64.b64encode(hashlib.sha256(body.encode('utf-8')).digest()).decode() + "'"
+
+
+def render(template, data, *, live=False):
+    """The page with hashed style and script elements and the escaped data.
+
+    Every script element without attributes is executable and gets its own hash:
+    the vendor script and the application script. The data element is JSON and
+    needs none. The policy sits before all content, so each replacement changes
+    only its first occurrence, and the data is inserted last.
+    """
+    style = template.split('<style>', 1)[1].split('</style>', 1)[0]
+    scripts = EXECUTABLE_SCRIPT.findall(template)
+    page = template.replace('__STYLE_HASH__', _digest(style), 1)
+    page = page.replace('__SCRIPT_HASHES__', ' '.join(_digest(body) for body in scripts), 1)
+    if live:
+        page = page.replace("base-uri 'none'", "connect-src 'self'; base-uri 'none'", 1)
+    encoded = dumps(data).replace('&', '\\u0026').replace('<', '\\u003c').replace('>', '\\u003e')
+    return page.replace('__MEMORY_DATA__', encoded, 1)
+
+
+def response_key(endpoint, params=None):
+    """The key of an embedded response: the endpoint and its query with sorted parameters."""
+    if not params:
+        return endpoint
+    return endpoint + '?' + urlencode(sorted((key, str(value)) for key, value in params.items()))
+
+
+def _where(pairs):
+    conditions = []
+    arguments = []
+    for column, value, operator in pairs:
+        if value is not None:
+            conditions.append(f'{column}{operator}?')
+            arguments.append(value)
+    return (' WHERE ' + ' AND '.join(conditions) if conditions else ''), arguments
+
+
+def _scope(memory, *, episode_id, subject, since, until, max_records):
+    """The ids of every record inside the export scope, bounded by max_records."""
+    from . import codex_host
+    from .direction import history
+    too_many = 'Export exceeds max_records. Select a work item, subject or date range.'
+    where, arguments = _where([('episode_id', episode_id, '='), ('subject', subject, '='),
+                               ('created_at', since, '>='), ('created_at', until, '<=')])
+    event_rows = memory.db.execute('SELECT id,kind FROM events' + where + ' ORDER BY created_at,rowid LIMIT ?',
+                                   (*arguments, max_records + 1)).fetchall()
+    if len(event_rows) > max_records:
+        raise InvalidRecord(too_many)
+    events = [item['id'] for item in event_rows]
+    decisions = [item['id'] for item in event_rows if item['kind'] == 'decision']
+    if episode_id:
+        episodes = [episode_id]
+    else:
+        clause, values = _where([('subject', subject, '=')])
+        rows = memory.db.execute('SELECT id FROM episodes' + clause + ' ORDER BY created_at LIMIT ?', (*values, max_records + 1)).fetchall()
+        episodes = [item[0] for item in rows]
+        if since or until:
+            relevant = {item[0] for item in memory.db.execute('SELECT DISTINCT episode_id FROM events' + where, arguments)}
+            episodes = [item for item in episodes if item in relevant]
+    revisions = history(memory, max_records)
+    if revisions['more']:
+        raise InvalidRecord('Project revision history exceeds max_records.')
+    # Referenced evidence is included even outside the date or subject filter; unrelated sources obey the filters.
+    sources = set()
+    if events:
+        marks = ','.join('?' for _ in events)
+        sources.update(item[0] for item in memory.db.execute('SELECT DISTINCT source_id FROM dependencies WHERE event_id IN (' + marks + ')', events))
+    sources.update(ref['source_id'] for revision in revisions['revisions'] for ref in revision['evidence'])
+    if not episode_id:
+        clause, values = _where([('subject', subject, '='), ('checked_at', since, '>='), ('checked_at', until, '<=')])
+        sources.update(item[0] for item in memory.db.execute('SELECT id FROM sources' + clause + ' LIMIT ?', (*values, max_records + 1)))
+    receipts = []
+    if codex_host.exists(memory):
+        clause, values = _where([('h.episode_id', episode_id, '='), ('ep.subject', subject, '='),
+                                 ('h.created_at', since, '>='), ('h.created_at', until, '<=')])
+        receipts = [item[0] for item in memory.db.execute(
+            'SELECT h.id FROM host_receipts h LEFT JOIN episodes ep ON ep.id=h.episode_id' + clause + ' ORDER BY h.rowid LIMIT ?',
+            (*values, max_records + 1))]
+    directions = ['direction_' + str(revision['version']) for revision in revisions['revisions']]
+    total = len(events) + len(episodes) + len(sources) + len(receipts) + len(directions)
+    if total > max_records:
+        raise InvalidRecord('Export exceeds max_records including work items, evidence, host receipts and project revisions. Narrow its scope.')
+    return {'episodes': episodes, 'events': events, 'decisions': decisions, 'sources': sorted(sources),
+            'receipts': receipts, 'directions': directions, 'total': total}
+
+
+def _board(memory, episodes):
+    """A board limited to the exported work items."""
+    from .planning import STATES, card
+    items = [card(memory, episode) for episode in episodes if memory.episode(episode)['task_type'] != 'sprint']
+    counts = dict.fromkeys(STATES, 0)
+    for item in items:
+        counts[item['state']] += 1
+    shown = items[:int(RECORD_LIMIT)]
+    return {'cards': shown, 'counts': counts, 'total': len(items), 'offset': 0, 'more': len(shown) < len(items),
+            'note': 'This board contains the work items inside the export scope.'}
+
+
+def _sprints(memory, episodes):
+    """The sprints inside the export scope."""
+    from .planning import sprints
+    found = [sprints(memory, 1, 0, episode)['sprints'][0] for episode in episodes if memory.episode(episode)['task_type'] == 'sprint']
+    return {'sprints': found[:int(RECORD_LIMIT)], 'offset': 0, 'more': len(found) > int(RECORD_LIMIT)}
 
 
 def export_html(memory, destination, *, episode_id=None, subject=None, since=None,
@@ -38,127 +178,81 @@ def export_html(memory, destination, *, episode_id=None, subject=None, since=Non
     if episode_id:
         episode = memory.episode(episode_id)
         if subject is not None and subject != episode['subject']:
-            raise InvalidRecord('Subject does not match the episode.')
+            raise InvalidRecord('Subject does not match the work item.')
     since = _time(since) if since else None
     until = _time(until) if until else None
     if since and until and since > until:
         raise InvalidRecord('since must not be later than until.')
-    conditions, args = [], []
-    for column, value, comparison in [('episode_id', episode_id, '='), ('subject', subject, '='),
-                                       ('created_at', since, '>='), ('created_at', until, '<=')]:
-        if value is not None:
-            conditions.append(f'{column}{comparison}?')
-            args.append(value)
-    where = ' WHERE ' + ' AND '.join(conditions) if conditions else ''
+    scoped = any(value is not None for value in (episode_id, subject, since, until))
+    filters = {key: value for key, value in (('episode', episode_id), ('subject', subject), ('since', since), ('until', until)) if value}
     # One read transaction prevents a snapshot assembled from different commits.
+    # The request cache keeps card states from being recomputed for every exported work item.
+    own_cache = getattr(memory, '_api_cache', None) is None
+    if own_cache:
+        memory._api_cache = {}
     memory.db.execute('BEGIN')
     try:
-        event_ids = memory.db.execute('SELECT id FROM events' + where + ' ORDER BY created_at,rowid LIMIT ?',
-                                      (*args, max_records + 1)).fetchall()
-        if len(event_ids) > max_records:
-            raise InvalidRecord('Export exceeds max_records. Select an episode, subject or date range.')
-        events = [memory.read(row[0]) for row in event_ids]
-        if episode_id:
-            episodes = [memory.episode(episode_id)]
-        else:
-            ep_where = ' WHERE subject=?' if subject else ''
-            ep_args = (subject,) if subject else ()
-            ep_rows = memory.db.execute('SELECT id FROM episodes' + ep_where + ' ORDER BY created_at LIMIT ?', (*ep_args, max_records+1)).fetchall()
-            episodes = [memory.episode(row[0]) for row in ep_rows]
-            if since or until:
-                relevant = {e['episode_id'] for e in events}
-                episodes = [ep for ep in episodes if ep['id'] in relevant]
-        # Include referenced evidence even outside the date/subject filter, with
-        # its original subject shown. Unrelated sources obey the export filters.
-        from .direction import history
-        revisions=history(memory,max_records)
-        if revisions['more']:raise InvalidRecord('Project revision history exceeds max_records.')
-        linked_sources = {r['source_id'] for e in events for r in e['evidence']}
-        source_ids = set(linked_sources) | {ref['source_id'] for rev in revisions['revisions'] for ref in rev['evidence']}
-        if not episode_id:
-            source_conditions, source_args = [], []
-            for column, value, op in [('subject', subject, '='), ('checked_at', since, '>='), ('checked_at', until, '<=')]:
-                if value is not None:
-                    source_conditions.append(f'{column}{op}?'); source_args.append(value)
-            source_where = ' WHERE ' + ' AND '.join(source_conditions) if source_conditions else ''
-            source_ids.update(row[0] for row in memory.db.execute('SELECT id FROM sources' + source_where + ' LIMIT ?',
-                                                                (*source_args, max_records+1)))
-        if len(events) + len(episodes) + len(source_ids) > max_records:
-            raise InvalidRecord('Export exceeds max_records including episodes and evidence. Narrow its scope.')
-        sources = [memory.read(sid, detail=include_bodies and not memory.db.execute(
-            'SELECT source_key FROM sources WHERE id=?', (sid,)).fetchone()[0].startswith(('workspace-skill:', 'workspace-skill-snapshot:'))) for sid in sorted(source_ids)]
-        selected = {e['id'] for e in events}
-        pending = [r for r in memory.pending(episode_id, limit=max_records)['decisions'] if r['id'] in selected]
-        rows = []
-        for ep in episodes:
-            rows.append({'id': ep['id'], 'kind': 'episode', 'subject': ep['subject'], 'status': ep['status'],
-                         'date': ep['created_at'], 'title': ep['title'], 'episode_id': ep['id'], 'detail': ep})
-        for event in events:
-            payload = event['payload']
-            title = next((payload[k] for k in ['decision', 'summary', 'observed', 'question', 'do', 'text', 'reason', 'action'] if k in payload), event['kind'])
-            rows.append({'id': event['id'], 'kind': event['kind'], 'subject': event['subject'], 'status': event['status'],
-                         'date': event['created_at'], 'title': title, 'episode_id': event['episode_id'], 'detail': event})
-        from .codex_host import exists, read_receipt
-        if exists(memory):
-            clauses, host_args = [], []
-            for column, value, op in [('h.episode_id', episode_id, '='), ('ep.subject', subject, '='),
-                                      ('h.created_at', since, '>='), ('h.created_at', until, '<=')]:
-                if value is not None:
-                    clauses.append(f'{column}{op}?'); host_args.append(value)
-            host_where = ' WHERE ' + ' AND '.join(clauses) if clauses else ''
-            host_rows = memory.db.execute('SELECT h.id,ep.subject FROM host_receipts h LEFT JOIN episodes ep ON ep.id=h.episode_id' + host_where + ' ORDER BY h.rowid LIMIT ?', (*host_args,max_records+1)).fetchall()
-            if len(rows) + len(sources) + len(host_rows) > max_records:
-                raise InvalidRecord('Export exceeds max_records including host receipts. Narrow its scope.')
-            for host in host_rows:
-                item = read_receipt(memory, host['id'])
-                state = 'observed'
-                if item['event_name'] == 'PreToolUse':
-                    reported = memory.db.execute("SELECT 1 FROM host_receipts WHERE session_id=? AND tool_use_id=? AND event_name='PostToolUse' AND coalesce(json_extract(payload,'$.host'),'codex')=?", (item['session_id'],item['tool_use_id'],item['payload'].get('host','codex'))).fetchone()
-                    reconciled = memory.db.execute("SELECT 1 FROM host_receipts WHERE event_name='Reconciled' AND json_extract(payload,'$.receipt_id')=? AND json_extract(payload,'$.resolution')!='unknown'",(item['id'],)).fetchone()
-                    if not reported and not reconciled:
-                        state = 'execution_unconfirmed'
-                rows.append({'id':item['id'],'kind':'host_receipt','subject':host['subject'] or 'general','status':state,
-                    'date':item['created_at'],'title':f'{item["event_name"]}: {item["tool_name"] or "Host session"}',
-                    'episode_id':item['episode_id'] or '', 'detail':item})
-        for source in sources:
-            rows.append({'id': source['id'], 'kind': 'source', 'subject': source['subject'], 'status': source['status'],
-                         'date': source['checked_at'], 'title': source['title'], 'episode_id': '', 'detail': source})
-        revisions=revisions['revisions']
-        if len(rows)+len(revisions)>max_records:
-            raise InvalidRecord('Export exceeds max_records including project revisions.')
-        for rev in revisions:
-            rows.append({'id':'direction_'+str(rev['version']),'kind':'project_revision','subject':'general',
-                'status':memory.direction().get('status','current') if rev['version']==memory.direction()['version'] else 'historical',
-                'date':rev.get('created_at',''),'title':'Project requirements, version '+str(rev['version']),
-                'episode_id':'','detail':rev})
-        from .planning import card, latest
-        work = [card(memory, ep['id']) for ep in episodes if ep['task_type']!='sprint']
-        sprints = [{'id':ep['id'],'title':ep['title'],'intent':ep['objective'],'version':ep['version'],
-                    'schedule':latest(memory,ep['id'],'sprint')} for ep in episodes if ep['task_type']=='sprint']
-        from .maps import model
-        maps = [{'episode_id': ep['id'], 'mode': mode, **model(memory, ep['id'], mode)}
-                for ep in episodes for mode in ('workflow', 'architecture')
-                if memory.db.execute('SELECT 1 FROM sources WHERE source_key=?',
-                    ('workspace-map:' + ep['id'] + ':' + mode,)).fetchone()]
-        snapshot = {'project': memory.project, 'exported_at': memory.now(), 'requirements': memory.requirements,
+        found = _scope(memory, episode_id=episode_id, subject=subject, since=since, until=until, max_records=max_records)
+        responses = {}
+        omitted = []
+        health = api.health(memory, {})
+        if scoped:
+            titles = {item: memory.episode(item)['title'] for item in found['episodes']}
+            health.update(episodes=[{'id': item, 'title': title} for item, title in titles.items()], episodes_more=False)
+        responses['health'] = health
+        for name in PROJECT_VIEWS:
+            if scoped:
+                omitted.append({'key': name, 'reason': 'This view covers the whole project. A scoped export leaves it out '
+                                                       'so that records outside the scope are not included.'})
+                continue
+            try:
+                responses[name] = api.ENDPOINTS[name](memory, {})
+            except (InvalidRecord, OSError, SubprocessError, ValueError) as exc:
+                omitted.append({'key': name, 'reason': str(exc)})
+        responses['requirements'] = api.requirements(memory, {})
+        list_params = {'limit': RECORD_LIMIT}
+        responses[response_key('board', list_params)] = _board(memory, found['episodes']) if scoped else api.board(memory, list_params)
+        responses[response_key('sprints', list_params)] = _sprints(memory, found['episodes']) if scoped else api.sprints(memory, list_params)
+        for view in api.RECORD_VIEWS:
+            params = {'view': view, 'limit': RECORD_LIMIT}
+            responses[response_key('records', params)] = api.page(memory, {**params, **filters})
+        for episode in found['episodes']:
+            if memory.episode(episode)['task_type'] != 'sprint':
+                responses[response_key('work', {'id': episode})] = api.work(memory, {'id': episode})
+                for run in delegation.runs(memory, episode_id=episode, limit=100)['runs']:
+                    responses[response_key('run', {'id': run['id']})] = api.run(memory, {'id': run['id']})
+        record_ids = found['episodes'] + found['events'] + found['sources'] + found['receipts'] + found['directions']
+        sources = set(found['sources'])
+        for rid in record_ids:
+            # Without bodies a source record carries its metadata only; otherwise the key matches the live response.
+            value = api.record(memory, {'id': rid}) if include_bodies or rid not in sources else {'record': api.row(memory, rid)}
+            responses[response_key('record', {'id': rid})] = value
+        if include_bodies:
+            for rid in found['sources']:
+                offset = 0
+                while True:
+                    value = api.record(memory, {'id': rid, 'body_offset': str(offset)})
+                    responses[response_key('record', {'body_offset': offset, 'id': rid})] = value
+                    detail = value['record']['detail']
+                    if not detail.get('body_more'):
+                        break
+                    offset = detail['next_offset']
+        for decision in found['decisions']:
+            responses[response_key('lineage', {'id': decision})] = api.lineage(memory, {'id': decision})
+        snapshot = {'live': False, 'project': memory.project, 'exported_at': memory.now(),
                     'scope': {'episode_id': episode_id, 'subject': subject, 'since': since, 'until': until},
-                    'source_bodies_included': include_bodies, 'maps': maps, 'records': rows, 'pending': pending, 'work':work, 'sprints':sprints}
-        encoded = dumps(snapshot).replace('&', '\\u0026').replace('<', '\\u003c').replace('>', '\\u003e')
-        template = html_template()
-        html = template.replace('__MEMORY_DATA__', encoded)
-        for tag in ['style', 'script']:
-            # Only the executable script has no attributes.
-            body = template.split('<' + tag + '>', 1)[1].split('</' + tag + '>', 1)[0]
-            digest = base64.b64encode(hashlib.sha256(body.encode()).digest()).decode()
-            html = html.replace('__' + tag.upper() + '_HASH__', digest)
-        content = html.encode('utf-8')
+                    'source_bodies_included': include_bodies, 'responses': responses, 'omitted': omitted}
+        content = render(html_template(), snapshot).encode('utf-8')
         if len(content) > max_bytes:
             raise InvalidRecord('Export exceeds max_bytes. Narrow its scope or omit source bodies.')
     finally:
         memory.db.rollback()  # End the read transaction, including on failure.
+        if own_cache:
+            del memory._api_cache
     try:
         if replace:
-            if destination.suffix.lower() != '.html':raise InvalidRecord('Use an .html destination when replacing a snapshot.')
+            if destination.suffix.lower() != '.html':
+                raise InvalidRecord('Use an .html destination when replacing a snapshot.')
             from .install import atomic
             atomic(destination, content.decode('utf-8'))
         else:
@@ -166,5 +260,5 @@ def export_html(memory, destination, *, episode_id=None, subject=None, since=Non
                 stream.write(content)
     except FileExistsError as exc:
         raise Conflict('HTML destination already exists. Choose a new filename for the snapshot.') from exc
-    return {'path': str(destination.resolve()), 'records': len(rows), 'bytes': len(content),
+    return {'path': str(destination.resolve()), 'records': found['total'], 'responses': len(responses), 'bytes': len(content),
             'exported_at': snapshot['exported_at'], 'snapshot': True}

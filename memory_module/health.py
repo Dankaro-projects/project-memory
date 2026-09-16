@@ -36,6 +36,21 @@ def inspect(memory):
             'next_step': 'Confirm that this task can call memory_get. Use doctor for current host discovery; historical receipts alone do not establish activation.'}
 
 
+def expected_hook_events(clients=None, client=None):
+    """Return the lifecycle events expected for the configured clients.
+
+    The result is the union of the hook events of every configured hook client.
+    A known installation without a hook client expects no events. Without any
+    installation record, all Codex events are expected, as before.
+    """
+    if clients is None:
+        return set(codex_host.HOST_EVENTS.get(client, codex_host.EVENTS))
+    expected = set()
+    for name in clients:
+        expected |= codex_host.HOST_EVENTS.get(name, set())
+    return expected
+
+
 def codex_hooks(project):
     """Use the installed host's read-only discovery. Never change trust here."""
     process = subprocess.Popen(['codex', 'app-server', '--stdio'], cwd=project, stdin=subprocess.PIPE,

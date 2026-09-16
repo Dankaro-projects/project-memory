@@ -1,3 +1,4 @@
+import shutil
 import json
 from pathlib import Path
 import sqlite3
@@ -15,11 +16,13 @@ from memory_module.live import Viewer
 from memory_module.mcp import write
 from memory_module.planning import latest, card
 from memory_module.workspace import action
+from memory_module import graph, guards, templates, delegation
+from tests.test_api import fake_run, LAUNCHER
 
 
 class WorkspaceTests(unittest.TestCase):
     def setUp(self):
-        self.temp=tempfile.TemporaryDirectory();self.root=Path(self.temp.name).resolve()
+        self.temp=tempfile.TemporaryDirectory(ignore_cleanup_errors=True);self.root=Path(self.temp.name).resolve()
         self.info=setup(self.root,requirements=['Keep strict UTF-8 and the tagged Latin-1 exception.'])
         self.m=Memory(self.info['database'])
         self.payload={'state':'ready','next_action':'Inspect the parser.','scope':'Keep strict UTF-8 and the tagged Latin-1 exception.',
@@ -27,7 +30,7 @@ class WorkspaceTests(unittest.TestCase):
         self.data={'title':'Repair parsing','objective':'Preserve both encoding paths.','criterion':'Strict UTF-8 rejects invalid bytes. Tagged legacy Latin-1 succeeds.',
                    'subject':'code','payload':self.payload}
         self.work=action(self.m,'plan',self.data,'first')
-    def tearDown(self):self.m.close();self.temp.cleanup()
+    def tearDown(self):self.m.close();shutil.rmtree(self.temp.name, ignore_errors=True)
     def completed(self):
         ep=self.work['episode_id'];source=self.m.source('test','Actual parser result','Both routes were checked.','The fixture result is recorded explicitly.','tool',subject='code')
         evidence=[{'source_id':source['id'],'reason':'This fixture supplies the observed result.'}]
@@ -143,23 +146,20 @@ class WorkspaceTests(unittest.TestCase):
         report={'verdict':'pass','summary':'The host claims success.','checks':[{'criterion':'Preserve exception.','evidence':'No direct evidence.','result':'unknown'}],'findings':[],'lesson_proposals':[]}
         with self.assertRaises(InvalidRecord):reviews.validate_report(report)
         with self.assertRaises(InvalidRecord):reviews.validate_report({**report,'checks':[]})
-    def test_replaying_a_committed_outcome_recovers_an_unlaunched_check(self):
+    def test_done_without_a_check_requests_one_and_keeps_the_work_open(self):
         from unittest.mock import patch
-        reviews.configure(self.m,self.root,'codex');decision,outcome=self.completed()
-        record=self.m.read(outcome['id'])
-        data={'episode_id':self.work['episode_id'],'kind':'outcome','payload':record['payload'],'expected_version':outcome['version'],
-              'actor':'test','decision_id':decision['id'],'supersedes':outcome['id'],
-              'evidence':[{'source_id':e['source_id'],'reason':e['reason']} for e in record['evidence']]}
-        with patch.object(reviews,'launch',side_effect=OSError('The launcher was unavailable.')):
-            first=write(self.m,'record','recover-outcome',data)
-        self.assertEqual(first['agent_check']['state'],'unavailable')
-        version=self.m.episode(self.work['episode_id'])['version']
+        reviews.configure(self.m,self.root,'codex');self.completed();ep=self.work['episode_id']
         with patch.object(reviews,'launch') as launched:
-            again=write(self.m,'record','recover-outcome',data)
-            launched.assert_called_once()
-        self.assertEqual(again['id'],first['id']);self.assertEqual(again['agent_check']['state'],'queued')
-        self.assertEqual(self.m.episode(self.work['episode_id'])['version'],version)
+            with self.assertRaises(InvalidRecord) as caught:action(self.m,'plan',self.update(state='done'),'done-without-check')
+            check=caught.exception.details['agent_check']
+            self.assertTrue(check['requested']);self.assertEqual(check['state'],'queued')
+            self.assertGreaterEqual(launched.call_count,1)
+            with self.assertRaises(InvalidRecord) as again:action(self.m,'plan',self.update(state='done'),'done-while-checking')
+        self.assertEqual(again.exception.details['next_step']['action'],'wait_review')
+        self.assertEqual(again.exception.details['next_step']['check_id'],check['id'])
         self.assertEqual(self.m.db.execute('SELECT count(*) FROM review_runs').fetchone()[0],1)
+        self.assertEqual(reviews.read(self.m,check['id'])['role'],'outcome')
+        self.assertNotEqual(latest(self.m,ep,'work_plan')['state'],'done')
     def test_interrupted_worker_is_not_automatically_retried(self):
         reviews.configure(self.m,self.root,'codex');ep=self.work['episode_id']
         run=reviews.request(self.m,ep,'recovery',request_key='recovery')
@@ -176,6 +176,7 @@ class WorkspaceTests(unittest.TestCase):
         reviews.configure(self.m,self.root,'codex');self.completed()
         run=reviews.request(self.m,self.work['episode_id'],request_key='revision-review');self.pass_review(run)
         with Viewer(self.m.path,'revision-test-token') as server:
+            server.tree_interval=0
             before=server.revision()
             (self.root/'parser.py').write_text('The implementation changes without a memory write.')
             self.assertNotEqual(server.revision(),before)
@@ -190,6 +191,160 @@ class WorkspaceTests(unittest.TestCase):
             self.assertEqual(reviews.hook(self.m,event,'codex'),{})
             self.assertEqual(reviews.hook(self.m,{**event,'stop_hook_active':True},'claude'),{})
         self.assertEqual(self.m.db.execute("SELECT count(*) FROM review_runs").fetchone()[0],1)
+    def lesson(self):
+        source=self.m.source('lesson-evidence','Parser result','The tagged fixture failed.','The tagged path was omitted.','tool',subject='code')
+        ep=self.work['episode_id']
+        return self.m.record(ep,'lesson',{'when':'Text is decoded.','do':'Check the tagged path.','because':'The tagged fixture failed.',
+            'exceptions':'Undocumented encodings.','pattern_type':'recovery'},expected_version=self.m.episode(ep)['version'],actor='test',
+            request_key='lesson',evidence=[{'source_id':source['id'],'reason':'The fixture shows the failure.'}])
+    def test_human_requirement_and_lesson_reviews_preserve_exceptions(self):
+        """Moved from the retired tests/test_workspace_knowledge.py."""
+        ep=self.work['episode_id']
+        counts=lambda:[self.m.db.execute('SELECT count(*) FROM '+name).fetchone()[0] for name in ('sources','events')]
+        action(self.m,'requirements',{'requirements':['Preserve tagged exceptions.'],'reason':'The user clarifies the scope.','expected_version':self.m.direction()['version']},'requirements')
+        self.assertEqual(self.m.requirements,['Preserve tagged exceptions.'])
+        source=self.m.source('fixture-result','Observed evidence','The fixture preserves exceptions.','The tagged record passes.','tool')
+        lesson=self.m.record(ep,'lesson',{'when':'The reviewer evaluates tagged records.','do':'Preserve the explicit exception.',
+            'because':'The evidence requires this condition.','exceptions':'This does not apply to untagged records.'},
+            expected_version=self.m.episode(ep)['version'],request_key='lesson-exception',actor='test',evidence=[{'source_id':source['id'],'reason':'This fixture establishes the condition.'}])
+        action(self.m,'lesson_review',{'lesson_id':lesson['id'],'expected_version':self.m.episode(ep)['version'],'status':'accepted','reason':'The user checks the complete condition and exception.'},'accept-exception')
+        self.assertEqual(self.m.read(lesson['id'])['status'],'accepted')
+        self.assertIn('untagged',self.m.read(lesson['id'])['payload']['exceptions'])
+        self.m.source('fixture-result','Changed evidence','The condition changes.','The tagged record fails.','tool')
+        before=counts()
+        with self.assertRaises(InvalidRecord):
+            action(self.m,'lesson_review',{'lesson_id':lesson['id'],'expected_version':self.m.episode(ep)['version'],'status':'accepted','reason':'Attempt to accept stale evidence.'},'stale-accept')
+        self.assertEqual(before,counts())
+    def test_saving_progress_reuses_evidence_without_an_unused_user_source(self):
+        count=lambda:self.m.db.execute('SELECT count(*) FROM sources').fetchone()[0]
+        before=count();action(self.m,'plan',self.update(priority='high'),'priority')
+        self.assertEqual(count(),before)
+        self.assertEqual(self.m.read(latest(self.m,self.work['episode_id'],'work_plan')['id'])['evidence'],self.m.read(self.work['id'])['evidence'])
+        action(self.m,'plan',self.update(paths=['src/parser.py']),'governed-paths')
+        self.assertEqual(count(),before+1)
+        body=self.m.read(self.m.read(latest(self.m,self.work['episode_id'],'work_plan')['id'])['evidence'][0]['source_id'],detail=True)['body']
+        self.assertIn('The allowed paths are: src/parser.py.',body)
+    def test_plan_accepts_item_type_acceptance_and_parent(self):
+        parent=action(self.m,'plan',{**self.data,'title':'Import epic','payload':{**self.payload,'item_type':'epic'}},'epic')
+        child=action(self.m,'plan',{**self.data,'title':'Import story','payload':{**self.payload,'item_type':'story','parent_id':parent['episode_id'],
+            'acceptance':['Tagged Latin-1 files import without loss.']}},'story')
+        plan=latest(self.m,child['episode_id'],'work_plan')
+        self.assertEqual((plan['item_type'],plan['parent_id']),('story',parent['episode_id']))
+        body=self.m.read(self.m.read(plan['id'])['evidence'][0]['source_id'],detail=True)['body']
+        self.assertIn('Acceptance criterion: Tagged Latin-1 files import without loss.',body)
+        self.assertIn('This work item belongs to Import epic.',body)
+        with self.assertRaises(InvalidRecord):
+            action(self.m,'plan',{**self.data,'title':'Bad item','payload':{**self.payload,'item_type':'feature'}},'bad-type')
+    def test_allow_paths_adds_unique_patterns_with_user_evidence(self):
+        action(self.m,'plan',self.update(paths=['src/parser.py']),'paths')
+        ep=self.work['episode_id'];version=self.m.episode(ep)['version']
+        data={'episode_id':ep,'expected_version':version,'paths':['docs/**','src/parser.py','docs/**'],'reason':'The parser notes live in docs.'}
+        result=action(self.m,'allow_paths',data,'allow')
+        self.assertEqual((result['added'],result['paths']),(['docs/**'],['src/parser.py','docs/**']))
+        self.assertEqual(action(self.m,'allow_paths',data,'allow'),result)
+        plan=self.m.read(latest(self.m,ep,'work_plan')['id'])
+        self.assertEqual(plan['payload']['paths'],['src/parser.py','docs/**'])
+        self.assertEqual((plan['actor'],plan['evidence'][0]['origin']),('workspace-user','user'))
+        self.assertEqual(plan['payload']['scope'],self.payload['scope'])
+        self.assertEqual(guards.scope_changes(self.m),[])
+        with self.assertRaises(Conflict):action(self.m,'allow_paths',data,'stale-allow')
+        with self.assertRaises(InvalidRecord):
+            action(self.m,'allow_paths',{**data,'expected_version':self.m.episode(ep)['version'],'paths':['docs/**']},'again')
+        with self.assertRaises(InvalidRecord):
+            action(self.m,'allow_paths',{**data,'expected_version':self.m.episode(ep)['version'],'paths':['../outside']},'outside')
+    def test_allow_paths_rejects_patterns_for_the_whole_project_or_computer(self):
+        action(self.m,'plan',self.update(paths=['src/parser.py']),'paths')
+        ep=self.work['episode_id']
+        for index,paths in enumerate((['/'],['/**'],['**'],['.'],['**/*'],['docs/**','/'])):
+            with self.subTest(paths=paths),self.assertRaises(InvalidRecord):
+                action(self.m,'allow_paths',{'episode_id':ep,'expected_version':self.m.episode(ep)['version'],'paths':paths,'reason':'Allow everything.'},'broad-'+str(index))
+        self.assertEqual(latest(self.m,ep,'work_plan')['paths'],['src/parser.py'])
+        result=action(self.m,'allow_paths',{'episode_id':ep,'expected_version':self.m.episode(ep)['version'],'paths':['**/*.md'],'reason':'The notes are Markdown.'},'markdown')
+        self.assertEqual(result['added'],['**/*.md'])
+    def test_request_work_review_retry_with_the_same_key_returns_the_first_review(self):
+        from unittest.mock import patch
+        reviews.configure(self.m,self.root,'codex');ep=self.work['episode_id']
+        run=fake_run(self.m,ep,project=self.root)
+        fake_run(self.m,ep,role='work_review',state='cancelled',parent=run,project=self.root)
+        def queue(memory,run_id,*,request_key,max_seconds=900):
+            return reviews.read(memory,fake_run(memory,ep,role='work_review',state='queued',parent=run_id,project=self.root,request_key=request_key))
+        with patch.object(delegation,'request_review',side_effect=queue) as requested,patch.object(reviews,'launch') as launched:
+            first=action(self.m,'request_work_review',{'run_id':run},'ws-rwr')
+            again=action(self.m,'request_work_review',{'run_id':run},'ws-rwr')
+        self.assertEqual((again['id'],again['state'],again['parent_run']),(first['id'],'queued',run))
+        requested.assert_called_once()
+        launched.assert_called_once()
+    def test_lesson_review_triggers_apply_only_on_acceptance(self):
+        lesson=self.lesson();ep=self.work['episode_id']
+        base={'lesson_id':lesson['id'],'reason':'The user checks the lesson.','paths':['src/**'],'keywords':['encoding'],'failure_type':'lost_text'}
+        with self.assertRaises(InvalidRecord):
+            action(self.m,'lesson_review',{**base,'status':'rejected','expected_version':self.m.episode(ep)['version']},'reject-with-triggers')
+        action(self.m,'lesson_review',{**base,'status':'accepted','expected_version':self.m.episode(ep)['version']},'accept')
+        [guard]=guards.active_guards(self.m)
+        self.assertEqual((guard['lesson_id'],guard['paths'],guard['keywords'],guard['failure_type']),(lesson['id'],['src/**'],['encoding'],'lost_text'))
+    def test_link_component_and_kickoff_answers_record_the_user(self):
+        ep=self.work['episode_id']
+        data={'from_id':ep,'to_id':'component:src','type':'affects_component','reason':'The parser lives in src.'}
+        first=action(self.m,'link',data,'link');self.assertEqual(action(self.m,'link',data,'link'),first)
+        edge=next(e for e in graph.edges(self.m,[ep]) if e['origin']=='link')
+        self.assertEqual((edge['to'],edge['type']),('component:src','affects_component'))
+        self.assertEqual(self.m.db.execute('SELECT actor FROM links WHERE id=?',(first['id'],)).fetchone()[0],'workspace-user')
+        item=action(self.m,'component',{'title':'Client CRM','kind':'system','description':'The CRM holds client records.','status':'confirmed'},'crm')
+        self.assertEqual((item['status'],item['actor']),('confirmed','workspace-user'))
+        self.assertEqual(self.m.read(item['evidence'][0]['source_id'])['origin'],'user')
+        project=self.root/'automation'
+        result=templates.scaffold(project,'automation',git=False,_launcher=LAUNCHER)
+        question=templates.TEMPLATES['automation']['questions'][0]['id']
+        with Memory(result['database']) as other:
+            with self.assertRaises(InvalidRecord):action(other,'answer_kickoff',{'question_ids':['unknown_question'],'text':'An answer.'},'unknown')
+            note=action(other,'answer_kickoff',{'question_ids':[question],'text':'The client sends orders by e-mail.'},'answer')
+            answered={q['id']:q for q in templates.kickoff(other)['questions']}[question]
+            self.assertEqual(answered['answered_by'],note['id'])
+            self.assertEqual(other.read(note['id'])['actor'],'workspace-user')
+    def test_removed_operations_and_unknown_fields_are_rejected(self):
+        for operation in ('skill_import','skill_selection','map'):
+            with self.assertRaises(InvalidRecord):action(self.m,operation,{},'removed-'+operation)
+        with self.assertRaises(InvalidRecord):action(self.m,'comment',{'episode_id':self.work['episode_id'],'text':'Missing version.'},'missing')
+        with self.assertRaises(InvalidRecord):action(self.m,'merge',{'run_id':'check_x','actor':'assistant'},'actor')
+    def test_agent_run_actions_use_the_user_and_start_a_worker_once(self):
+        from unittest.mock import patch
+        ep=self.work['episode_id']
+        run={'id':'check_fixture','episode_id':ep,'role':'work','host':'codex','state':'queued','error':'','parent_run':None,'branch':'pm/fixture'}
+        with patch.object(delegation,'request_work',return_value=run) as requested,patch.object(delegation,'launch') as launched:
+            first=action(self.m,'delegate',{'episode_id':ep,'host':'codex'},'delegate')
+            again=action(self.m,'delegate',{'episode_id':ep,'host':'codex'},'delegate')
+        self.assertEqual((first,again['id']),(again,'check_fixture'))
+        self.assertEqual(requested.call_args.kwargs['request_key'],'delegate:delegate')
+        launched.assert_called_once()
+        with patch.object(delegation,'merge',return_value={'merged':True}) as merged,patch.object(delegation,'discard',return_value={'discarded':True}) as discarded:
+            action(self.m,'merge',{'run_id':'check_fixture','override_reason':'The user inspected the diff.'},'merge')
+            action(self.m,'discard',{'run_id':'check_other','reason':'The approach changed.'},'discard')
+            with self.assertRaises(Conflict):action(self.m,'merge',{'run_id':'check_other'},'merge')
+        self.assertEqual((merged.call_args.kwargs['actor'],merged.call_args.kwargs['override_reason']),('workspace-user','The user inspected the diff.'))
+        self.assertEqual((discarded.call_args.kwargs['actor'],discarded.call_args.kwargs['reason']),('workspace-user','The approach changed.'))
+    def test_review_and_cancel_actions_request_one_check(self):
+        from unittest.mock import patch
+        reviews.configure(self.m,self.root,'codex');ep=self.work['episode_id']
+        with patch.object(reviews,'launch') as launched:
+            first=action(self.m,'review',{'episode_id':ep,'role':'intent'},'intent-check')
+            self.assertEqual(action(self.m,'review',{'episode_id':ep,'role':'intent'},'intent-check')['id'],first['id'])
+            launched.assert_called_once()
+            with self.assertRaises(InvalidRecord):action(self.m,'review',{'episode_id':ep,'role':'work'},'bad-role')
+        self.assertEqual(first['state'],'queued')
+        self.assertEqual(action(self.m,'cancel_run',{'run_id':first['id']},'cancel')['state'],'cancelled')
+    def test_request_work_review_requires_a_completed_run_without_a_current_review(self):
+        from unittest.mock import patch
+        reviews.configure(self.m,self.root,'codex');ep=self.work['episode_id']
+        run=fake_run(self.m,ep,project=self.root)
+        review={'id':'check_review','episode_id':ep,'role':'work_review','host':'claude','state':'queued','error':'','parent_run':run,'branch':None}
+        with patch.object(delegation,'request_review',return_value=review) as requested,patch.object(reviews,'launch') as launched:
+            self.assertEqual(action(self.m,'request_work_review',{'run_id':run},'rereview')['id'],'check_review')
+            launched.assert_called_once()
+            fake_run(self.m,ep,role='work_review',state='pass',parent=run,project=self.root)
+            with self.assertRaises(InvalidRecord):action(self.m,'request_work_review',{'run_id':run},'rereview-after-pass')
+            unfinished=fake_run(self.m,ep,state='failed',project=self.root)
+            with self.assertRaises(InvalidRecord):action(self.m,'request_work_review',{'run_id':unfinished},'rereview-failed')
+        requested.assert_called_once()
     def test_live_api_uses_origin_csrf_versions_and_shared_history(self):
         ready=queue.Queue()
         def serve():

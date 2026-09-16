@@ -1,3 +1,4 @@
+import shutil
 import json
 from contextlib import chdir
 from pathlib import Path
@@ -14,9 +15,9 @@ from memory_module.mcp import dispatch, write
 
 class ProductTests(unittest.TestCase):
     def setUp(self):
-        self.temp=tempfile.TemporaryDirectory();self.project=Path(self.temp.name)
+        self.temp=tempfile.TemporaryDirectory(ignore_cleanup_errors=True);self.project=Path(self.temp.name)
         self.launch=[sys.executable,'-m','memory_module.cli']
-    def tearDown(self):self.temp.cleanup()
+    def tearDown(self):shutil.rmtree(self.temp.name, ignore_errors=True)
     def setup(self,**kwargs):return install.setup(self.project,_launcher=self.launch,**kwargs)
     def test_generic_setup_actual_process_and_uninstall_preserve_data(self):
         first=self.setup(requirements=['Keep data locally.'])
@@ -36,7 +37,9 @@ class ProductTests(unittest.TestCase):
         (local/'config.toml').write_text('model = "other"\n')
         (local/'hooks.json').write_text(json.dumps({'hooks':{'Stop':[{'hooks':[{'type':'command','command':'other'}]}]}}))
         a=self.setup(client='codex');b=self.setup(client='codex')
-        self.assertEqual(a['database'],b['database'])
+        self.assertEqual(a['database'],b['database']);self.assertEqual(b['clients'],['codex'])
+        state=json.loads((self.project/'.memory/install.json').read_text())
+        self.assertEqual((state['client'],sorted(state['clients']['codex'])),('codex',['block','hook_command']))
         hooks=json.loads((local/'hooks.json').read_text())
         self.assertEqual(len(hooks['hooks']['Stop']),2)
         install.uninstall(self.project)

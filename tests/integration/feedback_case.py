@@ -61,7 +61,8 @@ def run():
             exported,timing=timed(lambda:m.export_html(root/f'view-{next(counter)}.html'))
             measurements['snapshot']=timing;measurements['snapshot_bytes']=exported['bytes']
             try:
-                from memory_module.live import html,page
+                from memory_module.api import page
+                from memory_module.live import html
             except ImportError:
                 measurements['live_initial_bytes']=None;checks['live_view_available']=False
             else:

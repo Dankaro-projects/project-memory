@@ -1,3 +1,4 @@
+import shutil
 import json
 from pathlib import Path
 import subprocess
@@ -12,7 +13,7 @@ from memory_module.mcp import dispatch, tool_result, write
 
 class DocumentTests(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory()
+        self.temp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.root = Path(self.temp.name)
         self.m = Memory.create(self.root/'memory.sqlite', 'Documents', ['Preserve quality and explicit acceptance.'])
         codex_host.initialize(self.m)
@@ -22,7 +23,7 @@ class DocumentTests(unittest.TestCase):
 
     def tearDown(self):
         self.m.close()
-        self.temp.cleanup()
+        shutil.rmtree(self.temp.name, ignore_errors=True)
 
     def decision(self, source):
         ep = self.m.start('Amberlake rollout', 'Check the storage approach.', 'review', 'The exception survives.', subject='code')

@@ -1,4 +1,5 @@
 """Review contracts and real process termination; no provider calls in unit tests."""
+import shutil
 import contextlib
 import io
 import json
@@ -10,18 +11,19 @@ import time
 import unittest
 from unittest.mock import patch
 
-from memory_module import Memory, InvalidRecord, Conflict, reviews
+from memory_module import Memory, InvalidRecord, Conflict, hosts, reviews
+from memory_module.core import dumps
 from memory_module.cli import main
 from memory_module.install import setup
 from memory_module.mcp import write
 from memory_module.planning import latest
-from memory_module.review_logs import ReviewLog
+from memory_module.hosts import RunLog as ReviewLog
 from memory_module.workspace import action
 
 
 class ReviewDiagnosticsTests(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory()
+        self.temp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.root = Path(self.temp.name).resolve()
         info = setup(self.root,requirements=['Keep the tagged legacy exception.','The original research used PDF attachments.'])
         self.m = Memory(info['database'])
@@ -34,7 +36,7 @@ class ReviewDiagnosticsTests(unittest.TestCase):
 
     def tearDown(self):
         self.m.close()
-        self.temp.cleanup()
+        shutil.rmtree(self.temp.name, ignore_errors=True)
 
     def request(self):
         return reviews.request(self.m,self.ep,request_key='check',retry=True)
@@ -97,6 +99,50 @@ class ReviewDiagnosticsTests(unittest.TestCase):
         self.assertEqual(checks['minItems'],checks['maxItems'])
         self.assertEqual(schema['properties']['constraint_checks']['items']['properties']['constraint']['enum'],['S001','P001','P002'])
         self.assertNotIn('enum',reviews.REPORT_SCHEMA['properties']['checks']['items']['properties']['criterion'])
+
+    def test_report_budget_scales_to_many_constraints_without_removing_checks(self):
+        snapshot,_ = reviews.snapshot(self.m,self.ep,'outcome')
+        snapshot['checklist'] = [{'id':f'C{i:03}', 'condition':'Preserve the tagged exception.'} for i in range(1,7)]
+        snapshot['constraints'] = [{'id':f'P{i:03}', 'condition':'Preserve the stated project constraint.'} for i in range(1,26)]
+        schema = reviews.report_schema(snapshot)
+        checks = schema['properties']['checks']
+        constraints = schema['properties']['constraint_checks']
+        self.assertEqual(checks['minItems'],6)
+        self.assertEqual(constraints['minItems'],25)
+        limit = checks['items']['properties']['evidence']['maxLength']
+        report = self.report(snapshot)
+        report['summary'] = 's' * schema['properties']['summary']['maxLength']
+        for item in report['checks']:
+            item['evidence'] = 'e' * limit
+        for item in report['constraint_checks']:
+            for field in ('reason','evidence'):
+                self.assertEqual(constraints['items']['properties'][field]['maxLength'],limit)
+                item[field] = 'e' * limit
+        report['findings'] = ['f' * 1900]
+        self.assertLessEqual(len(dumps(report)),reviews.REPORT_MAX_CHARACTERS)
+        reviews.validate_report(report,snapshot['checklist'],snapshot['constraints'])
+        self.assertNotIn('maxLength',reviews.REPORT_SCHEMA['properties']['checks']['items']['properties']['evidence'])
+
+    def test_report_limit_counts_serialized_characters_and_preserves_the_boundary(self):
+        snapshot,_ = reviews.snapshot(self.m,self.ep,'outcome')
+        report = self.report(snapshot)
+        report['findings'] = ['f'*5000, 'é'*5000, '\\"'*1000]
+        report['findings'].append('x'*(reviews.REPORT_MAX_CHARACTERS-len(dumps(report))-3))
+        self.assertEqual(len(dumps(report)),reviews.REPORT_MAX_CHARACTERS)
+        reviews.validate_report(report,snapshot['checklist'],snapshot['constraints'])
+        report['findings'][-1] += 'x'
+        with self.assertRaisesRegex(InvalidRecord,'exceeds 16,000 characters'):
+            reviews.validate_report(report,snapshot['checklist'],snapshot['constraints'])
+
+    def test_every_review_role_receives_the_complete_report_budget(self):
+        for role in reviews.ROLES:
+            run = reviews.request(self.m,self.ep,role,request_key='budget:'+role)
+            with patch.object(reviews,'command',return_value=[sys.executable,'-c','pass']) as command:
+                reviews.execute(self.m,run['id'],timeout=3)
+            prompt = command.call_args.args[3]
+            self.assertIn('16,000 characters',prompt)
+            self.assertIn('12,000 characters',prompt)
+            self.assertIn('shorten wording, not coverage',prompt)
 
     def test_progress_preserves_scope_evidence_and_outcome_signature(self):
         _,signature = reviews.snapshot(self.m,self.ep,'outcome')
@@ -173,6 +219,25 @@ class ReviewDiagnosticsTests(unittest.TestCase):
         result = reviews.read(self.m,run['id'])
         self.assertEqual(result['metrics']['termination_reason'],'host_exit')
         self.assertEqual(result['metrics']['host_error_events'],1)
+
+    def test_host_unavailability_is_a_distinct_state_and_marks_the_host(self):
+        result = self.execute_child("print(json.dumps({'type':'error','message':'You have hit your usage limit. Try again in 5 minutes.'}))\nraise SystemExit(1)\n")
+        self.assertEqual(result['state'],'host_unavailable')
+        self.assertEqual(result['metrics']['termination_reason'],'host_unavailable')
+        self.assertIn('usage limit',result['error'])
+        availability = hosts.availability(self.m,'codex')
+        self.assertFalse(availability['available'])
+        self.assertIsNotNone(availability['until'])
+        with self.assertRaisesRegex(InvalidRecord,'No configured agent host is available'):
+            reviews.request(self.m,self.ep,request_key='during-limit',retry=True)
+        hosts.mark_available(self.m,'codex')
+        run = reviews.request(self.m,self.ep,request_key='after-limit',retry=True)
+        folder = self.m.path.parent/'agent-runs'/run['id']
+        program = 'import json,pathlib\nfolder=pathlib.Path('+repr(str(folder))+')\n(folder/"answer.json").write_text(json.dumps('+repr(self.report(run['snapshot']))+'))\n'
+        with patch.object(reviews,'command',return_value=[sys.executable,'-c',program]):
+            reviews.execute(self.m,run['id'],timeout=3)
+        self.assertEqual(reviews.read(self.m,run['id'])['state'],'pass')
+        self.assertTrue(hosts.availability(self.m,'codex')['available'])
 
     def test_cancellation_terminates_child_and_retains_its_progress(self):
         code = "sys.path.insert(0,"+repr(str(Path(__file__).resolve().parents[1]))+")\nfrom memory_module import Memory,reviews\nprint(json.dumps({'type':'thread.started'}))\nwith Memory("+repr(str(self.m.path))+") as m: reviews.cancel(m,folder.name)\ntime.sleep(10)\n"
