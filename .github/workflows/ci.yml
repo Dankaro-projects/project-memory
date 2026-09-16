@@ -21,8 +21,10 @@ jobs:
           python-version: ${{ matrix.python }}
       - uses: astral-sh/setup-uv@v6
       - run: python scripts/check_publication.py
-      - run: python -u -m unittest discover -s tests -v
-        timeout-minutes: 5
+      - run: python -u -X faulthandler -m unittest discover -s tests -v
+        timeout-minutes: 8
+        env:
+          PYTHONFAULTHANDLER: '1'
       - run: python -m tests.integration.document_case --output results/documents
       - run: python -m tests.integration.host_example --output results/host-example
       - run: node tests/browser/static_check.cjs

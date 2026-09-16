@@ -113,8 +113,18 @@ def fake_hosts(directory, plan=None):
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=True)
     program = directory / 'fake-host.py'
-    program.write_text('#!' + sys.executable + '\n' + HOST_PROGRAM, encoding='utf-8')
+    program.write_text(HOST_PROGRAM, encoding='utf-8')
     program.chmod(0o755)
+    # Windows ignores a shebang line and the executable bit, so the launcher is a
+    # small program that runs this file with the interpreter that wrote it.
+    if os.name == 'nt':
+        launcher = directory / 'fake-host.cmd'
+        launcher.write_text('@echo off\r\n"' + sys.executable + '" "' + str(program) + '" %*\r\n', encoding='utf-8')
+    else:
+        launcher = directory / 'fake-host'
+        launcher.write_text('#!/bin/sh\nexec ' + sys.executable + ' ' + str(program) + ' "$@"\n', encoding='utf-8')
+        launcher.chmod(0o755)
+    program = launcher
     plan_path = directory / 'host-plan.json'
     plan_path.write_text(json.dumps(plan or {}), encoding='utf-8')
     return {'PROJECT_MEMORY_CODEX_BIN': str(program), 'PROJECT_MEMORY_CLAUDE_BIN': str(program),
