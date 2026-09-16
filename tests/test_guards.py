@@ -526,3 +526,35 @@ class ScopeHookTests(Fixture):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class WindowsPathTests(unittest.TestCase):
+    """Scope patterns are compared as text, so a Windows path must be recognised.
+
+    These checks run on every operating system, because the comparison is pure
+    string handling. Before this, a drive letter path counted as relative, so no
+    pattern matched it and an edit outside the project was never blocked.
+    """
+
+    root = 'C:/work/project'
+
+    def test_a_drive_letter_path_is_absolute_and_keeps_one_spelling(self):
+        self.assertTrue(guards.is_absolute('C:\\work\\project'))
+        self.assertTrue(guards.is_absolute('\\\\server\\share\\file.md'))
+        self.assertFalse(guards.is_absolute('docs\\a.md'))
+        self.assertEqual(guards.normalize('c:\\work\\project\\docs\\.\\a.md'), 'C:/work/project/docs/a.md')
+
+    def test_a_target_inside_the_project_is_reported_relative(self):
+        self.assertEqual(guards.relative_targets(['C:\\work\\project\\src\\app\\main.py'], self.root),
+                         ['src/app/main.py'])
+
+    def test_a_relative_glob_never_reaches_outside_the_project(self):
+        outside = 'C:\\Users\\runneradmin\\.claude\\settings.json'
+        for patterns in (['**'], ['**/*.json'], ['*'], ['.']):
+            with self.subTest(patterns=patterns):
+                self.assertFalse(guards.match_path(outside, patterns, root=self.root))
+        self.assertTrue(guards.match_path('src\\app\\main.py', ['src/app/**'], root=self.root))
+
+    def test_posix_behaviour_is_unchanged(self):
+        self.assertFalse(guards.match_path('/etc/agent-settings.json', ['**'], root='/work/project'))
+        self.assertTrue(guards.match_path('/work/project/src/a.py', ['src/**'], root='/work/project'))

@@ -114,17 +114,37 @@ def validate_considered(value):
 
 # Pattern semantics.
 
+def is_absolute(path):
+    """True for a POSIX path, a Windows drive path such as C:\\work, and a UNC path.
+
+    Scope patterns and hook targets are compared as text, so a Windows path has
+    to be recognised here. Otherwise it counts as relative, is never made
+    relative to the project, and no pattern ever matches it.
+    """
+    text = str(path).replace('\\', '/')
+    if text.startswith('/'):
+        return True
+    return len(text) > 1 and text[1] == ':' and text[0].isalpha()
+
+
 def normalize(path):
-    """Return a POSIX path without empty or current directory segments."""
-    text = str(path)
+    """Return a POSIX path without empty or current directory segments.
+
+    Windows separators become forward slashes and a drive letter is kept in
+    upper case, so that the same file has one spelling wherever it came from.
+    """
+    text = str(path).replace('\\', '/')
     if not text:
         return '.'
-    absolute = text.startswith('/')
+    absolute = is_absolute(text)
+    drive = ''
+    if absolute and not text.startswith('/'):
+        drive, text = text[0].upper() + ':', text[2:]
     text = posixpath.normpath(text)
     parts = [part for part in text.split('/') if part not in ('', '.')]
     joined = '/'.join(parts)
     if absolute:
-        return '/' + joined
+        return drive + '/' + joined
     return joined or '.'
 
 
@@ -164,9 +184,9 @@ def _regex(pattern):
 def _is_path_prefix(prefix, path):
     """True when prefix names path or a directory above it."""
     if prefix in ('', '.'):
-        return not path.startswith('/')
+        return not is_absolute(path)
     if prefix == '/':
-        return path.startswith('/')
+        return is_absolute(path)
     prefix = prefix.rstrip('/')
     return path == prefix or path.startswith(prefix + '/')
 
@@ -203,7 +223,7 @@ def match_path(path, patterns, *, root=None):
     target = _relative(normalize(path), roots)
     for pattern in patterns:
         candidate = _relative(normalize(pattern), roots)
-        if candidate.startswith('/') != target.startswith('/'):
+        if is_absolute(candidate) != is_absolute(target):
             continue
         if _has_glob(candidate):
             if _regex(candidate).fullmatch(target):
@@ -538,17 +558,17 @@ def session_work(memory, session_id):
 def relative_targets(targets, project_root, cwd=None):
     """Targets relative to the project root when inside it, otherwise absolute."""
     roots = _roots(project_root)
-    base = cwd if isinstance(cwd, str) and cwd.startswith('/') else normalize(project_root)
+    base = normalize(cwd) if isinstance(cwd, str) and is_absolute(cwd) else normalize(project_root)
     result = []
     for target in targets:
         if target.startswith(MCP_TARGET_PREFIX):
             result.append(target)
             continue
-        absolute = normalize(target if target.startswith('/') else posixpath.join(base, target))
+        absolute = normalize(target) if is_absolute(target) else normalize(posixpath.join(base, normalize(target)))
         relative = _relative(absolute, roots)
         if relative == absolute:
             relative = _relative(normalize(os.path.realpath(absolute)), roots)
-            if relative.startswith('/'):
+            if is_absolute(relative):
                 relative = absolute
         result.append(relative)
     return list(dict.fromkeys(result))
