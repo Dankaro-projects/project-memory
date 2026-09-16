@@ -31,7 +31,7 @@ class ProjectFixture(unittest.TestCase):
     """A project folder with its own database, without a template."""
 
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory()
+        self.temp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name).resolve()
         self.m = Memory.create(self.root / '.memory' / 'memory.sqlite', 'Fixes', ['Keep the recorded exception.'])
@@ -159,7 +159,7 @@ class KickoffProgressTests(unittest.TestCase):
     """Kickoff must reach the research and phase steps instead of waiting for documents of later phases."""
 
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory()
+        self.temp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.addCleanup(self.temp.cleanup)
         self.project = Path(self.temp.name).resolve() / 'engagement'
         self.result = templates.scaffold(self.project, 'engagement', git=False)
@@ -218,7 +218,7 @@ class KickoffAnswerPhaseTests(unittest.TestCase):
     """An answer is recorded on the phase it belongs to, not always on the first phase."""
 
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory()
+        self.temp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.addCleanup(self.temp.cleanup)
         project = Path(self.temp.name).resolve() / 'automation'
         self.result = templates.scaffold(project, 'automation', git=False)
@@ -283,7 +283,7 @@ class MissingDatabaseTests(unittest.TestCase):
         return code, err.getvalue()
 
     def test_view_doctor_and_serve_refuse_a_missing_project_in_plain_words(self):
-        with tempfile.TemporaryDirectory() as folder:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as folder:
             empty = Path(folder).resolve()
             for command in ('view', 'doctor', 'serve'):
                 with self.subTest(command=command):

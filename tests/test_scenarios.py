@@ -106,7 +106,7 @@ class Scenario(unittest.TestCase):
         return {}
 
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory()
+        self.temp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.addCleanup(self.temp.cleanup)
         self.base = Path(self.temp.name).resolve()
         self.project = self.base / self.template

@@ -21,7 +21,7 @@ from tests.test_api import fake_run, LAUNCHER
 
 class WorkspaceTests(unittest.TestCase):
     def setUp(self):
-        self.temp=tempfile.TemporaryDirectory();self.root=Path(self.temp.name).resolve()
+        self.temp=tempfile.TemporaryDirectory(ignore_cleanup_errors=True);self.root=Path(self.temp.name).resolve()
         self.info=setup(self.root,requirements=['Keep strict UTF-8 and the tagged Latin-1 exception.'])
         self.m=Memory(self.info['database'])
         self.payload={'state':'ready','next_action':'Inspect the parser.','scope':'Keep strict UTF-8 and the tagged Latin-1 exception.',

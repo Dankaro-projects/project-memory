@@ -13,7 +13,7 @@ from memory_module.mcp import dispatch, serve, tool_result, write
 
 class CodexTests(unittest.TestCase):
     def setUp(self):
-        self.temp=tempfile.TemporaryDirectory();self.root=Path(self.temp.name)
+        self.temp=tempfile.TemporaryDirectory(ignore_cleanup_errors=True);self.root=Path(self.temp.name)
         self.m=Memory.create(self.root/'memory.sqlite','Tests',['Preserve exceptions.'])
         codex_host.initialize(self.m)
     def tearDown(self):

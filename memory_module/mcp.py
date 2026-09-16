@@ -14,7 +14,11 @@ import sqlite3
 import subprocess
 import sys
 from types import SimpleNamespace
-from .core import Memory, MemoryError, InvalidRecord, BudgetTooSmall, USER_ACTOR, dumps, _digest, _text
+from .core import Memory, MemoryError, InvalidRecord, BudgetTooSmall, RESERVED_ACTORS, USER_ACTOR, dumps, _digest, _text
+
+# The same reserved names with separators normalised, so that user, workspace_user and
+# Workspace-User are all recognised as names that stand for the person.
+RESERVED_NAMES = {name.replace('_', ' ').replace('-', ' ') for name in RESERVED_ACTORS}
 from .shared import bounded, largest, prior_result, run_summary, shrink, size, store_result, tool_result, trim
 from .hooks import Hooks
 from . import codex_host
@@ -678,8 +682,12 @@ def dispatch(memory, name, arguments):
         raise InvalidRecord('max_chars must be 500–20000.')
     if name == 'memory_write':
         validate_write_fields(memory, args)
-        if args['data'].get('actor') == USER_ACTOR:
-            raise InvalidRecord('MCP writes must identify the assistant. The actor workspace-user is reserved for the control panel.')
+        actor = args['data'].get('actor')
+        if isinstance(actor, str) and actor.strip().lower().replace('_', ' ').replace('-', ' ') in RESERVED_NAMES:
+            raise InvalidRecord('MCP writes must identify the assistant that records them. Actor names that stand for the '
+                                'person, such as workspace-user, user and human, are reserved, so that an answer or an '
+                                'approval keeps its true author. Use your own actor name and report what the user said in '
+                                'the text of the record.')
         return write(memory, **args, start_checks=True)
     if name == 'memory_context':
         return memory.context(**args, budget=budget, count_characters=lambda text: size(json.loads(text)))

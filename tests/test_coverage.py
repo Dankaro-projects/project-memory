@@ -18,7 +18,7 @@ from memory_module.health import inspect as health
 
 class CoverageTests(unittest.TestCase):
     def setUp(self):
-        self.temp=tempfile.TemporaryDirectory();self.root=Path(self.temp.name)
+        self.temp=tempfile.TemporaryDirectory(ignore_cleanup_errors=True);self.root=Path(self.temp.name)
         self.m=Memory.create(self.root/'memory.sqlite','Coverage',['Keep the tagged legacy exception.'])
         codex_host.initialize(self.m);self.n=0
         self.source=self.m.source('request','The user requests both paths.','Preserve both encodings.','Strict UTF-8 rejects invalid bytes. Tagged Latin-1 succeeds.','user',subject='code')

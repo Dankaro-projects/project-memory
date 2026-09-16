@@ -58,7 +58,7 @@ def fixture(root):
 
 class ViewerUsabilityTests(unittest.TestCase):
     def test_overview_shows_latest_choice_and_keeps_prior_history(self):
-        with tempfile.TemporaryDirectory() as folder:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as folder:
             info=fixture(Path(folder))
             with Memory(info['database']) as m:
                 result=latest_decisions(m)
@@ -69,7 +69,7 @@ class ViewerUsabilityTests(unittest.TestCase):
                 self.assertEqual(row(m,info['old'])['outcome']['id'],info['failed'])
 
     def test_projection_keeps_the_failed_and_revised_outcomes_separate(self):
-        with tempfile.TemporaryDirectory() as folder:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as folder:
             info=fixture(Path(folder))
             with Memory(info['database']) as m:
                 old=row(m,info['old']);new=row(m,info['revised'])
@@ -81,7 +81,7 @@ class ViewerUsabilityTests(unittest.TestCase):
                 self.assertNotIn('body',row(m,info['source'])['detail'])
 
     def test_overview_counts_all_work_without_unbounded_group_payloads(self):
-        with tempfile.TemporaryDirectory() as folder:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as folder:
             info=fixture(Path(folder))
             with Memory(info['database']) as m:
                 for i in range(12):
@@ -97,7 +97,7 @@ class ViewerUsabilityTests(unittest.TestCase):
 
 
     def test_snapshot_embeds_the_latest_choice_and_both_outcomes(self):
-        with tempfile.TemporaryDirectory() as folder:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as folder:
             info=fixture(Path(folder))
             text=(Path(folder)/'snapshot.html').read_text().split('<script id="memory-data" type="application/json">')[1].split('</script>')[0]
             responses=json.loads(text)['responses']

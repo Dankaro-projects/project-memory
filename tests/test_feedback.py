@@ -24,7 +24,7 @@ from memory_module.mcp import dispatch, tool_result
 
 class FeedbackTests(unittest.TestCase):
     def setUp(self):
-        self.temp=tempfile.TemporaryDirectory();self.root=Path(self.temp.name).resolve()
+        self.temp=tempfile.TemporaryDirectory(ignore_cleanup_errors=True);self.root=Path(self.temp.name).resolve()
         self.info=setup(self.root);self.m=Memory(self.info['database'])
     def tearDown(self):
         self.m.close();self.temp.cleanup()
@@ -150,7 +150,7 @@ class LiveProcessTests(unittest.TestCase):
             process=popen(*args,**kwargs);self.processes.append(process);return process
         launcher=patch('memory_module.live.subprocess.Popen',side_effect=launch)
         launcher.start();self.addCleanup(launcher.stop)
-        self.temp=tempfile.TemporaryDirectory();self.root=Path(self.temp.name).resolve()
+        self.temp=tempfile.TemporaryDirectory(ignore_cleanup_errors=True);self.root=Path(self.temp.name).resolve()
         self.info=setup(self.root);self.m=Memory(self.info['database']);self.server=start(self.m.path)
     def tearDown(self):
         for process in self.processes:

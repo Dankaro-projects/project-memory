@@ -25,7 +25,7 @@ class Fixture(unittest.TestCase):
     """A project folder whose database lives in .memory, so the project root is the folder."""
 
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory()
+        self.temp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.root = Path(self.temp.name).resolve()
         self.m = Memory.create(self.root / '.memory' / 'memory.sqlite', 'Tables', ['Keep every recorded exception.'])
         codex_host.initialize(self.m)
@@ -54,7 +54,7 @@ class Fixture(unittest.TestCase):
 
 class ToolTableTests(unittest.TestCase):
     def test_tools_list_is_generated_from_the_tables_and_smaller_than_before(self):
-        with tempfile.TemporaryDirectory() as folder:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as folder:
             memory = Memory.create(Path(folder) / 'memory.sqlite', 'Size', ['Keep exceptions.'])
             try:
                 messages = [{'jsonrpc': '2.0', 'id': 1, 'method': 'initialize', 'params': {'protocolVersion': '2025-11-25'}},
@@ -340,7 +340,7 @@ class ViewTests(Fixture):
 
 class KickoffOperationTests(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory()
+        self.temp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         project = Path(self.temp.name).resolve() / 'automation'
         result = templates.scaffold(project, 'automation', git=False)
         self.m = Memory(result['database'])
@@ -512,3 +512,35 @@ class WriteBoundaryTests(Fixture):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class ReservedActorTests(unittest.TestCase):
+    """An assistant records what the user said under its own name, never as the user."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
+        root = Path(self.temp.name) / 'project'
+        from memory_module.templates import scaffold
+        scaffold(root, 'product', clients=(), git=False)
+        self.memory = Memory(root / '.memory/project.sqlite')
+
+    def tearDown(self):
+        self.memory.close()
+        self.temp.cleanup()
+
+    def answer(self, actor, request_key):
+        return dispatch(self.memory, 'memory_write', {
+            'operation': 'answer_kickoff', 'request_key': request_key,
+            'data': {'question_ids': ['goals'], 'text': 'The project tracks supplier invoices.', 'actor': actor}})
+
+    def test_actor_names_that_stand_for_the_person_are_refused(self):
+        for actor in ('user', 'workspace-user', 'Workspace_User', ' human ', 'owner', 'client'):
+            with self.subTest(actor=actor), self.assertRaises(InvalidRecord) as refused:
+                self.answer(actor, 'reserved-' + actor.strip().lower())
+            self.assertIn('reserved', str(refused.exception))
+        self.assertEqual(self.memory.db.execute("SELECT count(*) FROM events WHERE kind='note'").fetchone()[0], 0)
+
+    def test_an_assistant_actor_records_the_answer(self):
+        self.assertTrue(self.answer('claude-code', 'accepted-actor'))
+        row = self.memory.db.execute("SELECT actor FROM events WHERE kind='note'").fetchone()
+        self.assertEqual(row[0], 'claude-code')

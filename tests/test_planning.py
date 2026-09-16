@@ -11,7 +11,7 @@ from memory_module.planning import board, card, latest, next_work
 
 class PlanningTests(unittest.TestCase):
     def setUp(self):
-        self.tmp=tempfile.TemporaryDirectory();self.root=Path(self.tmp.name)
+        self.tmp=tempfile.TemporaryDirectory(ignore_cleanup_errors=True);self.root=Path(self.tmp.name)
         self.m=Memory.create(self.root/'memory.sqlite','Planning',['Keep strict UTF-8 except on the tagged legacy endpoint.'])
         codex_host.initialize(self.m)
         self.source=self.m.source('user','Scope','User instruction','Preserve strict UTF-8 and the tagged legacy Latin-1 endpoint.','user')

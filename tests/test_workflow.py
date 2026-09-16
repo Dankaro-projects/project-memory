@@ -13,7 +13,7 @@ from memory_module.core import SCHEMA
 
 class WorkflowTests(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory()
+        self.temp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.root = Path(self.temp.name)
         self.now = '2026-09-12T12:00:00+00:00'
         self.m = Memory.create(self.root/'memory.sqlite', 'Checks', ['Professional plain English.'], clock=lambda:self.now)

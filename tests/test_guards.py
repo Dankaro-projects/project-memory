@@ -114,7 +114,7 @@ class Fixture(unittest.TestCase):
     """Shared history helpers. This class defines no tests of its own."""
 
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory()
+        self.temp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.root = Path(self.temp.name).resolve()
         self.m = Memory.create(self.root / '.memory' / 'memory.sqlite', 'Guards', ['Preserve recorded scope.'])
         codex_host.initialize(self.m)

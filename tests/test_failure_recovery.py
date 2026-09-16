@@ -24,7 +24,7 @@ from memory_module.workspace import action
 
 class FailureRecoveryTests(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory()
+        self.temp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.root = Path(self.temp.name).resolve()
         self.info = setup(self.root,requirements=['Preserve the documented exception.'])
         self.m = Memory(self.info['database'])

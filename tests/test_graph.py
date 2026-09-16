@@ -17,7 +17,7 @@ def plan_payload(**changes):
 
 class GraphFixture(unittest.TestCase):
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
+        self.tmp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.root = Path(self.tmp.name)
         self.path = self.root / 'memory.sqlite'
         self.m = Memory.create(self.path, 'Graph', ['Keep the parser strict.'])

@@ -23,7 +23,7 @@ class Clock:
 
 class CommandTests(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory()
+        self.temp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.root = Path(self.temp.name).resolve()
         self.codex_home = self.root / 'codex-home'
         self.codex_home.mkdir()
@@ -117,7 +117,7 @@ class CommandTests(unittest.TestCase):
 
 class RunLogTests(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory()
+        self.temp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.folder = Path(self.temp.name)
         self.output = self.folder / 'output.jsonl'
 
@@ -252,7 +252,7 @@ class RunLogTests(unittest.TestCase):
 
 class AvailabilityTests(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory()
+        self.temp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.path = Path(self.temp.name) / '.memory/memory.db'
         self.clock = Clock()
         self.memory = Memory.create(self.path, 'Fixture', ['Keep history.'], clock=self.clock)

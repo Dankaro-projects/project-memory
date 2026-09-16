@@ -19,7 +19,7 @@ CLAUDE_EVENTS = codex_host.HOST_EVENTS['claude'] | {'PostToolUseFailure'}
 
 class InstallClientsTests(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory()
+        self.temp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.project = Path(self.temp.name)
         self.launch = [sys.executable, '-m', 'memory_module.cli']
 

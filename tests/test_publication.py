@@ -38,7 +38,7 @@ class PublicationTests(unittest.TestCase):
             check_member('project_memory_mcp-1.dist-info/results/session.json', b'{}', 'wheel')
 
     def test_repo_check_catches_staged_ignored_files_and_new_reports(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as directory:
             root = Path(directory)
             subprocess.run(['git', 'init', '-q', str(root)], check=True)
             (root / 'README.md').write_text('A synthetic project.\n')
@@ -59,7 +59,7 @@ class PublicationTests(unittest.TestCase):
 
     def test_actual_archives_reject_a_private_report(self):
         script = Path(__file__).resolve().parents[1] / 'scripts/check_artifacts.py'
-        with tempfile.TemporaryDirectory() as directory:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as directory:
             root = Path(directory)
             members = {'memory_module/viewer.html': b'<html></html>'}
             from memory_module.viewer import UI_SCRIPTS

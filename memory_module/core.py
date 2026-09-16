@@ -17,6 +17,9 @@ SCHEMA_VERSION = 2
 SUBJECTS = {"general", "code", "writing", "research"}
 # The actor of every change saved in the local control panel. MCP callers cannot use it.
 USER_ACTOR = "workspace-user"
+# Actor names that stand for the person. An assistant records what the user said in the
+# text of a record, under its own actor name, so every record keeps its true author.
+RESERVED_ACTORS = {USER_ACTOR, "user", "human", "owner", "customer", "client", "me"}
 KINDS = {"decision", "action", "outcome", "research", "lesson", "note", "review", "correction", "action_result", "follow_up", "episode_status", "lesson_review", "work_plan", "sprint"}
 ASSESSMENTS = {"pending", "good", "bad", "unknown"}
 

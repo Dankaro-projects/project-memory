@@ -10,7 +10,7 @@ from memory_module.codex_host import initialize
 
 class ImprovementTests(unittest.TestCase):
     def setUp(self):
-        self.temp=tempfile.TemporaryDirectory();self.m=Memory.create(Path(self.temp.name)/'memory.sqlite','Quality',['Do useful work and preserve exceptions.'])
+        self.temp=tempfile.TemporaryDirectory(ignore_cleanup_errors=True);self.m=Memory.create(Path(self.temp.name)/'memory.sqlite','Quality',['Do useful work and preserve exceptions.'])
         self.ep=self.m.start('Decoder','Decode documented bytes','repair','Both fixtures pass',subject='code')
         self.s=self.m.source('contract','Contract','UTF-8','UTF-8','document',subject='code')['id']
         self.refs=[{'source_id':self.s,'reason':'Agreed contract.'}]

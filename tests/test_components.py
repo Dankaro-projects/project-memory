@@ -14,7 +14,7 @@ def by_id(result):
 
 class ComponentFixture(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory()
+        self.temp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.root = Path(self.temp.name).resolve()
         self.path = self.root / '.memory' / 'memory.sqlite'
         self.m = Memory.create(self.path, 'Engagement', ['Keep client evidence traceable.'])

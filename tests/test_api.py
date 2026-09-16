@@ -122,7 +122,7 @@ def build(root):
 
 class ApiTests(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory()
+        self.temp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.root = Path(self.temp.name).resolve()
         self.m, self.ids = build(self.root)
 
@@ -288,7 +288,7 @@ class ApiTests(unittest.TestCase):
 
 class ReadOnlyTests(unittest.TestCase):
     def test_every_endpoint_reads_a_database_without_optional_tables(self):
-        with tempfile.TemporaryDirectory() as folder:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as folder:
             root = Path(folder).resolve()
             path = root / '.memory' / 'project.sqlite'
             path.parent.mkdir()
@@ -312,7 +312,7 @@ class ReadOnlyTests(unittest.TestCase):
 
 class LiveApiTests(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory()
+        self.temp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.root = Path(self.temp.name).resolve()
         self.m, self.ids = build(self.root)
         ready = queue.Queue()
@@ -421,7 +421,7 @@ class LiveApiTests(unittest.TestCase):
 
 class ExportTests(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory()
+        self.temp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.root = Path(self.temp.name).resolve()
         self.m, self.ids = build(self.root)
 

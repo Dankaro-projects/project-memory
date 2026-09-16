@@ -20,7 +20,7 @@ def office_file(path, parts):
 
 class DocumentCaptureTests(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory()
+        self.temp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.root = Path(self.temp.name).resolve()
         self.m = Memory.create(self.root / '.memory' / 'memory.sqlite', 'Engagement', ['Keep client evidence traceable.'])
 
@@ -63,7 +63,7 @@ class DocumentCaptureTests(unittest.TestCase):
 
 class ReviewSubjectTests(unittest.TestCase):
     def test_a_review_of_a_deliverable_is_recorded_in_a_writing_episode(self):
-        with tempfile.TemporaryDirectory() as folder:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as folder:
             with Memory.create(Path(folder) / 'memory.sqlite', 'Engagement', ['Keep client evidence traceable.']) as memory:
                 episode = memory.start('Pricing report', 'Draft the report.', 'writing', 'The client accepts it.', subject='writing')
                 source = memory.source('client-feedback', 'Client feedback', 'The client commented on draft 2.', 'Section 3 needs a source.',
@@ -79,7 +79,7 @@ class ReviewSubjectTests(unittest.TestCase):
 
 class McpWriteScopeTests(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory()
+        self.temp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.root = Path(self.temp.name).resolve()
         self.m = Memory.create(self.root / '.memory' / 'memory.sqlite', 'Automation', ['Keep client data safe.'])
         codex_host.initialize(self.m)
@@ -135,7 +135,7 @@ class TemplateGuidanceTests(unittest.TestCase):
         self.assertIn('token', text)
 
     def test_scaffold_commits_only_the_starter_documents_in_a_new_repository(self):
-        with tempfile.TemporaryDirectory() as folder:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as folder:
             project = Path(folder) / 'engagement'
             result = templates.scaffold(project, 'engagement')
             self.assertTrue(result['git']['initialized'])

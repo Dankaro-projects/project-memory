@@ -94,7 +94,7 @@ def work_report(**changes):
 
 class DelegationTests(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory()
+        self.temp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.base = Path(self.temp.name).resolve()
         self.project = self.base / 'project'
         self.project.mkdir()
@@ -583,7 +583,7 @@ class DelegationTests(unittest.TestCase):
 
 class RunTableTests(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory()
+        self.temp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.path = Path(self.temp.name) / 'legacy.sqlite'
         with Memory.create(self.path, 'legacy', ['Keep the fixture.']) as memory:
             episode = memory.start('Legacy work', 'Keep it.', 'action', 'It is kept.', 'code')
@@ -610,7 +610,7 @@ class RunTableTests(unittest.TestCase):
 
 class UninstallHostTests(unittest.TestCase):
     def test_uninstall_removes_the_client_from_agent_hosts(self):
-        with tempfile.TemporaryDirectory() as folder:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as folder:
             project = Path(folder)
             launch = [sys.executable, '-m', 'memory_module.cli']
             info = install.setup(project, client='codex', _launcher=launch)

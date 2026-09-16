@@ -22,7 +22,7 @@ from memory_module.workspace import action
 
 class ReviewDiagnosticsTests(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory()
+        self.temp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.root = Path(self.temp.name).resolve()
         info = setup(self.root,requirements=['Keep the tagged legacy exception.','The original research used PDF attachments.'])
         self.m = Memory(info['database'])

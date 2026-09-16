@@ -21,7 +21,7 @@ def counts(path):
 
 class ScaffoldTests(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory()
+        self.temp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.base = Path(self.temp.name).resolve()
 
     def tearDown(self):
@@ -106,7 +106,7 @@ class ScaffoldTests(unittest.TestCase):
 
 class KickoffTests(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory()
+        self.temp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.project = Path(self.temp.name).resolve() / 'engagement'
         self.result = templates.scaffold(self.project, 'engagement', git=False)
         self.m = Memory(self.result['database'])
@@ -184,7 +184,7 @@ class KickoffTests(unittest.TestCase):
     def test_kickoff_reads_on_a_read_only_connection_and_without_a_template(self):
         with Memory(self.result['database'], read_only=True) as reader:
             self.assertEqual(templates.kickoff(reader)['next_step']['action'], 'answer_kickoff')
-        with tempfile.TemporaryDirectory() as folder:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as folder:
             with Memory.create(Path(folder) / 'plain.sqlite', 'Plain', ['Keep evidence.']) as plain:
                 state = templates.kickoff(plain)
                 self.assertIsNone(state['template'])
@@ -205,7 +205,7 @@ class KickoffTests(unittest.TestCase):
 
 class HierarchyTests(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory()
+        self.temp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.m = Memory.create(Path(self.temp.name) / 'memory.sqlite', 'Hierarchy', ['Deliver the stories.'])
         codex_host.initialize(self.m)
         source = self.m.source('user', 'Scope', 'The user sets the scope.', 'Deliver the checkout epic.', 'user')
@@ -301,7 +301,7 @@ class PlanPathScopeTests(unittest.TestCase):
     """A change to plan paths alone is not a change of scope, so widening the allowed paths lets work continue."""
 
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory()
+        self.temp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.root = Path(self.temp.name).resolve()
         self.m = Memory.create(self.root / '.memory' / 'memory.sqlite', 'Scope', ['Keep the parser strict.'])
         codex_host.initialize(self.m)
@@ -366,7 +366,7 @@ class PlanPathScopeTests(unittest.TestCase):
 
 class ScopeBlockRedeliveryTests(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory()
+        self.temp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.root = Path(self.temp.name).resolve()
         self.m = Memory.create(self.root / '.memory' / 'memory.sqlite', 'Redelivery', ['Keep scope.'])
         codex_host.initialize(self.m)

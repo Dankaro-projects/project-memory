@@ -14,7 +14,7 @@ from memory_module.mcp import dispatch, write
 
 class ProductTests(unittest.TestCase):
     def setUp(self):
-        self.temp=tempfile.TemporaryDirectory();self.project=Path(self.temp.name)
+        self.temp=tempfile.TemporaryDirectory(ignore_cleanup_errors=True);self.project=Path(self.temp.name)
         self.launch=[sys.executable,'-m','memory_module.cli']
     def tearDown(self):self.temp.cleanup()
     def setup(self,**kwargs):return install.setup(self.project,_launcher=self.launch,**kwargs)

@@ -13,7 +13,7 @@ from memory_module.mcp import write
 
 class ClaudeCaptureTests(unittest.TestCase):
     def setUp(self):
-        self.temp=tempfile.TemporaryDirectory();self.root=Path(self.temp.name)
+        self.temp=tempfile.TemporaryDirectory(ignore_cleanup_errors=True);self.root=Path(self.temp.name)
         self.m=Memory.create(self.root/'memory.sqlite','Tests',['Preserve exceptions.'])
         codex_host.initialize(self.m)
     def tearDown(self):
@@ -101,7 +101,7 @@ class ClaudeCaptureTests(unittest.TestCase):
 
 class ClaudeInstallTests(unittest.TestCase):
     def setUp(self):
-        self.temp=tempfile.TemporaryDirectory();self.project=Path(self.temp.name)
+        self.temp=tempfile.TemporaryDirectory(ignore_cleanup_errors=True);self.project=Path(self.temp.name)
         self.launch=[sys.executable,'-m','memory_module.cli']
     def tearDown(self):self.temp.cleanup()
     def setup(self,**kwargs):return install.setup(self.project,_launcher=self.launch,**kwargs)

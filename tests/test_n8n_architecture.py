@@ -99,7 +99,7 @@ def edge_map(result):
 
 class N8nFixture(unittest.TestCase):
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory()
+        self.temp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.root = Path(self.temp.name).resolve()
         write(self.root, 'workflows/lead-intake.json', LEAD_INTAKE)
         write(self.root, 'workflows/enrich.json', ENRICH)
