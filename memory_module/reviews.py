@@ -535,7 +535,7 @@ def note_host(memory, host, metrics):
     try:
         if found:
             hosts.mark_unavailable(memory, host, found['reason'], found.get('until'))
-        elif metrics.get('termination_reason')=='completed' and not metrics.get('host_error_events'):
+        elif metrics.get('termination_reason')=='completed' and not hosts.unrecovered_errors(metrics):
             hosts.mark_available(memory, host)
     except (InvalidRecord, Conflict) as exc:
         with memory._write():

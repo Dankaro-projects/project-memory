@@ -206,7 +206,7 @@ class RunLog:
         self.completed = False
         self.metrics = {'phase':'starting', 'last_event':None, 'last_activity_at':None,
                         'completed_inspections':0, 'failed_inspections':0, 'active_inspections':0,
-                        'host_error_events':0, 'reconnect_events':0, 'unparsed_events':0,
+                        'host_error_events':0, 'unrecovered_error_events':0, 'reconnect_events':0, 'unparsed_events':0,
                         'output_bytes':0, 'stderr_bytes':0, 'provider_usage':None, 'model':None}
 
     def event(self, value):
@@ -218,6 +218,7 @@ class RunLog:
         self.metrics['last_event'] = kind[:100]
         if kind in {'error','turn.failed'} or value.get('is_error'):
             self.metrics['host_error_events'] += 1
+            self.metrics['unrecovered_error_events'] += 1
             self.metrics['phase'] = 'host_error'
             self.completed = False
         if kind in {'error','turn.failed'} or (kind=='result' and value.get('is_error')):
@@ -262,6 +263,8 @@ class RunLog:
             self.metrics['phase'] = 'report_received'
             # Retry notices before a successful completion were transient; the run itself succeeded.
             self.completed = True
+            # A later successful completion recovers every earlier error, such as a stream that reconnected.
+            self.metrics['unrecovered_error_events'] = 0
             self.metrics.pop('host_unavailable', None)
 
     def detect(self, text):
@@ -428,6 +431,14 @@ def unavailable_error(host, found):
     return text + ' Project Memory records the host as unavailable.'
 
 
+def unrecovered_errors(metrics):
+    """Host errors that no later successful completion followed.
+
+    A run log written before this count existed reports every host error, as it did then.
+    """
+    return metrics.get('unrecovered_error_events', metrics.get('host_error_events', 0))
+
+
 def run_state(host, metrics, report, *, missing_report, exit_message):
     """The state, error text and termination reason after a host process, or None when the caller decides.
 
@@ -440,7 +451,7 @@ def run_state(host, metrics, report, *, missing_report, exit_message):
     if reason in {'completed', 'host_exit'} and found:
         return 'host_unavailable', unavailable_error(host, found), 'host_unavailable'
     if reason == 'completed':
-        if metrics.get('host_error_events'):
+        if unrecovered_errors(metrics):
             return 'failed', 'The host reported an error. Inspect its private event log.', 'host_error'
         if not report:
             return 'failed', metrics.get('report_error', missing_report), 'invalid_report'

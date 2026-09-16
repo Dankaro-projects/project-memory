@@ -183,6 +183,33 @@ class RunLogTests(unittest.TestCase):
         self.assertNotIn('host_unavailable', metrics)
         self.assertEqual(metrics['host_error_events'], 1)
 
+    def test_errors_recovered_by_a_later_completion_do_not_fail_the_run(self):
+        # Observed on 16 September 2026: a Codex stream reconnected five times after certificate errors,
+        # then finished its report, and the run was recorded as failed.
+        events = [{'type': 'thread.started'}]
+        events += [{'type': 'error', 'message': f'Reconnecting... {n}/5 (stream disconnected before completion: '
+                                                'invalid peer certificate: Other(OtherError(CaUsedAsEndEntity)))'}
+                   for n in range(1, 6)]
+        events += [{'type': 'turn.completed', 'usage': {'input_tokens': 1}}]
+        self.output.write_text('\n'.join(json.dumps(e) for e in events) + '\n')
+        metrics = hosts.RunLog(self.folder).read(final=True)
+        self.assertEqual((metrics['host_error_events'], metrics['unrecovered_error_events']), (5, 0))
+        metrics['termination_reason'] = 'completed'
+        state = hosts.run_state('codex', metrics, {'result': 'complete'}, missing_report='missing', exit_message='exit')
+        self.assertEqual(state, ('completed', '', None))
+
+    def test_an_error_after_the_last_completion_still_fails_the_run(self):
+        events = [{'type': 'turn.completed'}, {'type': 'error', 'message': 'The stream ended unexpectedly.'}]
+        self.output.write_text('\n'.join(json.dumps(e) for e in events) + '\n')
+        metrics = hosts.RunLog(self.folder).read(final=True)
+        self.assertEqual(metrics['unrecovered_error_events'], 1)
+        metrics['termination_reason'] = 'completed'
+        self.assertEqual(hosts.run_state('codex', metrics, {'result': 'complete'}, missing_report='missing',
+                                         exit_message='exit')[0], 'failed')
+
+    def test_metrics_recorded_before_the_recovery_count_keep_their_meaning(self):
+        self.assertEqual(hosts.unrecovered_errors({'host_error_events': 2}), 2)
+
     def test_retry_notice_in_standard_error_of_successful_run_is_ignored(self):
         self.output.write_text(json.dumps({'type': 'turn.completed'}) + '\n')
         (self.folder / 'stderr.log').write_text('WARN retrying request after rate limit (attempt 1)\n')
