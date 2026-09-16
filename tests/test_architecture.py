@@ -292,7 +292,9 @@ class AttachmentTests(ArchitectureTestCase):
 
     def test_plan_paths_attach_work_and_work_states_set_status(self):
         first = self.plan('api', ['app/api/**'])
-        second = self.plan('models', ['/' + (self.root / 'app/models').as_posix().lstrip('/')], state='in_progress')
+        # The absolute form of a path inside the project. as_posix keeps the drive letter on
+        # Windows, so no slash is added in front of it.
+        second = self.plan('models', [(self.root / 'app/models').as_posix()], state='in_progress')
         self.plan('outside', ['/elsewhere/project/**'])
         result = model(self.m)
         nodes = by_id(result)
