@@ -373,7 +373,9 @@ def after_work(memory, run_id):
     """Record availability and lessons, then reroute an unavailable host or request the cross review.
 
     A work review that cannot start, for example because two runs are already active, is kept as a receipt and
-    started later by start_missing_reviews or by a merge request. A run that changed nothing is cleaned up.
+    started later by start_missing_reviews or by a merge request. A run that changed nothing is cleaned up,
+    whether it completed or stopped, so a host that refuses to start leaves no worktree behind. A scope
+    violation keeps its worktree and branch, because they carry the evidence of what the worker changed.
     """
     run = reviews.read(memory, run_id)
     if run['state'] in ACTIVE:
@@ -391,6 +393,15 @@ def after_work(memory, run_id):
         elif run['state'] == 'completed':
             _receipt(memory, run, 'DelegationCleanedUp',
                      {'run_id': run_id, 'reason': 'The delegated run changed no files, so its worktree and branch were removed.',
+                      'cleanup': cleanup(project, project / run['workspace'], run['branch'])},
+                     run_id + ':unchanged-cleanup')
+            return None
+        elif run['workspace'] and not metrics.get('changed_files') and run['state'] != 'scope_violation':
+            # A run that stopped before it changed anything leaves nothing to inspect, so its
+            # worktree and branch are removed. A scope violation keeps both as evidence.
+            _receipt(memory, run, 'DelegationCleanedUp',
+                     {'run_id': run_id, 'state': run['state'],
+                      'reason': 'The run ended as ' + run['state'] + ' without changing a file, so its worktree and branch were removed.',
                       'cleanup': cleanup(project, project / run['workspace'], run['branch'])},
                      run_id + ':unchanged-cleanup')
             return None

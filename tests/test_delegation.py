@@ -256,6 +256,20 @@ class DelegationTests(unittest.TestCase):
             delegation.request_work(self.m, self.episode, request_key='bad-host', host='gemini')
         self.assertEqual(self.m.db.execute("SELECT count(*) FROM review_runs WHERE role='work'").fetchone()[0], 1)
 
+    def test_a_failed_run_without_changes_removes_its_worktree(self):
+        """A host that refuses to start leaves nothing to inspect, so nothing is left behind.
+
+        A real Codex run failed this way: an invalid configuration override stopped it before
+        any work began, and its worktree and branch stayed until someone removed them by hand.
+        """
+        self.workers['codex'] = {'write': {}}
+        run = self.delegate()
+        self.assertEqual(run['state'], 'failed')
+        self.assertEqual(run['metrics']['changed_files'], [])
+        self.assertFalse((self.project / run['workspace']).exists())
+        self.assertEqual(self.git('branch', '--list', run['branch']), '')
+        self.assertEqual(self.receipts('DelegationCleanedUp'), 1)
+
     def test_host_unavailability_reroutes_once_to_the_other_host(self):
         self.workers['codex'] = {'write': {'src/app.py': 'VALUE = 5\n'},
                                  'unavailable': 'You have hit your usage limit. Try again in 20 minutes.'}

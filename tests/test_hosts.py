@@ -96,10 +96,14 @@ class CommandTests(unittest.TestCase):
                     '-C', str(self.worktree), '-c', 'approval_policy="never"', '-c', 'features.hooks=false',
                     '-c', 'features.plugins=false', '-c', 'features.apps=false', '-c', 'features.multi_agent=false',
                     '-c', 'memories.use_memories=false', '-c', 'memories.generate_memories=false', '-c', 'web_search="disabled"',
-                    '-c', 'mcp_servers.global_one.enabled=false', '-c', 'mcp_servers.local-two.enabled=false',
+                    '-c', 'mcp_servers.global_one.enabled=false',
                     '--output-schema', str(self.folder / 'schema.json'), '--output-last-message', str(self.folder / 'answer.json'),
                     '--json', '-']
         self.assertEqual(args, expected)
+        # The worktree lies under .memory, where Codex does not read the project's own
+        # configuration. Naming that server would create an entry with no command and no
+        # address, and Codex refuses to start with an invalid transport.
+        self.assertNotIn('mcp_servers.local-two.enabled=false', args)
         self.assertNotIn('read-only', args)
         self.assertNotIn('-m', args)
 
@@ -338,3 +342,41 @@ class AvailabilityTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class CodexServerOverrideTests(unittest.TestCase):
+    """Only a server that the loaded configuration defines can be disabled.
+
+    A delegated worker runs inside a worktree under .memory, where Codex does not
+    read the project's own .codex/config.toml. Naming that server anyway created
+    an entry with no command and no address, and Codex refused to start with
+    "invalid transport" before any work began.
+    """
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
+        self.root = Path(self.temp.name)
+        home = self.root / 'codex-home'
+        home.mkdir()
+        (home / 'config.toml').write_text('model = "test-model"\n\n[mcp_servers.shared]\ncommand = "shared"\n')
+        self.project = self.root / 'project'
+        (self.project / '.codex').mkdir(parents=True)
+        (self.project / '.codex/config.toml').write_text('[mcp_servers.project_memory]\ncommand = "memory"\n')
+        self.worktree = self.project / '.memory/worktrees/run'
+        self.worktree.mkdir(parents=True)
+        self.environment = patch.dict(os.environ, {'CODEX_HOME': str(home)})
+        self.environment.start()
+        self.addCleanup(self.environment.stop)
+
+    def tearDown(self):
+        shutil.rmtree(self.temp.name, ignore_errors=True)
+
+    def test_a_worktree_run_does_not_name_the_project_server(self):
+        command = hosts.work_command('codex', str(self.worktree), self.root, 'prompt')
+        self.assertIn('mcp_servers.shared.enabled=false', command)
+        self.assertNotIn('mcp_servers.project_memory.enabled=false', command)
+
+    def test_a_run_in_the_project_disables_its_own_server_once(self):
+        command = hosts.review_command('codex', str(self.project), self.root, 'prompt')
+        self.assertEqual(command.count('mcp_servers.project_memory.enabled=false'), 1)
+        self.assertEqual(command.count('mcp_servers.shared.enabled=false'), 1)

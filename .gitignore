@@ -31,3 +31,5 @@ htmlcov/
 *.log
 *.har
 .claude/settings.local.json
+# Claude Code project server entry, written by setup with machine specific launcher paths.
+.mcp.json

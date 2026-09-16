@@ -63,12 +63,21 @@ def _codex_config_overrides(project):
     if isinstance(config.get('model'), str):
         model = ['-m', config['model']]
     servers = []
-    for path in [config_path, *(p / '.codex/config.toml' for p in reversed([Path(project), *Path(project).parents]))]:
-        if path.exists():
-            for name in tomllib.loads(path.read_text()).get('mcp_servers', {}):
-                if not re.fullmatch(r'[A-Za-z0-9_-]+', name):
-                    raise InvalidRecord('The review host cannot safely disable the MCP server named ' + name + '.')
-                servers += ['-c', 'mcp_servers.' + name + '.enabled=false']
+    # Only a server that the loaded configuration defines can be disabled. Codex reads the user
+    # configuration and the working directory's own .codex/config.toml, so naming a server from a
+    # parent directory would create an entry that carries no command and no address, which Codex
+    # rejects as an invalid transport before the run starts.
+    seen = set()
+    for path in [config_path, Path(project) / '.codex/config.toml']:
+        if not path.exists():
+            continue
+        for name in tomllib.loads(path.read_text()).get('mcp_servers', {}):
+            if not re.fullmatch(r'[A-Za-z0-9_-]+', name):
+                raise InvalidRecord('The review host cannot safely disable the MCP server named ' + name + '.')
+            if name in seen:
+                continue
+            seen.add(name)
+            servers += ['-c', 'mcp_servers.' + name + '.enabled=false']
     return model, servers
 
 
