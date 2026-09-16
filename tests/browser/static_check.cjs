@@ -38,9 +38,9 @@ destination = sys.argv[1]
 template = viewer.html_template()
 data = {'live': False, 'project': 'Static check', 'exported_at': '2026-01-01T00:00:00+00:00',
         'scope': {}, 'responses': {}, 'omitted': []}
-with open(destination + '/export.html', 'w', encoding='utf-8') as stream:
+with open(destination + '/export.html', 'w', encoding='utf-8', newline='') as stream:
     stream.write(viewer.render(template, data))
-with open(destination + '/live.html', 'w', encoding='utf-8') as stream:
+with open(destination + '/live.html', 'w', encoding='utf-8', newline='') as stream:
     stream.write(viewer.render(template, dict(data, live=True), live=True))
 print(json.dumps({'scripts': list(viewer.UI_SCRIPTS), 'styles': list(viewer.UI_STYLES), 'vendor': viewer.VENDOR_SCRIPT}))
 `;
