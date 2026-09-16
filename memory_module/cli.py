@@ -89,6 +89,47 @@ def write_instructions(path,output):
                    'and a rule with a path, keyword or failure type trigger is composed only into the run that matches it.'}
 
 
+def open_viewer(result,browser=True):
+    """Ask the browser to open the control panel, and keep its address out of the output inside an assistant session.
+
+    The address carries the access key of the panel. An assistant that reads it
+    could send the actions of the user to the panel, so the address is printed
+    only in a terminal of the user.
+    """
+    from .live import assistant_session,URL_WITHHELD
+    if browser:result['browser_open_requested']=webbrowser.open(result['url'])
+    if assistant_session():
+        result={k:v for k,v in result.items() if k!='url'}
+        result['url_withheld']=URL_WITHHELD
+    return result
+
+
+def machine_command(args):
+    """Create the memory of this machine, or read its registry and its rules.
+
+    The machine memory holds the rules the user promoted out of single projects
+    and the registry of the projects on this computer. Reading never creates it,
+    and the registry stays on this computer.
+    """
+    from . import machine
+    if args.action=='init':
+        result=machine.initialize()
+        path=database(args)
+        if path.exists():
+            with Memory(path,read_only=True) as memory:
+                result['registered']=machine.register_project(memory)
+        return result
+    value=machine.overview(limit=args.limit)
+    shared=['machine','database','exists','note']
+    if not value['exists']:
+        return {**{key:value[key] for key in shared},'projects':[],'rules':[],'retired':[]}
+    if args.action=='list':
+        return {**{key:value[key] for key in shared},'projects':value['projects'],'projects_total':value['projects_total']}
+    rules=value['rules'] if not args.role else [rule for rule in value['rules'] if args.role in rule['roles']]
+    return {**{key:value[key] for key in shared},'role':args.role,'rules':rules,'rules_total':len(rules),
+            'retired':value['retired']}
+
+
 def main(argv=None):
     parser=argparse.ArgumentParser(description='Keep project decisions, evidence and outcomes locally.')
     parser.add_argument('--version',action='version',version=__version__)
@@ -122,6 +163,12 @@ def main(argv=None):
     init.add_argument('--name')
     init.add_argument('--no-git',action='store_true')
     init.add_argument('--no-view',action='store_true')
+    mach=sub.add_parser('machine',help='The memory of this machine: the rules you promoted and the registry of projects.')
+    mach.add_argument('action',choices=['init','list','rules'],help='init creates the machine memory, list reads the registry, rules reads the promoted rules.')
+    mach.add_argument('--project',default=os.environ.get('PROJECT_MEMORY_PROJECT',os.getcwd()))
+    mach.add_argument('--db',help='The project database that init records in the registry.')
+    mach.add_argument('--role',choices=['assistant','worker','reviewer'],help='Read the rules composed into the prompt of this role.')
+    mach.add_argument('--limit',type=int,default=50)
     hook=sub.add_parser('hook');hook.add_argument('--db');hook.add_argument('--host',choices=sorted(codex_host.HOSTS),default='codex')
     hook.add_argument('--if-unmanaged',action='store_true')
     hook.add_argument('--project',default=os.environ.get('PROJECT_MEMORY_PROJECT',os.getcwd()))
@@ -133,16 +180,15 @@ def main(argv=None):
             result=setup(args.project,client=args.client,database=args.db,requirements=args.requirement,documents=args.document,trust=args.trust)
             if not args.no_view:
                 from .live import start
-                result['viewer']=start(result['database'])
-                result['viewer']['browser_open_requested']=webbrowser.open(result['viewer']['url'])
+                result['viewer']=open_viewer(start(result['database']))
         elif args.command=='init':
             from .templates import scaffold
             result=scaffold(args.path,args.template,name=args.name,clients=args.client,git=not args.no_git)
             if not args.no_view:
                 from .live import start
-                result['viewer']=start(result['database'])
-                result['viewer']['browser_open_requested']=webbrowser.open(result['viewer']['url'])
+                result['viewer']=open_viewer(start(result['database']))
         elif args.command=='uninstall':result=uninstall(args.project,args.client)
+        elif args.command=='machine':result=machine_command(args)
         elif args.command=='hook':
             if args.if_unmanaged and install_state(args).get('clients',{}).get(args.host,{}).get('hook_command'):
                 print('{}');return 0
@@ -188,7 +234,7 @@ def main(argv=None):
             result=start(database(args))
             filters={k:v for k,v in {'episode':args.episode,'subject':args.subject}.items() if v}
             if filters:result['url']+='?'+urlencode(filters)
-            if not args.no_open:result['browser_open_requested']=webbrowser.open(result['url'])
+            result=open_viewer(result,browser=not args.no_open)
         else:
             with Memory(database(args)) as memory:
                 if args.command=='serve':

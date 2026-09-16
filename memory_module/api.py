@@ -674,9 +674,37 @@ def components(memory, params):
                     limit=_int(params, 'limit', 100, 1, 500), offset=_int(params, 'offset', 0, 0, 10**9))
 
 
+def machine(memory, params):
+    """The machine memory of this computer and the promotions recorded in this project.
+
+    The machine database is opened read only and is never created here. When it
+    does not exist, or cannot be read, the answer states that instead of failing,
+    so the panel can name the command that creates it.
+    """
+    import sqlite3
+    from . import machine as store
+    limit = _int(params, 'limit', 50, 1, 200)
+    state = _text(params, 'state', limit=20)
+    try:
+        value = store.overview(limit=limit)
+    except (InvalidRecord, sqlite3.Error, OSError, ValueError) as exc:
+        value = {'machine': store.machine_name(), 'database': str(store.database_path()), 'exists': False,
+                 'rules': [], 'retired': [], 'rules_total': 0, 'projects': [], 'projects_total': 0,
+                 'error': str(exc), 'note': store.ISOLATION_NOTE}
+    value['promotions'] = store.promotions(memory, state=state, limit=limit)
+    value['proposed_total'] = len([item for item in value['promotions'] if item['state'] == 'proposed'])
+    try:
+        from pathlib import Path
+        from .guards import project_root
+        value['project_path'] = str(Path(project_root(memory)).resolve())
+    except (InvalidRecord, OSError, ValueError):
+        value['project_path'] = None
+    return value
+
+
 ENDPOINTS = {
     'health': health, 'now': now, 'board': board, 'sprints': sprints, 'work': work, 'records': page, 'record': record, 'run': run,
     'lineage': lineage, 'work_graph': work_graph, 'architecture': architecture, 'learning': learning,
     'agents': agents, 'requirements': requirements, 'coverage': coverage, 'kickoff': kickoff, 'plan': plan,
-    'components': components,
+    'components': components, 'machine': machine,
 }

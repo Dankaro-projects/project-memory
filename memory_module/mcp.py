@@ -164,7 +164,11 @@ def operation_rules(operation):
                            'status': {'type': 'string', 'enum': list(module('architecture').COMPONENT_STATUSES)},
                            # An omitted path keeps the stored path; an explicit null clears it.
                            'path': {'type': ['string', 'null']}},
-             'answer_kickoff': {'question_ids': {'type': 'array', 'items': S, 'minItems': 1, 'maxItems': 30}}}
+             'answer_kickoff': {'question_ids': {'type': 'array', 'items': S, 'minItems': 1, 'maxItems': 30}},
+             'promote_rule': {'roles': {'type': 'array', 'items': {'type': 'string', 'enum': list(module('guards').RULE_ROLES)},
+                                        'minItems': 1, 'maxItems': 3},
+                              'keywords': {'type': ['array', 'null'], 'items': S, 'maxItems': 30},
+                              'paths': {'type': ['array', 'null'], 'items': S, 'maxItems': 100}}}
     hidden = {'merge': {'override_reason'}, 'source': {'internal'}}
     return rules.get(operation, {}), hidden.get(operation, set())
 
@@ -219,8 +223,9 @@ OPERATION_SCHEMAS = {
     'checkpoint': {'operation': 'checkpoint', 'required': ['prompt_ids', 'effect', 'reason'], 'optional': ['episode_id', 'plan_id', 'requirements', 'gap_ids'], 'effects': ['new_work', 'changed', 'unchanged', 'informational', 'deferred'], 'rules': 'Pass session_id. prompt_ids contains 1–20 observed user prompt receipt IDs including the newest prompt. Work assessments require episode_id and the current plan_id. New or changed work requires requirements: a list of complete conditions and exceptions. Changed intent requires a revised plan. Informational or deferred turns require a reason but no new episode. A checkpoint declares interpretation; it never establishes success, approves source instructions or reconciles uncertain effects.', 'bundling': 'Place these fields in data.checkpoint on a plan or record write; episode_id is inferred from that record. Both writes commit atomically.'},
     'agent_check': {'operation': 'review', 'required': ['episode_id'], 'optional': {'role': ['outcome', 'intent', 'recovery'], 'max_seconds': '30 to 900; default 300. A longer explicit review preserves the same criteria.', 'retry': 'Use true only to request a new check after inspecting the earlier result.'}, 'result': 'A read-only agent checks the current work. Read memory_get reviews and wait using project-memory review --wait CHECK_ID.'},
     'delegate': {'operation': 'delegate', 'required': ['episode_id'], 'optional': {'host': ['codex', 'claude'], 'max_seconds': '60 to 14400; default 1800.'}, 'rules': 'Pass session_id. The work item needs a current plan that is not done or cancelled, autonomy act granted by the user, and paths that limit which files may change. The project must be a git repository without uncommitted changes inside those paths. The worker runs in a separate worktree, and another host reviews its changes. Read memory_get agents with the work item id to follow the run.'},
-    'merge': {'operation': 'merge', 'required': ['run_id', 'actor'], 'rules': 'Merges a completed delegated run whose latest work review passed. Only the user can merge without a passing review, from the control panel, so override_reason is not accepted here. A missing or unfinished review is started again and reported instead of merging.'},
+    'merge': {'operation': 'merge', 'required': ['run_id', 'actor'], 'rules': 'Merges a completed delegated run whose latest work review passed. Only the user can merge without a passing review, from the control panel, so override_reason is not accepted here. A missing or unfinished review is started again and reported instead of merging. While the project is in production, every merge over MCP is refused and the user merges in the control panel.'},
     'request_work_review': {'operation': 'request_work_review', 'required': ['run_id'], 'optional': {'max_seconds': '30 to 900; default 900.'}, 'rules': 'Requests a new work review of a completed delegated run when its review failed, timed out, was cancelled, found its host unavailable, or never started. A current or passing review is not replaced.'},
+    'promote_rule': {'operation': 'promote_rule', 'required': ['when', 'do', 'because', 'exceptions', 'basis', 'roles', 'actor'], 'optional': ['lesson_id', 'keywords', 'failure_type', 'pattern_type'], 'rules': 'Proposes that a rule of this project becomes a rule of this machine, for every project on it. The proposal is recorded in this project, and nothing is written to the machine memory until the user accepts it in the control panel. Write the rule so that it holds for any project: the text is refused when it names the project, an absolute path, a record identifier, a document of this project, an electronic mail address or a host name, and the refusal reports which check matched without repeating the value. A promoted rule carries no path pattern, because a path belongs to one project. basis is the short reason, written at promotion, for which the rule holds beyond this project. Read memory_get machine for the rules that already apply.'},
     'answer_kickoff': {'operation': 'answer_kickoff', 'required': ['question_ids', 'text', 'actor'], 'optional': ['evidence', 'episode_id'], 'rules': 'Read memory_get kickoff first. text records the answer the user gave; question_ids lists the kickoff question ids it answers. Each kickoff question names the phase it belongs to, and the note is recorded on the earliest of those phases unless episode_id names another work item. Answer questions of different phases in separate calls to keep each answer on its own phase. An answer does not approve requirements.'},
 }
 
@@ -431,6 +436,24 @@ def view_guards(memory, request):
     return trimmed(result, 'guards', request.budget)
 
 
+def view_machine(memory, request):
+    """The rules promoted to this machine, read only.
+
+    The registry of the projects on this machine stays local, so an assistant
+    reads the rules and the count of projects, never the list itself.
+    """
+    machine = module('machine')
+    try:
+        result = machine.overview(limit=request.limit, include_registry=False)
+    except module('guards').MACHINE_READ_ERRORS as error:
+        # A machine memory that cannot be read is reported, so the project view still answers.
+        result = {'machine': machine.machine_name(), 'exists': machine.exists(), 'rules': [], 'retired': [],
+                  'rules_total': 0, 'projects_total': 0,
+                  'error': 'The machine memory could not be read. ' + str(error), 'note': machine.ISOLATION_NOTE}
+    trimmed(result, 'retired', request.budget)
+    return trimmed(result, 'rules', request.budget)
+
+
 VIEWS = {
     'next': ('Intent, scope, dependencies and next action of a work item id, or without an id the work that can start now, optionally filtered by state.', lambda memory, request: paged_cards(module('planning').next_work(memory, episode_id=request.id, session_id=request.args.get('session_id'), limit=request.limit, offset=request.offset, subject=request.args.get('subject'), state=request.args.get('state')), request)),
     'record': ('One complete record by id; page a source body with body_offset.', view_record),
@@ -455,6 +478,7 @@ VIEWS = {
     'guards': ('Accepted lessons matching a work item id or paths, with recurrences, rule effectiveness and the rule count per role.', view_guards),
     'agents': ('Host availability and runs, optionally of a work item id.', lambda memory, request: trimmed({**module('api').host_overview(memory), **module('delegation').runs(memory, episode_id=request.id, limit=request.limit, offset=request.offset)}, 'runs', request.budget)),
     'kickoff': ('Template phases, open kickoff questions and starter documents.', lambda memory, request: module('templates').kickoff(memory)),
+    'machine': ('Rules promoted to this machine, with the basis and how many projects adopted each one.', view_machine),
     'plan': ('Work item hierarchy with state roll up, optionally below an id.', lambda memory, request: shrink(lambda value: module('planning').hierarchy(memory, root=request.id, limit=value), request.limit if request.limit_given else 100, request.budget)),
 }
 
@@ -544,7 +568,25 @@ def write_delegate(call, memory, request_key, data, session_id, receipt_ids):
 def write_merge(call, memory, request_key, data, session_id, receipt_ids):
     if data.pop('override_reason', None) is not None:
         raise InvalidRecord('Only the user can merge delegated work with an override reason, from the control panel.')
+    refuse_production_merge(memory)
     return call(memory, data.pop('run_id'), request_key=request_key, **data)
+
+
+def refuse_production_merge(memory):
+    """Refuse every merge over MCP while the project is in production, whatever actor it names.
+
+    An MCP caller never records the user as its actor, so the production gate
+    answers first, with the same message and execution not_started, before any
+    check of the actor name or of the fields.
+    """
+    current = module('planning').phase(memory)
+    if current['phase'] != 'production':
+        return
+    raise InvalidRecord(module('delegation').PRODUCTION_MERGE_REFUSED, phase=current['phase'],
+                        phase_reason=current['reason'], phase_version=current['version'], execution='not_started',
+                        next_step={'action': 'merge_in_control_panel',
+                                   'reason': 'The user merges this run in the control panel. Report that the work is '
+                                             'prepared and waiting, and do not attempt the merge again.'})
 
 
 def write_work_review(call, memory, request_key, data, session_id, receipt_ids):
@@ -570,6 +612,7 @@ OPERATIONS = {
     'delegate': ('Run a work item with autonomy act and paths in a git worktree.', Operation('delegation:request_work', special=write_delegate), 'delegate'),
     'merge': ('Merge a delegated run after its work review passed.', Operation('delegation:merge', special=write_merge), 'merge'),
     'request_work_review': ('Review a completed delegated run again after its review did not finish.', Operation('delegation:retry_review', special=write_work_review), 'request_work_review'),
+    'promote_rule': ('Propose a rule of this project as a rule of this machine, for the user to accept in the control panel.', Operation('machine:propose'), 'promote_rule'),
 }
 
 # Operations that keep their own request records instead of adapter_requests.
@@ -678,6 +721,9 @@ def dispatch(memory, name, arguments):
     spec = next((tool for tool in TOOLS if tool['name'] == name), None)
     if not spec:
         raise InvalidRecord('Unknown memory tool.')
+    if name == 'memory_write' and isinstance(arguments, dict) and arguments.get('operation') == 'merge':
+        # The production gate answers before the fields and the actor name are checked.
+        refuse_production_merge(memory)
     issues = argument_issues(arguments, spec['inputSchema'])
     if issues:
         operation = arguments.get('operation') if isinstance(arguments, dict) else None

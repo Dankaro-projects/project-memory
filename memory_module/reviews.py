@@ -627,7 +627,10 @@ def compose_instructions(memory, run, metrics):
                    instruction_characters=composed['characters'],
                    rule_ids=composed['rule_ids'], rules_omitted=composed['omitted'],
                    rules_matched=composed['matched_total'], rules_accepted=composed['accepted_total'],
-                   rules_in_constraints=carried)
+                   rules_in_constraints=carried, machine_rule_ids=composed['machine_rule_ids'],
+                   machine_rules_total=composed['machine_total'])
+    if composed.get('machine_error'):
+        metrics['machine_error'] = composed['machine_error']
     return composed
 
 

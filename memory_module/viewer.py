@@ -7,7 +7,9 @@ in live mode. The exported content is already limited to the scope, so keys do
 not repeat the scope filters. Project wide views (now, work_graph, architecture,
 learning, agents, kickoff, plan and components) are exported only when the
 export has no scope, because they list records outside it; a scoped snapshot
-names each of them in `omitted` with the reason. A record key holds the same
+names each of them in `omitted` with the reason. The machine view is never
+exported and is always named in `omitted`, because the machine memory and its
+registry of projects stay on the computer that holds them. A record key holds the same
 response as the live request, including the first body slice of a source when
 bodies are included. A lineage graph shows the recorded neighbourhood of a decision and
 can name related records outside a scope, as evidence references always did.
@@ -209,6 +211,8 @@ def export_html(memory, destination, *, episode_id=None, subject=None, since=Non
                 responses[name] = api.ENDPOINTS[name](memory, {})
             except (InvalidRecord, OSError, SubprocessError, ValueError) as exc:
                 omitted.append({'key': name, 'reason': str(exc)})
+        omitted.append({'key': 'machine', 'reason': 'The machine memory stays on the computer that holds it. Its rules and the '
+                                                   'registry of the projects on that computer are never exported.'})
         responses['requirements'] = api.requirements(memory, {})
         list_params = {'limit': RECORD_LIMIT}
         responses[response_key('board', list_params)] = _board(memory, found['episodes']) if scoped else api.board(memory, list_params)

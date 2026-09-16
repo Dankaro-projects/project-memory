@@ -304,6 +304,38 @@ class GuardHistoryTests(Fixture):
         self.assertEqual((entry['lesson_id'], entry['total']), (lesson, 1))
         self.assertEqual(entry['outcomes'][0]['id'], recurring)
 
+    def reassess(self, episode_id, failure_id, actor, assessment='good'):
+        failure = self.m._event(failure_id)
+        payload = {'observed': 'The fixture ran again.', 'assessment': assessment, 'assessment_reason': 'The fixture reports it.',
+                   'severity': 'none', 'attribution': 'The decoder change.'}
+        return self.m.record(episode_id, 'outcome', payload, expected_version=self.version(episode_id),
+                             request_key=self.key(), actor=actor, decision_id=failure['decision_id'],
+                             evidence=self.evidence, supersedes=self.latest_outcome(failure['decision_id']))['id']
+
+    def latest_outcome(self, decision_id):
+        return self.m.db.execute("SELECT id FROM events WHERE decision_id=? AND kind='outcome' ORDER BY seq DESC LIMIT 1",
+                                 (decision_id,)).fetchone()['id']
+
+    def test_an_agent_cannot_remove_its_own_failure_from_the_recurrence_count(self):
+        lesson = self.lesson(failure_type='lost_text')
+        review = self.accept(lesson)
+        episode = self.work(session='second')
+        failure = self.attempt(episode, failure_type='lost_text')
+        self.reassess(episode, failure, actor='assistant')
+        [entry] = guards.recurrences(self.m)
+        self.assertEqual((entry['total'], entry['outcomes'][0]['id']), (1, failure))
+        self.assertEqual(guards.recurrence_count(self.m, 'lost_text', review), 1)
+
+    def test_a_user_reassessment_removes_the_failure_from_the_recurrence_count(self):
+        lesson = self.lesson(failure_type='lost_text')
+        review = self.accept(lesson)
+        episode = self.work(session='second')
+        failure = self.attempt(episode, failure_type='lost_text')
+        self.reassess(episode, failure, actor='assistant')
+        self.reassess(episode, failure, actor='workspace-user')
+        self.assertEqual(guards.recurrences(self.m), [])
+        self.assertEqual(guards.recurrence_count(self.m, 'lost_text', review), 0)
+
     def test_failures_without_lesson(self):
         unaddressed = self.work(session='a')
         unaddressed_outcome = self.attempt(unaddressed)

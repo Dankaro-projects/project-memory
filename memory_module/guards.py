@@ -38,17 +38,34 @@ import os
 from pathlib import Path
 import posixpath
 import re
+import sqlite3
 from functools import lru_cache
 
-from .core import InvalidRecord, MemoryError, _digest, _text
+from .core import USER_ACTOR, InvalidRecord, MemoryError, _digest, _text
+
+# A failure stays counted until the user reassesses its decision. Superseding alone is not enough, because the
+# agent whose work failed may record the next outcome, and a count it can clear would reward hiding failures.
+COUNTED_FAILURE = f"""o.kind='outcome' AND json_extract(o.payload,'$.assessment')='bad'
+    AND NOT EXISTS (SELECT 1 FROM events n WHERE n.kind='outcome' AND n.decision_id=o.decision_id
+                    AND n.rowid > o.rowid AND n.actor='{USER_ACTOR}')"""
 
 TRIGGERS = ('paths', 'keywords', 'failure_type')
 # A lesson review may replace the triggers and the roles of the lesson it accepts.
 REVIEW_FIELDS = TRIGGERS + ('roles',)
 RULE_ROLES = ('assistant', 'worker', 'reviewer')
 ROLE_BUDGETS = {'assistant': 600, 'worker': 1200, 'reviewer': 900}
+# Rules promoted to the machine share the budget of the role and keep to a small part of it,
+# so the rules of this project always take precedence.
+MACHINE_BUDGETS = {'assistant': 200, 'worker': 400, 'reviewer': 300}
 MAX_ACTIVE_RULES = 8
 RULES_HEADING = 'Rules accepted in this project for this role:'
+MACHINE_HEADING = 'Machine rules:'
+# The heading of the machine rules and the blank line before it are part of the prompt, so the first
+# composed machine rule pays for them within the machine budget.
+MACHINE_OVERHEAD = len(MACHINE_HEADING) + 3
+MACHINE_LABEL = 'Machine level. '
+# A machine memory that is damaged, locked or not a database is reported and never stops a project run.
+MACHINE_READ_ERRORS = (MemoryError, OSError, ValueError, sqlite3.Error)
 BASE_SOURCE_PREFIX = 'instructions-base:'
 RUN_SOURCE_PREFIX = 'instructions:'
 SHIPPED_BASE_SOURCE = 'agents/{role}.md'
@@ -451,16 +468,14 @@ def require_acknowledgement(memory, episode, payload):
 
 
 def recurrences(memory, *, limit=50):
-    """Current bad outcomes with a guard's failure type, recorded after its acceptance."""
+    """Bad outcomes with a guard's failure type recorded after its acceptance, until the user reassesses them."""
     if type(limit) is not int or not 1 <= limit <= 1000:
         raise InvalidRecord('limit must be between 1 and 1000.')
     result = []
     for guard in active_guards(memory):
         if not guard['failure_type']:
             continue
-        query = """FROM events o WHERE o.kind='outcome'
-            AND NOT EXISTS (SELECT 1 FROM events n WHERE n.supersedes=o.id)
-            AND json_extract(o.payload,'$.assessment')='bad'
+        query = f"""FROM events o WHERE {COUNTED_FAILURE}
             AND json_extract(o.payload,'$.failure_type')=?
             AND o.rowid > (SELECT rowid FROM events WHERE id=?)"""
         arguments = (guard['failure_type'], guard['review_id'])
@@ -572,13 +587,11 @@ def _columns(memory, name):
 
 
 def recurrence_count(memory, failure_type, review_id, *, after=True):
-    """Current bad outcomes with this failure type, recorded after or before the acceptance."""
+    """Bad outcomes with this failure type before or after the acceptance, until the user reassesses them."""
     if not failure_type or not review_id:
         return 0
     comparison = '>' if after else '<'
-    row = memory.db.execute(f"""SELECT count(*) FROM events o WHERE o.kind='outcome'
-        AND NOT EXISTS (SELECT 1 FROM events n WHERE n.supersedes=o.id)
-        AND json_extract(o.payload,'$.assessment')='bad'
+    row = memory.db.execute(f"""SELECT count(*) FROM events o WHERE {COUNTED_FAILURE}
         AND json_extract(o.payload,'$.failure_type')=?
         AND o.rowid {comparison} (SELECT rowid FROM events WHERE id=?)""", (failure_type, review_id)).fetchone()
     return row[0] if row else 0
@@ -641,7 +654,101 @@ def render_rule(rule):
             f'Exceptions: {_sentence(rule["exceptions"])}.')
 
 
-def compose(memory, role, *, paths=(), text='', failure_types=(), budget=None, rules=None, root=None, exclude=()):
+def render_machine_rule(rule):
+    """The one block a rule of the machine memory contributes, marked as machine level."""
+    return MACHINE_LABEL + render_rule(rule)
+
+
+def machine_rules(machine, role, *, paths=(), text='', failure_types=(), root=None):
+    """The rules of the machine memory that this run triggers, most recent acceptance first.
+
+    Effectiveness stays in each project, so the machine memory records no
+    recurrence and the order is the acceptance and then the identifier.
+    """
+    candidates = matching_rules(machine, role, paths=paths, text=text, failure_types=failure_types, root=root)
+    ordered = sorted(candidates, key=lambda rule: rule['lesson_id'])
+    ordered.sort(key=lambda rule: rule['accepted_at'], reverse=True)
+    return ordered
+
+
+def _machine_memory(machine):
+    """The machine memory to compose from, whether this call opened it, and why it is missing.
+
+    `machine` is a memory to use, False to leave the machine rules out, or None
+    to read the machine memory of this computer when it exists.
+    """
+    if machine is False:
+        return None, False, None
+    if machine is not None:
+        return machine, False, None
+    from . import machine as machine_module
+    try:
+        found = machine_module.reader()
+        return found, found is not None, None
+    except MACHINE_READ_ERRORS as error:
+        # A machine memory that cannot be read must not stop the run of a project.
+        return None, False, MACHINE_UNREADABLE + ' ' + str(error)
+
+
+MACHINE_UNREADABLE = 'The machine memory could not be read, so no machine rule was composed.'
+
+
+def _characters(count):
+    return f'the {count} character that remains' if count == 1 else f'the {count} characters that remain'
+
+
+def _compose_machine(result, machine, role, *, paths, text, failure_types, root, places, exclude=()):
+    """Append the machine rules of a role after the rules of the project, within the budget of the role."""
+    memory, opened, error = _machine_memory(machine)
+    budget = min(MACHINE_BUDGETS[role], max(0, result['budget'] - result['used']))
+    result.update({'machine_rule_ids': [], 'machine_budget': budget, 'machine_used': 0, 'machine_total': 0,
+                   'machine_text': ''})
+    if error:
+        result['machine_error'] = error
+    if memory is None:
+        return result
+    try:
+        try:
+            candidates = machine_rules(memory, role, paths=paths, text=text, failure_types=failure_types, root=root)
+        except MACHINE_READ_ERRORS as failure:
+            result['machine_error'] = MACHINE_UNREADABLE + ' ' + str(failure)
+            return result
+        excluded = set(exclude or ())
+        candidates = [rule for rule in candidates if rule['lesson_id'] not in excluded]
+        result['machine_total'] = len(candidates)
+        blocks = []
+        used = 0
+        for position, rule in enumerate(candidates):
+            block = render_machine_rule(rule)
+            # The first machine rule also carries the heading of the machine rules.
+            length = len(block) + (1 if blocks else MACHINE_OVERHEAD)
+            if position + places >= MAX_ACTIVE_RULES:
+                result['omitted'].append({'lesson_id': rule['lesson_id'], 'level': 'machine',
+                                          'reason': f'A prompt carries at most {MAX_ACTIVE_RULES} rules for one role, '
+                                                    'so this machine rule was not composed.'})
+                continue
+            if used + length > budget:
+                result['omitted'].append({'lesson_id': rule['lesson_id'], 'level': 'machine',
+                                          'reason': f'This machine rule did not fit within {_characters(budget)} '
+                                                    'for machine rules in this role.'})
+                continue
+            blocks.append(block)
+            result['machine_rule_ids'].append(rule['lesson_id'])
+            used += length
+        if blocks:
+            result['machine_text'] = '\n'.join(blocks)
+            result['text'] = '\n'.join([result['text']] + blocks) if result['text'] else result['machine_text']
+            result['machine_overhead'] = MACHINE_OVERHEAD
+            result['used'] += used
+            result['machine_used'] = used
+    finally:
+        if opened:
+            memory.close()
+    return result
+
+
+def compose(memory, role, *, paths=(), text='', failure_types=(), budget=None, rules=None, root=None, exclude=(),
+            machine=None, machine_exclude=()):
     """The rules composed into a prompt for one role, with every omission reported.
 
     Order: fewest recurrences after acceptance first, then the most recent
@@ -650,6 +757,12 @@ def compose(memory, role, *, paths=(), text='', failure_types=(), budget=None, r
     returned under `omitted` with the reason. `exclude` names rules the prompt
     already carries elsewhere, for example as the constraints of a review; they
     are reported as left out instead of being written twice.
+
+    The rules promoted to this machine follow the rules of this project, each
+    marked as machine level. They keep to the sub budget of the role and to what
+    the project rules leave of the role budget, so a project rule is never
+    displaced by a machine rule, and a machine rule left out is reported like any
+    other omission.
     """
     _require_role(role)
     if budget is None:
@@ -699,9 +812,11 @@ def compose(memory, role, *, paths=(), text='', failure_types=(), budget=None, r
         omitted.append({'lesson_id': rule['lesson_id'],
                         'reason': f'This rule alone is longer than the budget of {budget} characters, '
                                   'so no run of this role can carry it.'})
-    return {'role': role, 'text': '\n'.join(blocks), 'rule_ids': rule_ids, 'omitted': omitted,
-            'budget': budget, 'used': used, 'matched_total': len(ordered),
-            'accepted_total': len(rules)}
+    result = {'role': role, 'text': '\n'.join(blocks), 'project_text': '\n'.join(blocks), 'rule_ids': rule_ids,
+              'omitted': omitted, 'budget': budget, 'used': used, 'matched_total': len(ordered),
+              'accepted_total': len(rules)}
+    return _compose_machine(result, machine, role, paths=paths, text=text, failure_types=failure_types, root=root,
+                            places=len(rule_ids), exclude=machine_exclude)
 
 
 # Base text and the composed instructions of a run.
@@ -740,7 +855,8 @@ def base_text(memory, role):
             'source_id': None, 'version': None}
 
 
-def instructions(memory, role, *, paths=(), text='', failure_types=(), budget=None, rules=None, root=None, exclude=()):
+def instructions(memory, role, *, paths=(), text='', failure_types=(), budget=None, rules=None, root=None, exclude=(),
+                 machine=None):
     """The complete text for a role: the base text first, then the composed rules.
 
     The omissions of `compose` are reported unchanged, so a caller can show
@@ -748,16 +864,21 @@ def instructions(memory, role, *, paths=(), text='', failure_types=(), budget=No
     """
     base = base_text(memory, role)
     composed = compose(memory, role, paths=paths, text=text, failure_types=failure_types, budget=budget,
-                       rules=rules, root=root, exclude=exclude)
+                       rules=rules, root=root, exclude=exclude, machine=machine)
     parts = [base['text']] if base['text'] else []
-    if composed['text']:
-        parts.append(RULES_HEADING + '\n' + composed['text'])
+    if composed['project_text']:
+        parts.append(RULES_HEADING + '\n' + composed['project_text'])
+    if composed['machine_text']:
+        parts.append(MACHINE_HEADING + '\n' + composed['machine_text'])
     complete = '\n\n'.join(parts)
     return {'role': role, 'text': complete, 'base': base['text'], 'rules': composed['text'],
             'base_source': base['source'], 'base_source_id': base['source_id'], 'base_version': base['version'],
             'rule_ids': composed['rule_ids'], 'omitted': composed['omitted'], 'budget': composed['budget'],
             'used': composed['used'], 'matched_total': composed['matched_total'],
-            'accepted_total': composed['accepted_total'], 'characters': len(complete)}
+            'accepted_total': composed['accepted_total'], 'machine_rule_ids': composed['machine_rule_ids'],
+            'machine_rules': composed['machine_text'], 'machine_budget': composed['machine_budget'],
+            'machine_used': composed['machine_used'], 'machine_total': composed['machine_total'],
+            'machine_error': composed.get('machine_error'), 'characters': len(complete)}
 
 
 # Effectiveness of the rules in force.

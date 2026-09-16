@@ -9,7 +9,9 @@
  *   allow_paths {episode_id, paths, reason}; component {component_id}, or {kind, path} to add one;
  *   confirm_component {component_id}; answer_kickoff {question_ids}; delegate {episode_id}; merge, discard and
  *   request_work_review {run_id}; review {episode_id, role}; cancel_run {run_id};
- *   instructions {role} edits the base instruction text of an agent role.
+ *   instructions {role} edits the base instruction text of an agent role;
+ *   phase {phase} records the phase of the project; promotion {promotion_id, status} accepts a proposed rule, with its
+ *   text open for correction, or declines it; machine_rule {rule_id} retires a rule of the machine memory.
  *
  * A form that cannot act on the current data explains why in the form alert and disables Save.
  */
@@ -591,5 +593,109 @@
     submit: (values, context) => ({ operation: "cancel_run", data: { run_id: context.run_id } }),
     reload: reloadIds(["run_id"]),
     done: () => "The run is asked to stop.",
+  });
+
+  // The lifecycle stage of the project (stored as its phase), which decides who merges delegated work. Only the user
+  // records it. The panel calls it a lifecycle stage, so it is not confused with the phases of the plan.
+  P.registerForm("phase", {
+    title: "Change the lifecycle stage of the project",
+    submitLabel: "Record the stage",
+    async render(fields, context) {
+      const value = (P.health() || {}).phase || { phase: "development", version: 0 };
+      // A stage that was not recorded through this panel may be recorded again with either value.
+      context.current = value.verified === false ? null : value.phase;
+      fields.append(kv([["Stage now", P.words(value.phase)], ["Meaning", value.meaning],
+        ["Recorded", value.at ? P.date(value.at) : "No change of stage is recorded yet."], ["Version", String(value.version || 0)],
+        ["Reason", value.reason]]),
+      P.field("Stage", choices("phase", [["development", "Development",
+        "The orchestrator may bring delegated work into the project after a passing work review."],
+      ["production", "Production and maintenance",
+        "Delegated work and its review still run, and you bring the result into the project in this panel."]],
+      value.phase === "production" ? "development" : "production")),
+      P.field("Reason", area("reason", "", "3")),
+      hint("The stage is recorded as a new version. Every earlier stage stays readable."));
+    },
+    submit(values, context) {
+      need(values.phase, "Select the lifecycle stage of the project.");
+      need(values.reason, "Write the reason for the change of stage.");
+      if (values.phase === context.current) throw new P.FormError("This project is already in " + values.phase + ". Select the other stage.");
+      return { operation: "phase", data: { phase: values.phase, reason: values.reason } };
+    },
+    done: (result) => "The project is in " + result.phase + ". " + result.meaning,
+  });
+
+  // A proposed promotion of a rule to the machine memory. Accepting it writes the rule; the text may be corrected first.
+  P.registerForm("promotion", {
+    title: "Decide the proposed rule",
+    submitLabel: "Save the decision",
+    async render(fields, context, form) {
+      const data = await P.get("machine");
+      const item = (data.promotions || []).find((entry) => entry.id === context.promotion_id);
+      if (!item) stop("This proposal is not recorded in this project.");
+      if (item.state !== "proposed") stop("This proposal was already " + item.state + ".");
+      const rule = item.rule || {};
+      fields.append(kv([["Proposed by", item.actor], ["Proposed on", P.date(item.proposed_at)],
+        ["Machine memory", data.exists ? data.machine : "It is created by the first proposal you accept."]]),
+      P.field("Decision", choices("status", [["accepted", "Accept the rule", "The rule is written to the machine memory and reaches every project on this computer."],
+        ["declined", "Decline the rule", "Nothing is written to the machine memory. The proposal and your reason stay in this project."]],
+      context.status || "accepted")));
+      const text = group("The rule",
+        hint("Correct the text before you accept it. A promoted rule holds for every project on this computer, so it must name no project, path, record, document, address or host."),
+        P.field("When", area("when", rule.when, "2")), P.field("Do", area("do", rule.do, "2")),
+        P.field("Because", area("because", rule.because, "2")), P.field("Exceptions", area("exceptions", rule.exceptions, "2")),
+        P.field("Basis", area("basis", item.basis, "2"), "The short basis written at promotion. It is the only history the machine memory keeps."),
+        P.field("Keywords", list("keywords", rule.keywords, "2"), "Write one keyword per line. A keyword matches as a whole word."),
+        P.field("Failure type", P.input("failure_type", rule.failure_type)),
+        P.field("Roles", roleChecks(rule.roles), "A rule reaches the prompt of each role you name here."));
+      const sync = () => {
+        const accepted = (form.querySelector('input[name="status"]:checked') || {}).value === "accepted";
+        text.hidden = !accepted;
+        for (const control of text.querySelectorAll("input, textarea")) control.disabled = !accepted;
+      };
+      for (const radio of fields.querySelectorAll('input[name="status"]')) radio.addEventListener("change", sync);
+      fields.append(text, P.field("Reason", area("reason", "", "2")));
+      sync();
+    },
+    submit(values, context) {
+      need(values.status, "Select whether to accept or decline the proposed rule.");
+      need(values.reason, "Write the reason for your decision.");
+      context.decision = values.status;
+      const data = { promotion_id: context.promotion_id, status: values.status, reason: values.reason };
+      if (values.status === "accepted") {
+        const rule = { when: need(values.when, "Write when the rule applies."), do: need(values.do, "Write what the rule asks for."),
+          because: need(values.because, "Write why the rule holds."), exceptions: need(values.exceptions, "Write the exceptions of the rule."),
+          roles: need(RULE_ROLES.filter((role) => values["role_" + role]), "Name at least one role for this rule."),
+          keywords: values.keywords };
+        if (values.failure_type) rule.failure_type = values.failure_type;
+        data.rule = rule;
+        data.basis = need(values.basis, "Write the basis of this rule.");
+      }
+      return { operation: "promotion", data };
+    },
+    reload: reloadIds(["promotion_id", "status"]),
+    done: (result, context) => (context.decision === "accepted"
+      ? "The rule is in force on " + result.machine + ". " + P.count(result.adopted_by || 1, "project") + " promoted it."
+      : "The proposed rule is declined. Nothing was written to the machine memory."),
+  });
+
+  // Retiring a rule of the machine memory. The rule and its history stay readable.
+  P.registerForm("machine_rule", {
+    title: "Retire the machine rule",
+    submitLabel: "Retire the rule",
+    async render(fields, context) {
+      const data = await P.get("machine");
+      const rule = (data.rules || []).find((entry) => entry.rule_id === context.rule_id);
+      if (!rule) stop("This rule is not in force on this machine.");
+      fields.append(kv([["When", rule.when], ["Do", rule.do], ["Because", rule.because], ["Exceptions", rule.exceptions],
+        ["Roles", chips(rule.roles)], ["Promoted by", P.count(rule.adopted_by || 0, "project")]]),
+      hint("A retired rule stops reaching agent prompts. The rule and its history stay readable in the machine memory."),
+      P.field("Reason", area("reason", "", "3")));
+    },
+    submit(values, context) {
+      need(values.reason, "Write the reason for retiring this rule.");
+      return { operation: "machine_rule", data: { rule_id: context.rule_id, status: "retired", reason: values.reason } };
+    },
+    reload: reloadIds(["rule_id"]),
+    done: () => "The rule is retired. It reaches no further agent prompt.",
   });
 })();

@@ -1,13 +1,14 @@
 /*
  * Project Memory control panel: views_knowledge.js.
  *
- * Views: learning, agents, records and requirements. Drawers: record and run. Buttons open the forms of forms.js:
- * lesson_review {lesson_id, status}, instructions {role}, merge, discard, cancel_run and request_work_review {run_id},
- * requirements {}.
+ * Views: learning, agents, machine, records and requirements. Drawers: record and run. Buttons open the forms of
+ * forms.js: lesson_review {lesson_id, status}, instructions {role}, merge, discard, cancel_run and
+ * request_work_review {run_id}, requirements {}, promotion {promotion_id, status}, machine_rule {rule_id}.
  *
  * Endpoints read: learning {offset}, agents {offset}, run {id}, records {view, limit, offset, query, subject, status,
- * episode, from, to, order, related}, record {id, body_offset}, requirements {offset, revision_offset}. A snapshot
- * holds records {view, limit: 100} for each view, so the Records view filters and pages those in the browser.
+ * episode, from, to, order, related}, record {id, body_offset}, requirements {offset, revision_offset}, machine {}.
+ * A snapshot holds records {view, limit: 100} for each view, so the Records view filters and pages those in the
+ * browser. A snapshot carries no machine response, because the machine memory stays on the computer that holds it.
  *
  * The Instructions section of the Learning view reads learning.instructions and learning.effectiveness: one panel per
  * agent role with the base text in force, the rules composed into that prompt, the rules that wait for a matching run,
@@ -567,6 +568,96 @@
           h("td", { class: "kn-nowrap", dataset: { label: "Date" } }, revision.created_at ? P.date(revision.created_at) : "Not recorded"),
           cell("Reason", revision.reason || (revision.version === current.version ? current.reason : "") || "Not recorded")))))),
       pager({ offset: revisionOffset, count: revisions.length, more: data.more, limit: 10 }, "revisions", (next) => P.go("requirements", { ...params, revision_offset: next ? String(next) : "" }))));
+    },
+  });
+
+  // Machine: the rules the user promoted out of single projects, the projects on this computer and the proposals
+  // this project recorded. The machine memory is read here and is written only by an action of the user.
+  const ruleFacts = (rule) => kv([["When", rule.when], ["Do", rule.do], ["Because", rule.because], ["Exceptions", rule.exceptions]]);
+  function ruleTriggers(rule) {
+    const parts = [...chips(rule.roles, "Role "), ...chips(rule.keywords, "Keyword "),
+      ...(rule.failure_type ? chips([rule.failure_type], "Failure type ") : [])];
+    return parts.length ? h("div", { class: "row" }, parts) : null;
+  }
+  function machineRule(rule, ctx) {
+    const retired = rule.status !== "accepted";
+    return h("article", { class: "card", dataset: { key: "machine-rule-" + rule.rule_id, tone: retired ? "done" : "guarded" } },
+      h("h3", null, h("span", null, rule.do || "No action is recorded."), P.badge(rule.status)),
+      ruleFacts(rule), ruleTriggers(rule),
+      h("p", { class: "muted" }, P.count(rule.adopted_by || 0, "project") + " promoted this rule. It was recorded on " + P.date(rule.recorded_at) + "."),
+      rule.basis ? h("p", { class: "muted" }, "Basis: " + rule.basis) : null,
+      ctx.canEdit && !retired ? h("div", { class: "row" }, actionButton("Retire", "retire-rule-" + rule.rule_id,
+        (trigger) => P.openForm("machine_rule", { rule_id: rule.rule_id }, trigger))) : null);
+  }
+  function promotionCard(item, ctx) {
+    const open = (status) => (trigger) => P.openForm("promotion", { promotion_id: item.id, status }, trigger);
+    const waiting = item.state === "proposed";
+    return h("article", { class: ["card", waiting ? "proposed" : null], dataset: { key: "promotion-" + item.id } },
+      h("h3", null, h("span", null, (item.rule || {}).do || "No action is recorded."), P.badge(item.state)),
+      ruleFacts(item.rule || {}), ruleTriggers(item.rule || {}),
+      h("p", { class: "muted" }, "Proposed by " + (item.actor || "an agent") + " on " + P.date(item.proposed_at) + "."),
+      item.basis ? h("p", { class: "muted" }, "Basis: " + item.basis) : null,
+      item.reason ? h("p", { class: "muted" }, "Your reason: " + item.reason) : null,
+      ctx.canEdit && waiting ? h("div", { class: "row" },
+        actionButton("Accept", "accept-promotion-" + item.id, open("accepted"), "primary"),
+        actionButton("Decline", "decline-promotion-" + item.id, open("declined"))) : null);
+  }
+  function registryTable(projects, here) {
+    return h("div", { class: "table-wrap" }, h("table", { class: "data kn-table" },
+      h("thead", null, h("tr", null, ["Project", "Template", "Lifecycle", "First seen", "Updated"].map((name) => h("th", { scope: "col" }, name)))),
+      h("tbody", null, projects.map((item) => h("tr", { dataset: { key: "machine-project-" + item.id } },
+        cell("Project", h("span", { class: "mono" }, item.path), item.path === here ? [" ", P.badge("current", "This project")] : null),
+        cell("Template", item.template ? P.words(item.template) : "Not recorded"),
+        cell("Lifecycle", P.badge(item.phase === "production" ? "review" : "in_progress", P.words(item.phase))),
+        h("td", { class: "kn-nowrap", dataset: { label: "First seen" } }, P.date(item.first_seen)),
+        h("td", { class: "kn-nowrap", dataset: { label: "Updated" } }, P.date(item.updated_at)))))));
+  }
+  P.registerView("machine", {
+    title: "Machine",
+    async render(container, params, ctx) {
+      let data;
+      try {
+        data = await P.get("machine");
+      } catch (error) {
+        put(container, error && error.notIncluded
+          ? P.empty("The machine memory stays on the computer that holds it, so a snapshot carries no rule and no registry.")
+          : failed(error));
+        return;
+      }
+      const rules = data.rules || [];
+      const promotions = data.promotions || [];
+      const waiting = promotions.filter((item) => item.state === "proposed");
+      const decided = promotions.filter((item) => item.state !== "proposed");
+      put(container, sentence(data.exists
+        ? P.count(data.rules_total || 0, "rule") + " " + isAre(data.rules_total || 0) + " in force on " + data.machine + ", promoted from "
+          + P.count(data.projects_total || 0, "project") + ". " + P.count(waiting.length, "proposal") + " from this project "
+          + (waiting.length === 1 ? "awaits" : "await") + " your decision."
+        : "No machine memory exists on this computer yet. " + P.count(waiting.length, "proposal") + " from this project "
+          + (waiting.length === 1 ? "awaits" : "await") + " your decision."));
+      put(container, h("div", { class: "notice", dataset: { key: "machine-isolation" } },
+        h("p", null, data.note), data.error ? h("p", null, "The machine memory could not be read: " + data.error) : null,
+        h("p", { class: "muted" }, "Database: " + data.database)));
+      put(container, section("Proposals from this project", h("span", { class: "muted" }, P.count(waiting.length, "proposal")),
+        waiting.length ? h("div", { class: "grid" }, waiting.map((item) => promotionCard(item, ctx)))
+          : P.empty("No proposal awaits your decision. An agent proposes a rule with the promote_rule action."),
+        h("p", { class: "muted" }, "A proposal stays in this project until you accept it. Correct its text in the acceptance form when a word belongs to this project alone.")));
+      put(container, section("Rules in force", h("span", { class: "muted" }, P.count(rules.length, "rule")),
+        rules.length ? h("div", { class: "grid" }, rules.map((rule) => machineRule(rule, ctx)))
+          : P.empty("No rule is promoted to this machine yet."),
+        h("p", { class: "muted" }, "A rule in force is not rewritten. Retire it and promote the corrected text when it needs a change.")));
+      const retired = data.retired || [];
+      if (retired.length) {
+        put(container, section("Retired rules", h("span", { class: "muted" }, P.count(retired.length, "rule")),
+          h("div", { class: "grid" }, retired.map((rule) => machineRule(rule, ctx)))));
+      }
+      put(container, section("Projects on this machine", h("span", { class: "muted" }, P.count(data.projects_total || 0, "project")),
+        (data.projects || []).length ? registryTable(data.projects, data.project_path)
+          : P.empty("No project is recorded in the registry yet."),
+        h("p", { class: "muted" }, "The registry stays on this computer. It is not part of an export and no agent reads it.")));
+      if (decided.length) {
+        put(container, section("Decided proposals", h("span", { class: "muted" }, P.count(decided.length, "proposal")),
+          h("div", { class: "grid" }, decided.map((item) => promotionCard(item, ctx)))));
+      }
     },
   });
 })();

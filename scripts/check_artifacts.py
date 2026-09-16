@@ -13,7 +13,7 @@ from check_publication import check_member
 REQUIRED_MODULES = (
     'api', 'arch_authored', 'arch_base', 'arch_code', 'arch_n8n', 'architecture', 'capture_errors', 'cli',
     'codex_host', 'core', 'coverage', 'delegation', 'direction', 'documents', 'graph', 'guards', 'health',
-    'hooks', 'hosts', 'install', 'live', 'mcp', 'planning', 'reports', 'reviews', 'schema', 'setup_codex',
+    'hooks', 'hosts', 'install', 'live', 'machine', 'mcp', 'planning', 'reports', 'reviews', 'schema', 'setup_codex',
     'shared', 'templates', 'viewer', 'workflow', 'workspace', 'worktree',
 )
 RETIRED_MODULES = ('maps', 'skills', 'project_dependencies', 'review_logs')

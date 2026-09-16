@@ -17,9 +17,12 @@ from .shared import prior_result, run_summary, store_result
 
 KEY_REUSED = 'This action key was already used for different changes.'
 RECORD_OPERATIONS = ('plan', 'sprint', 'comment', 'requirements', 'lesson_review', 'allow_paths', 'link', 'component',
-                     'answer_kickoff', 'instructions')
+                     'answer_kickoff', 'instructions', 'phase')
 RUN_OPERATIONS = ('delegate', 'merge', 'discard', 'review', 'cancel_run', 'request_work_review')
-OPERATIONS = RECORD_OPERATIONS + RUN_OPERATIONS
+# Promotion actions write to the machine memory, which is a second database, so they run outside the
+# action transaction of this project, as the agent run actions do.
+MACHINE_OPERATIONS = ('promotion', 'machine_rule')
+OPERATIONS = RECORD_OPERATIONS + RUN_OPERATIONS + MACHINE_OPERATIONS
 FIELDS = {
     'plan': (set(), {'episode_id', 'expected_version', 'title', 'objective', 'criterion', 'subject', 'payload'}),
     'sprint': (set(), {'episode_id', 'expected_version', 'title', 'objective', 'criterion', 'subject', 'payload'}),
@@ -31,12 +34,15 @@ FIELDS = {
     'component': ({'title', 'kind', 'description', 'status'}, {'component_id', 'path'}),
     'answer_kickoff': ({'question_ids', 'text'}, {'episode_id'}),
     'instructions': ({'role', 'text'}, {'reason', 'actor'}),
+    'phase': ({'phase', 'reason'}, set()),
     'delegate': ({'episode_id'}, {'host', 'max_seconds'}),
     'merge': ({'run_id'}, {'override_reason'}),
     'discard': ({'run_id', 'reason'}, set()),
     'review': ({'episode_id', 'role'}, {'max_seconds', 'retry'}),
     'cancel_run': ({'run_id'}, set()),
     'request_work_review': ({'run_id'}, {'max_seconds'}),
+    'promotion': ({'promotion_id', 'status', 'reason'}, {'rule', 'basis'}),
+    'machine_rule': ({'rule_id', 'status', 'reason'}, set()),
 }
 MESSAGES = {
     'comment': 'Select a work item, its current version and the comment text.',
@@ -47,12 +53,15 @@ MESSAGES = {
     'component': 'Provide the component title, kind, description and status. The id and path are optional.',
     'answer_kickoff': 'Select the kickoff questions and write the answer.',
     'instructions': 'Select the role and write the base instructions. The reason is optional.',
+    'phase': 'Select the phase of the project and write the reason for the change.',
     'delegate': 'Select the work item to delegate. The host and time limit are optional.',
     'merge': 'Select the delegated run to merge. An override reason is optional.',
     'discard': 'Select the delegated run to discard and give the reason.',
     'review': 'Select the work item and the check role.',
     'cancel_run': 'Select the agent run to cancel.',
     'request_work_review': 'Select the delegated work run to review again.',
+    'promotion': 'Select the proposed promotion, accept or decline it, and give the reason.',
+    'machine_rule': 'Select the machine rule, set the status to retired and give the reason.',
 }
 PLAN_SENTENCES = {'objective': 'The intended result is', 'criterion': 'Completion requires', 'scope': 'The scope is',
                   'next_action': 'The next action is', 'reason': 'The reason is', 'state': 'The selected work state is',
@@ -78,7 +87,7 @@ def action(memory, operation, data, request_key):
     if not codex_host.exists(memory):
         codex_host.initialize(memory)
     signature = _digest(dumps([operation, data]))
-    if operation in RUN_OPERATIONS:
+    if operation in RUN_OPERATIONS or operation in MACHINE_OPERATIONS:
         return _run_action(memory, operation, data, request_key, signature)
     try:
         with memory._write():
@@ -179,6 +188,16 @@ def requirements(memory, data, request_key):
     source = memory.source('workspace:' + request_key, 'The user approves project requirements', data['reason'], dumps(data), 'user')
     return memory.approve_requirements(**data, actor=USER, request_key=request_key + ':approval',
                                        evidence=[{'source_id': source['id'], 'reason': 'The user explicitly approves this complete requirement revision.'}])
+
+
+def phase(memory, data, request_key):
+    """Record the phase of the project. The phase decides who merges delegated work."""
+    from .planning import set_phase
+    from . import machine
+    result = set_phase(memory, phase=data['phase'], reason=data['reason'], actor=USER)
+    # The registry of the machine memory records the phase of each project, so it follows the change.
+    result['machine_registry'] = machine.refresh_phase(memory)
+    return result
 
 
 def lesson_review(memory, data, request_key):
@@ -310,7 +329,7 @@ def instructions(memory, data, request_key):
 
 RECORD_HANDLERS = {'plan': plan, 'sprint': sprint, 'comment': comment, 'requirements': requirements,
                    'lesson_review': lesson_review, 'allow_paths': allow_paths, 'link': link, 'component': component,
-                   'answer_kickoff': answer_kickoff, 'instructions': instructions}
+                   'answer_kickoff': answer_kickoff, 'instructions': instructions, 'phase': phase}
 
 
 # Agent run actions.
@@ -379,5 +398,33 @@ def request_work_review(memory, data, request_key, first):
     return run_summary(memory, _launch(memory, follow, first))
 
 
+# Promotion actions. The user decides a proposal in the panel; only this path writes to the machine memory.
+
+def promotion(memory, data, request_key, first):
+    """Accept or decline a proposed promotion of a rule to the machine memory.
+
+    Acceptance writes the rule into the machine memory as workspace-user and
+    records the acceptance in this project by the identifier of that rule.
+    """
+    from . import machine
+    status = data['status']
+    if status == 'accepted':
+        return machine.accept(memory, data['promotion_id'], actor=USER, reason=data['reason'],
+                              changes=data.get('rule'), basis=data.get('basis'))
+    if status == 'declined':
+        if data.get('rule') or data.get('basis'):
+            raise InvalidRecord('Change the text of a proposed rule only when you accept it.')
+        return machine.decline(memory, data['promotion_id'], actor=USER, reason=data['reason'])
+    raise InvalidRecord('Accept or decline the proposed promotion.', statuses=['accepted', 'declined'])
+
+
+def machine_rule(memory, data, request_key, first):
+    """Retire a rule of the machine memory. The rule and its history stay readable."""
+    from . import machine
+    if data['status'] != 'retired':
+        raise InvalidRecord('The user retires a machine rule. Set the status to retired.', statuses=['retired'])
+    return machine.retire(memory, data['rule_id'], actor=USER, reason=data['reason'])
+
+
 RUN_HANDLERS = {'delegate': delegate, 'merge': merge, 'discard': discard, 'review': review, 'cancel_run': cancel_run,
-                'request_work_review': request_work_review}
+                'request_work_review': request_work_review, 'promotion': promotion, 'machine_rule': machine_rule}

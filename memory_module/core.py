@@ -26,6 +26,9 @@ ASSESSMENTS = {"pending", "good", "bad", "unknown"}
 # in the control panel and the composed text of a run is written by Project Memory itself, so an
 # agent may not store a source under these keys and replace the instructions it is judged against.
 RESERVED_SOURCE_PREFIXES = ("instructions-base:", "instructions:")
+# The phase of the project decides who may merge delegated work, so only the user changes it, in the
+# control panel. Project Memory writes this versioned source itself, through planning.set_phase.
+PHASE_SOURCE_KEY = "project-phase"
 
 
 class MemoryError(Exception):
@@ -256,11 +259,17 @@ class Memory(Workflow):
         """Store a version of an evidence source.
 
         internal is set by Project Memory itself for the reserved instruction
-        keys. A caller from outside, such as an agent through MCP, cannot set it,
-        so the instructions of a role stay under the control of the user.
+        keys and for the project phase. A caller from outside, such as an agent
+        through MCP, cannot set it, so the instructions of a role and the phase
+        of the project stay under the control of the user.
         """
         for key, value in (("source_key", source_key), ("title", title), ("summary", summary)):
             _text(value, key, 2000)
+        if not internal and source_key == PHASE_SOURCE_KEY:
+            raise InvalidRecord(
+                "The source key " + PHASE_SOURCE_KEY + " holds the phase of this project. Only the user changes the "
+                "phase, in the control panel. Choose another source key.",
+                source_key=PHASE_SOURCE_KEY)
         if not internal and any(source_key.startswith(prefix) for prefix in RESERVED_SOURCE_PREFIXES):
             raise InvalidRecord(
                 "The source key " + source_key + " is reserved for the instructions of an agent role. "

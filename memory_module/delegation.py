@@ -24,7 +24,7 @@ import subprocess
 import threading
 
 from .core import InvalidRecord, Conflict, Memory, USER_ACTOR, dumps, _text
-from . import codex_host, documents, hosts, reviews
+from . import codex_host, documents, hosts, planning, reviews
 from .reports import validate_work_report, work_schema
 from .shared import git, latest_review, latest_source, run_summary, settlement
 from .templates import COMMIT_IDENTITY
@@ -43,6 +43,11 @@ WORK_TIMED_OUT = 'The worker reached its execution deadline. Its changes were no
 RETRY_REVIEW_STATES = ('failed', 'timed_out', 'cancelled', 'host_unavailable', 'interrupted', 'stale')
 NETWORK_LIMITATION = ('The worker has no network access and no web search. Work that needs information from outside the project '
                       'files and the included sources returns the result blocked or partial and names the missing information.')
+# Refusal shown when the project is in production and the caller is not the user. Delegated work and its
+# cross review still run in production; only the merge waits for the user.
+PRODUCTION_MERGE_REFUSED = ('This project is in production, so bringing delegated work into the project is a user action. '
+                            'Open the control panel and merge the run there. The work is prepared and waiting: its changes '
+                            'and its work review are recorded, and the project files are unchanged.')
 
 
 @contextmanager
@@ -683,11 +688,27 @@ def _merge_review(memory, run, review, override_reason):
                         review_state=review['state'], review_id=review['id'])
 
 
+def merge_authority(memory, actor):
+    """Return the current phase, or raise when the project is in production and the actor is not the user.
+
+    In development the orchestrator merges after a passing work review. In production the merge belongs to
+    the user, so an assistant is refused here and the prepared run waits in the control panel.
+    """
+    current = planning.phase(memory)
+    if current['phase'] != 'production' or actor == USER_ACTOR:
+        return current
+    raise InvalidRecord(PRODUCTION_MERGE_REFUSED, phase=current['phase'], phase_reason=current['reason'],
+                        phase_version=current['version'], merge_actor=USER_ACTOR,
+                        next_step={'action': 'merge_in_control_panel',
+                                   'reason': 'The user merges this run in the control panel. Report that the work is '
+                                             'prepared and waiting, and do not attempt the merge again.'})
+
+
 def merge(memory, run_id, *, request_key, actor, override_reason=None):
     """Merge a completed work run into the project branch after a passing review or a user override.
 
     When the review is missing or ended without assessing the work, a merge request starts a new review and
-    reports it instead of merging.
+    reports it instead of merging. While the project is in production, only the user may merge.
     """
     _text(request_key, 'request_key', 180)
     _text(actor, 'actor', 200)
@@ -695,6 +716,7 @@ def merge(memory, run_id, *, request_key, actor, override_reason=None):
     prior = _replay(memory, key, run_id, 'merge')
     if prior:
         return {**prior['payload'], 'merged': True, 'duplicate': True}
+    merge_authority(memory, actor)
     run = _work_run(memory, run_id)
     if run['state'] != 'completed':
         raise InvalidRecord('Only a completed delegated run can be merged. This run is ' + run['state'].replace('_', ' ') + '.')

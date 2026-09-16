@@ -608,3 +608,122 @@ def next_work(memory, *, episode_id=None, session_id=None, limit=5, offset=0, su
             'recent_execution': state['recent'] if state and action == 'inspect_execution' else [],
             'requirements': {'version': memory.direction()['version'], 'read_with': 'memory_get requirements'},
             'note': 'This is advisory state, not host permission. Retrieve complete governing requirements and evidence before consequential work.'}
+
+
+# The phase of the project. The phase decides who may merge delegated work. It is stored as the
+# versioned source project-phase, so the current phase is the latest version and every earlier
+# phase stays readable. Only the user writes it, from the control panel, through set_phase.
+
+PHASES = ('development', 'production')
+DEFAULT_PHASE = 'development'
+DEFAULT_PHASE_REASON = 'A new project starts in development. No phase change is recorded yet.'
+PHASE_TITLES = {'development': 'Project phase: development', 'production': 'Project phase: production'}
+# The meaning of each phase speaks of work items and results, so it reads the same for a software product,
+# an engagement and an automation.
+PHASE_MEANING = {
+    'development': 'The project is in development, so the orchestrator may bring delegated work into the project after '
+                   'a passing work review.',
+    'production': 'The project is in production and maintenance, so only the user brings delegated work into the '
+                  'project, in the control panel.',
+}
+PHASE_UNVERIFIED_REASON = ('The latest recorded phase was not written through the control panel, so Project Memory treats '
+                           'the project as in production until the user records the phase again.')
+
+
+def _phase_seal(version, name, reason, at, previous):
+    """The seal of one recorded phase, which chains it to the seal of the version before it."""
+    from .core import PHASE_SOURCE_KEY, _digest, dumps
+    return _digest(dumps([PHASE_SOURCE_KEY, version, name, reason, at, previous or '']))
+
+
+def _phase_body(row):
+    try:
+        body = json.loads(row['body'])
+    except ValueError:
+        body = {}
+    return body if isinstance(body, dict) else {}
+
+
+def _phase_version(row, previous=None):
+    """One recorded phase, tolerant of a body that cannot be read as JSON.
+
+    `verified` is true when the version was written by set_phase: its body
+    carries the actor of the user and a seal that chains to the version before
+    it. A row written into the database in another way fails that check.
+    """
+    from .core import USER_ACTOR
+    body = _phase_body(row)
+    name = body.get('phase') if body.get('phase') in PHASES else DEFAULT_PHASE
+    earlier = _phase_body(previous).get('seal') if previous is not None else None
+    verified = (row['origin'] == 'user' and body.get('actor') == USER_ACTOR and body.get('phase') in PHASES
+                and isinstance(body.get('reason'), str)
+                and body.get('seal') == _phase_seal(row['version'], body.get('phase'), body.get('reason'),
+                                                    body.get('at'), earlier))
+    return {'phase': name, 'reason': body.get('reason') or row['summary'],
+            'at': body.get('at') or row['checked_at'], 'version': row['version'], 'verified': verified}
+
+
+def _phase_rows(memory, limit):
+    from .core import PHASE_SOURCE_KEY
+    return memory.db.execute('SELECT version,summary,body,checked_at,origin FROM sources WHERE source_key=? '
+                             'ORDER BY version DESC LIMIT ?', (PHASE_SOURCE_KEY, limit)).fetchall()
+
+
+def _latest_phase(memory):
+    """The newest recorded phase, checked against the version before it, or None."""
+    rows = _phase_rows(memory, 2)
+    if not rows:
+        return None
+    return _phase_version(rows[0], rows[1] if len(rows) > 1 else None)
+
+
+def phase(memory):
+    """The current phase of the project, with the reason and the time it was recorded.
+
+    A project without a recorded phase is in development at version 0. When the
+    newest version was not written through the control panel, the project is
+    treated as in production, so a changed record can only tighten the gate.
+    """
+    current = _latest_phase(memory)
+    if current is None:
+        return {'phase': DEFAULT_PHASE, 'reason': DEFAULT_PHASE_REASON, 'at': None, 'version': 0, 'verified': True}
+    if not current['verified']:
+        return {**current, 'phase': 'production', 'reason': PHASE_UNVERIFIED_REASON}
+    return current
+
+
+def phase_history(memory, *, limit=50):
+    """Every recorded phase, newest first, so an earlier phase stays readable."""
+    from .core import InvalidRecord
+    if type(limit) is not int or not 1 <= limit <= 200:
+        raise InvalidRecord('Use limit 1 to 200 for the recorded phases.')
+    rows = _phase_rows(memory, limit + 1)
+    return [_phase_version(row, rows[index + 1] if index + 1 < len(rows) else None)
+            for index, row in enumerate(rows[:limit])]
+
+
+def set_phase(memory, *, phase, reason, actor):
+    """Record a new phase of the project. Only the user changes the phase, in the control panel."""
+    from .core import InvalidRecord, PHASE_SOURCE_KEY, USER_ACTOR, dumps, _text
+    if actor != USER_ACTOR:
+        raise InvalidRecord('Changing the phase of the project is a user action in the control panel. The recorded actor '
+                            'is ' + USER_ACTOR + ', so another actor name is not accepted.', actor=USER_ACTOR)
+    if phase not in PHASES:
+        raise InvalidRecord('Select the phase of the project. Use one of: ' + ', '.join(PHASES) + '.',
+                            phases=list(PHASES))
+    _text(reason, 'reason', 2000)
+    with memory._write():
+        rows = _phase_rows(memory, 2)
+        current = _phase_version(rows[0], rows[1] if len(rows) > 1 else None) if rows else None
+        if current and current['verified'] and current['phase'] == phase:
+            raise InvalidRecord('This project is already in ' + phase + '. Record a phase only when it changes.',
+                                phase=phase, version=current['version'])
+        at = memory.now()
+        version = rows[0]['version'] + 1 if rows else 1
+        previous = _phase_body(rows[0]).get('seal') if rows else None
+        text = reason.strip()
+        body = dumps({'phase': phase, 'reason': text, 'at': at, 'actor': USER_ACTOR,
+                      'seal': _phase_seal(version, phase, text, at, previous)})
+        source = memory.source(PHASE_SOURCE_KEY, PHASE_TITLES[phase], text, body, 'user', internal=True)
+    return {'phase': phase, 'reason': text, 'at': at, 'version': source['version'],
+            'source_id': source['id'], 'actor': USER_ACTOR, 'meaning': PHASE_MEANING[phase]}

@@ -55,6 +55,10 @@ The run then proceeds as follows:
 
 The execution limit is 60 to 14,400 seconds and defaults to 1,800. At most one active run of each kind exists per work item, and at most two active runs exist per project.
 
+The phase of the project decides who merges. While the project is in development, the orchestrator may merge a delegated run after a passing work review. Once you record the phase `production` in the control panel, every merge is a user action: a merge over MCP is refused with the reason that the work is prepared and waiting, its changes and its work review are recorded, the project files are unchanged, and you merge the run in the Agents view. Every merge over MCP in production receives this refusal first, whatever actor it names. Delegated work and cross review still run in production. The session context states the phase to an assistant, so it knows the gate before it tries.
+
+Each recorded phase carries a seal that chains it to the version before it. A phase row written into the database in another way fails that check, and the project is then treated as in production until you record the phase again in the control panel, so a changed record can only tighten the gate. A process that runs as your own user can still read the database and the files, so the gate guards against a mistaken or unattended merge by an assistant, not against a process that sets out to bypass it.
+
 Merging requires a completed run that changed files and a passing work review. If the review is missing or ended without assessing the work, a merge request starts a new review and reports it instead of merging. You can merge without a passing review by supplying an override reason, and only you can do that. Project Memory merges with `git merge --no-ff`; on a conflict it aborts the merge and reports the git message, leaving the branch intact. A discard removes the worktree and the branch and records your reason.
 
 The worker has no web access, must not commit, push, switch branches or change git configuration, and must not edit records or anything under `.memory`. Work that needs outside information is returned as blocked or partial with the missing information named.
@@ -98,6 +102,22 @@ project-memory instructions --output instructions
 ```
 
 The command reads the database and writes one Markdown file per role. The database stays the source of truth.
+
+## Promoting a rule to this machine
+
+A rule that holds beyond one project can be promoted to the memory of this machine, which sits above the projects on this computer. Its location is `PROJECT_MEMORY_MACHINE_DB`, or `~/.project-memory/machine.sqlite`, and `project-memory machine init` creates it. The first promotion you accept creates it as well.
+
+An agent proposes a promotion with the `promote_rule` write operation. The proposal is recorded in this project and nothing is written to the machine memory. You accept or decline it in the Machine view of the control panel, and only an acceptance writes the rule, as `workspace-user`.
+
+Mechanical checks refuse a proposal whose text carries the project name, an absolute path, a record identifier, a document file name of this project, an electronic mail address or a host name. The refusal names the check that matched and never repeats the value. The same checks run again when you accept, so a correction you make in the acceptance form is checked as well. They cover every text that reaches the machine memory, including the failure type. The project name is found in its ordinary spellings, such as a joined, hyphenated, underscored or plural form, and a short abbreviation of the name is found as a whole word. Ordinary words of work, such as automation, invoice or review, are not checked alone, so a generic rule may still use them. Record identifiers are found in any letter case and when cut short, and network addresses, local host names, home folder paths, network shares and paths that start at an environment variable are refused as well.
+
+A promoted rule is an ordinary accepted lesson in the machine memory. `guards.compose` adds the machine rules of a role after the project rules, each labelled as machine level, within a sub budget of 200 characters for the assistant, 400 for the worker and 300 for the reviewer. The heading of the machine rules counts against that sub budget. Project rules take precedence when the budget is tight, and an omitted machine rule is reported with its reason like any other omission. The edit and prompt hook of the assistant carries the machine rules of the assistant as well, once in each session, and names an omitted machine rule with `memory_get machine`. The metrics of a run record the machine rules it carried.
+
+When a second project promotes the text of a rule that is already in force with other roles or triggers, the acceptance is refused and names the roles and triggers of the machine rule, so nothing is dropped without notice. Retiring a rule a second time reports the recorded retirement.
+
+Effectiveness stays in each project. The Machine view reports how many projects promoted a rule and the basis written at promotion, and states plainly that no outcome is combined across projects. A rule in force is not rewritten: retire it and promote the corrected text.
+
+An assistant reads the accepted rules with `memory_get machine`, which returns the same read only view without the registry of projects. The command line reads the same content with `project-memory machine rules`. See [setup and lifecycle](setup.md) for the location of the database and the commands that create and read it.
 
 ## Rule effectiveness
 

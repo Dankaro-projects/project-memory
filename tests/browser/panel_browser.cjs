@@ -11,7 +11,7 @@ const { execFileSync } = require("node:child_process");
 
 const ROOT = path.resolve(__dirname, "../..");
 const PYTHON = process.env.MEMORY_PYTHON || "python";
-const RAIL = ["Now", "Plan", "Work", "Architecture", "Dependencies", "Decisions", "Learning", "Agents", "Records", "Requirements"];
+const RAIL = ["Now", "Plan", "Work", "Architecture", "Dependencies", "Decisions", "Learning", "Agents", "Machine", "Records", "Requirements"];
 // nodes is the number of items the architecture graph shows before any filter or toggle is changed.
 const KINDS = {
   product: { template: "Software product template", architecture: "Components and packages", items: /2 code components/, nodes: 3 },
@@ -269,6 +269,24 @@ async function views(page, kind, expected) {
   await page.setViewportSize({ width: 1440, height: 900 });
   step(`${kind}: the runs table leaves the delegation columns empty for a check and keeps the merge state on a phone`);
 
+  // The top bar states the phase of the project, because the phase decides who merges delegated work.
+  assert.match(await text(page, "#phase"), /Lifecycle\s*Development/);
+  assert.match(await page.locator("#phase .phase-button").getAttribute("title"), /may bring delegated work into the project after a passing work review/);
+  step(`${kind}: the top bar states that the project is in development`);
+
+  await go(page, "#machine");
+  const machine = await text(page, "#main");
+  assert.match(machine, /1 rule is in force on .+, promoted from 1 project\. 1 proposal from this project awaits your decision\./);
+  assert.match(machine, /no outcome is combined across projects/);
+  assert.equal(await page.locator('#main [data-key^="machine-rule-"]').count(), 1);
+  assert.equal(await page.locator('#main [data-key^="promotion-"]').count(), 2);
+  assert.match(await text(page, '#main [data-key^="machine-rule-"]'), /1 project promoted this rule/);
+  assert.equal(await page.locator('#main [data-key^="machine-project-"]').count(), 1);
+  assert.match(await text(page, '#main [data-key^="machine-project-"]'), /This project/);
+  assert.equal(await page.locator('#main [data-key^="accept-promotion-"]').count(), 1);
+  assert.equal(await page.locator('#main [data-key^="retire-rule-"]').count(), 1);
+  step(`${kind}: Machine lists the promoted rule, its adoption count, the registry and the waiting proposal`);
+
   await go(page, "#records");
   assert.ok(await page.locator("#main table.data").count() >= 1, "the records view lists no records");
   await go(page, "#requirements");
@@ -276,7 +294,7 @@ async function views(page, kind, expected) {
   step(`${kind}: Records and Requirements render their current state`);
 
   for (const width of [1440, 768, 390, 320]) {
-    for (const hash of ["#now", "#plan", "#work", "#architecture", "#decisions", "#learning"]) {
+    for (const hash of ["#now", "#plan", "#work", "#architecture", "#decisions", "#learning", "#machine"]) {
       await go(page, hash);
       await noOverflow(page, width, `${kind} ${hash}`);
     }
@@ -391,6 +409,42 @@ async function editing(page, ids, posts) {
   await page.locator("#form-save").click();
   await savedToast(page, /docs\/brief\.md/);
   step("the blocked path of a scope block is allowed from the Now view");
+
+  // The phase of the project, which decides who merges delegated work.
+  await page.locator('[data-key="phase-change"]').click();
+  await page.waitForSelector("#form-dialog[open] textarea[name=reason]");
+  await page.locator('input[name="phase"][value="production"]').check();
+  await field(page, "reason").fill("The parser serves users now, so the user merges delegated work.");
+  await page.locator("#form-save").click();
+  await savedToast(page, /The project is in production/);
+  await page.waitForFunction(() => /Production/.test(document.getElementById("phase").textContent), null, { timeout: 15000 });
+  const phase = await page.evaluate(() => Panel.health().phase);
+  assert.equal(phase.phase, "production");
+  assert.equal(phase.version, 1);
+  step("the phase of the project is changed to production with a reason and the top bar states it");
+
+  // Accepting a proposed rule into the machine memory, with its text corrected first.
+  await go(page, "#machine");
+  await page.locator(`[data-key="accept-promotion-${ids.proposed_promotion}"]`).click();
+  await page.waitForSelector("#form-dialog[open] textarea[name=reason]");
+  assert.equal(await page.locator('input[name=status][value=accepted]').isChecked(), true);
+  await field(page, "do").fill("State which checks ran and what each one reported before the merge.");
+  await field(page, "reason").fill("The rule holds for every project on this computer.");
+  await page.locator("#form-save").click();
+  await savedToast(page, /The rule is in force on/);
+  await page.waitForFunction(() => /2 rules are in force/.test(document.querySelector("#main .view:not(.pending) .sentence").textContent), null, { timeout: 15000 });
+  assert.match(await text(page, "#main"), /State which checks ran and what each one reported before the merge\./);
+  step("a proposed rule is corrected and accepted into the machine memory");
+
+  // Retiring a rule of the machine memory. The rule and its history stay readable.
+  await page.locator(`[data-key="retire-rule-${ids.machine_rule}"]`).click();
+  await page.waitForSelector("#form-dialog[open] textarea[name=reason]");
+  await field(page, "reason").fill("The allowed paths are now required before a run starts.");
+  await page.locator("#form-save").click();
+  await savedToast(page, /The rule is retired/);
+  await page.waitForFunction(() => /1 rule is in force/.test(document.querySelector("#main .view:not(.pending) .sentence").textContent), null, { timeout: 15000 });
+  assert.match(await text(page, "#main"), /Retired rules/);
+  step("a rule of the machine memory is retired and stays readable");
 
   // Focus and the open view survive a new revision.
   await go(page, "#work");

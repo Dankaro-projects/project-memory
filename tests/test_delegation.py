@@ -705,6 +705,45 @@ class DelegationTests(unittest.TestCase):
         self.assertLessEqual(len(body) - len(guards.shipped_base('worker')) - len(guards.RULES_HEADING) - 2,
                              guards.ROLE_BUDGETS['worker'])
 
+    def test_in_production_the_work_runs_and_only_the_user_merges_it(self):
+        """Delegated work and its cross review still run in production; the merge waits for the user."""
+        from memory_module import mcp, planning
+        planning.set_phase(self.m, phase='production', reason='The product serves customers, so the user merges changes.',
+                           actor='workspace-user')
+        run = self.delegate()
+        self.assertEqual(run['state'], 'completed', run['error'])
+        summary = next(item for item in delegation.runs(self.m)['runs'] if item['id'] == run['id'])
+        self.assertEqual(summary['review']['state'], 'pass')
+        with self.assertRaisesRegex(InvalidRecord, 'prepared and waiting') as refused:
+            delegation.merge(self.m, run['id'], request_key='merge', actor='assistant')
+        details = refused.exception.details
+        self.assertEqual((details['phase'], details['merge_actor']), ('production', 'workspace-user'))
+        self.assertEqual(details['next_step']['action'], 'merge_in_control_panel')
+        self.assertIn('control panel', str(refused.exception))
+        with self.assertRaises(InvalidRecord) as over_mcp:
+            mcp.write(self.m, 'merge', 'merge-over-mcp', {'run_id': run['id'], 'actor': 'assistant'})
+        self.assertEqual(str(over_mcp.exception), delegation.PRODUCTION_MERGE_REFUSED)
+        self.assertEqual(over_mcp.exception.details['execution'], 'not_started')
+        self.assertEqual((self.project / 'src/app.py').read_text(), 'VALUE = 1\n')
+        self.assertEqual(self.git('rev-parse', run['branch']), run['metrics']['commit'])
+        self.assertEqual(self.receipts('DelegationMerged'), 0)
+        merged = delegation.merge(self.m, run['id'], request_key='merge-in-panel', actor='workspace-user')
+        self.assertTrue(merged['merged'])
+        self.assertEqual((self.project / 'src/app.py').read_text(), 'VALUE = 2\n')
+        self.assertEqual(self.receipts('DelegationMerged'), 1)
+
+    def test_a_phase_recorded_after_a_merge_leaves_the_repeated_request_unchanged(self):
+        """An idempotent replay reports the earlier merge, so a later phase change does not rewrite history."""
+        from memory_module import planning
+        run = self.delegate()
+        merged = delegation.merge(self.m, run['id'], request_key='merge', actor='assistant')
+        planning.set_phase(self.m, phase='production', reason='The change is released to customers.',
+                           actor='workspace-user')
+        again = delegation.merge(self.m, run['id'], request_key='merge', actor='assistant')
+        self.assertTrue(again['duplicate'])
+        self.assertEqual(again['commit'], merged['commit'])
+
+
 
 class RunTableTests(unittest.TestCase):
     def setUp(self):

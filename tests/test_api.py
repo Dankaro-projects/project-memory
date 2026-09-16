@@ -1,4 +1,5 @@
 """Data contracts of the read API, the live server over it and the offline export."""
+import os
 import shutil
 from contextlib import redirect_stdout
 import io
@@ -14,12 +15,32 @@ from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 import uuid
 
-from memory_module import Memory, InvalidRecord, api, architecture, codex_host, hosts, planning, reviews
+from memory_module import Memory, InvalidRecord, api, architecture, codex_host, hosts, machine, planning, reviews
 from memory_module.install import setup
 from memory_module.live import Viewer
 from memory_module.workspace import action
 
 LAUNCHER = [sys.executable, '-m', 'memory_module.cli']
+MACHINE = {}
+RULE = {'when': 'a release is prepared', 'do': 'Run the whole test suite before the release is tagged.',
+        'because': 'A release that skips the suite hides a failure until users meet it.',
+        'exceptions': 'A documentation change that touches no code.'}
+
+
+def setUpModule():
+    """No test reads the machine memory of this computer. Every machine path stays in a temporary folder."""
+    MACHINE['folder'] = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
+    MACHINE['previous'] = os.environ.get(machine.DATABASE_VARIABLE)
+    MACHINE['default'] = str(Path(MACHINE['folder'].name) / 'machine.sqlite')
+    os.environ[machine.DATABASE_VARIABLE] = MACHINE['default']
+
+
+def tearDownModule():
+    if MACHINE['previous'] is None:
+        os.environ.pop(machine.DATABASE_VARIABLE, None)
+    else:
+        os.environ[machine.DATABASE_VARIABLE] = MACHINE['previous']
+    MACHINE['folder'].cleanup()
 
 
 def fake_run(memory, episode_id, *, role='work', state='completed', parent=None, changed=('src/app.py',), project=None, request_key=None):
@@ -127,10 +148,13 @@ class ApiTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.root = Path(self.temp.name).resolve()
+        # The machine memory of this test lives beside the project, so no test reads or writes the one of this computer.
+        os.environ[machine.DATABASE_VARIABLE] = str(self.root / 'machine' / 'machine.sqlite')
         self.m, self.ids = build(self.root)
 
     def tearDown(self):
         self.m.close()
+        os.environ[machine.DATABASE_VARIABLE] = MACHINE['default']
         shutil.rmtree(self.temp.name, ignore_errors=True)
 
     def test_now_reports_work_attention_agents_decisions_and_learning_counts(self):
@@ -352,6 +376,71 @@ class ApiTests(unittest.TestCase):
         with patch.object(architecture, 'model', side_effect=AssertionError('The model should come from the request cache.')):
             self.assertIs(api.architecture(self.m, {}), model)
 
+    def test_the_panel_records_the_phase_of_the_project_and_health_reports_it(self):
+        self.assertEqual(api.health(self.m, {})['phase']['phase'], 'development')
+        result = action(self.m, 'phase', {'phase': 'production', 'reason': 'The parser serves users now.'}, 'phase-1')
+        self.assertEqual((result['phase'], result['version'], result['actor']), ('production', 1, 'workspace-user'))
+        phase = api.health(self.m, {})['phase']
+        self.assertEqual((phase['phase'], phase['reason']), ('production', 'The parser serves users now.'))
+        self.assertIn('only the user brings delegated work into the project', phase['meaning'])
+        action(self.m, 'phase', {'phase': 'development', 'reason': 'The next version is being built.'}, 'phase-2')
+        self.assertEqual([item['phase'] for item in planning.phase_history(self.m)], ['development', 'production'])
+        with self.assertRaises(InvalidRecord):
+            action(self.m, 'phase', {'phase': 'development', 'reason': 'The phase does not change.'}, 'phase-3')
+
+    def propose(self, key='promote-1'):
+        return machine.propose(self.m, **RULE, basis='Two releases failed after the suite was skipped.',
+                               roles=['worker'], actor='assistant', request_key=key)
+
+    def test_machine_endpoint_reports_the_proposals_before_the_machine_memory_exists(self):
+        value = api.machine(self.m, {})
+        self.assertEqual((value['exists'], value['rules'], value['projects'], value['promotions']), (False, [], [], []))
+        self.assertIn('No machine memory exists on this computer yet', value['note'])
+        proposal = self.propose()
+        value = api.machine(self.m, {})
+        self.assertEqual([item['id'] for item in value['promotions']], [proposal['id']])
+        self.assertEqual((value['proposed_total'], value['exists']), (1, False))
+        self.assertEqual(value['promotions'][0]['rule']['do'], RULE['do'])
+        self.assertFalse(Path(os.environ[machine.DATABASE_VARIABLE]).exists())
+
+    def test_the_panel_accepts_a_promotion_retires_the_rule_and_the_endpoint_reports_both(self):
+        proposal = self.propose()
+        accepted = action(self.m, 'promotion', {'promotion_id': proposal['id'], 'status': 'accepted',
+                                                'reason': 'The rule holds for every project on this computer.'}, 'accept-1')
+        value = api.machine(self.m, {})
+        self.assertTrue(value['exists'])
+        [rule] = value['rules']
+        self.assertEqual((rule['rule_id'], rule['adopted_by'], rule['status']), (accepted['machine_rule_id'], 1, 'accepted'))
+        self.assertEqual(rule['basis'], 'Two releases failed after the suite was skipped.')
+        self.assertEqual([item['path'] for item in value['projects']], [value['project_path']])
+        self.assertEqual(value['projects'][0]['phase'], 'development')
+        self.assertIn('no outcome is combined across projects', value['note'])
+        action(self.m, 'machine_rule', {'rule_id': rule['rule_id'], 'status': 'retired',
+                                        'reason': 'The suite now runs in the release command.'}, 'retire-1')
+        value = api.machine(self.m, {})
+        self.assertEqual((value['rules'], value['rules_total']), ([], 0))
+        self.assertEqual([item['status'] for item in value['retired']], ['retired'])
+
+    def test_the_panel_corrects_the_text_of_a_proposed_rule_before_it_accepts_it(self):
+        proposal = self.propose()
+        changed = {**RULE, 'do': 'Run the whole test suite and record its result before a release is tagged.',
+                   'roles': ['worker', 'reviewer'], 'keywords': ['release']}
+        action(self.m, 'promotion', {'promotion_id': proposal['id'], 'status': 'accepted', 'rule': changed,
+                                     'basis': 'Two releases failed without a recorded test result.',
+                                     'reason': 'The wording now asks for the recorded result.'}, 'accept-1')
+        [rule] = api.machine(self.m, {})['rules']
+        self.assertEqual(rule['do'], changed['do'])
+        self.assertEqual((rule['roles'], rule['keywords']), (['worker', 'reviewer'], ['release']))
+        self.assertEqual(rule['basis'], 'Two releases failed without a recorded test result.')
+
+    def test_a_declined_promotion_writes_nothing_to_the_machine_memory(self):
+        proposal = self.propose()
+        action(self.m, 'promotion', {'promotion_id': proposal['id'], 'status': 'declined',
+                                     'reason': 'The rule belongs to this project alone.'}, 'decline-1')
+        value = api.machine(self.m, {})
+        self.assertEqual([item['state'] for item in value['promotions']], ['declined'])
+        self.assertEqual((value['exists'], value['proposed_total']), (False, 0))
+
     def test_agents_requirements_coverage_kickoff_plan_and_components(self):
         agents = api.agents(self.m, {})
         self.assertTrue(agents['configured'])
@@ -542,7 +631,7 @@ class ExportTests(unittest.TestCase):
                     'record?id=' + self.ids['old'], 'lineage?id=' + self.ids['old'], 'work_graph', 'architecture', 'learning',
                     'agents', 'requirements', 'kickoff', 'plan', 'components', 'record?body_offset=0&id=' + self.ids['source']):
             self.assertIn(key, responses)
-        self.assertEqual(data['omitted'], [])
+        self.assertEqual([item['key'] for item in data['omitted']], ['machine'])
         self.assertNotIn('csrf', responses['health'])
         # A record key holds the live response, so a panel that requests record?id= finds the body offline as well.
         live = json.loads(json.dumps(api.record(self.m, {'id': self.ids['source']})))
@@ -563,7 +652,7 @@ class ExportTests(unittest.TestCase):
         for key in ('now', 'learning', 'agents', 'architecture', 'record?body_offset=0&id=' + self.ids['source']):
             self.assertNotIn(key, responses)
         from memory_module.viewer import PROJECT_VIEWS
-        self.assertEqual([item['key'] for item in data['omitted']], list(PROJECT_VIEWS))
+        self.assertEqual([item['key'] for item in data['omitted']], list(PROJECT_VIEWS) + ['machine'])
         self.assertTrue(all(item['reason'].endswith('.') for item in data['omitted']))
         self.assertNotIn('body', responses['record?id=' + self.ids['source']]['record']['detail'])
         self.assertIn('sprints?limit=100', responses)
@@ -588,6 +677,52 @@ class ExportTests(unittest.TestCase):
         self.m.export_html(target)
         data = self.data(target)
         self.assertEqual(data['responses']['record?id=' + note['id']]['record']['detail']['payload']['text'], text)
+
+
+class MachineCommandTests(unittest.TestCase):
+    """The command line reads the machine memory and creates it once."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
+        self.root = Path(self.temp.name).resolve()
+        self.database = self.root / 'machine' / 'machine.sqlite'
+        os.environ[machine.DATABASE_VARIABLE] = str(self.database)
+        self.m, self.ids = build(self.root)
+
+    def tearDown(self):
+        self.m.close()
+        os.environ[machine.DATABASE_VARIABLE] = MACHINE['default']
+        shutil.rmtree(self.temp.name, ignore_errors=True)
+
+    def run_command(self, *arguments):
+        from memory_module import cli
+        stream = io.StringIO()
+        with redirect_stdout(stream):
+            code = cli.main(['machine', *arguments, '--project', str(self.root)])
+        self.assertEqual(code, 0)
+        return json.loads(stream.getvalue())
+
+    def test_machine_init_list_and_rules_report_the_memory_of_this_computer(self):
+        empty = self.run_command('list')
+        self.assertEqual((empty['exists'], empty['projects'], empty['rules']), (False, [], []))
+        self.assertIn('project-memory machine init', empty['note'])
+        created = self.run_command('init')
+        self.assertEqual((created['created'], created['database']), (True, str(self.database)))
+        self.assertTrue(self.database.exists())
+        listed = self.run_command('list')
+        self.assertEqual([item['path'] for item in listed['projects']], [str(self.root)])
+        self.assertEqual(listed['projects'][0]['phase'], 'development')
+        self.assertEqual(self.run_command('rules')['rules'], [])
+        proposal = machine.propose(self.m, **RULE, basis='Two releases failed after the suite was skipped.',
+                                   roles=['worker'], actor='assistant', request_key='promote-cli')
+        action(self.m, 'promotion', {'promotion_id': proposal['id'], 'status': 'accepted',
+                                     'reason': 'The rule holds for every project on this computer.'}, 'accept-cli')
+        rules = self.run_command('rules')
+        self.assertEqual([rule['do'] for rule in rules['rules']], [RULE['do']])
+        self.assertEqual(rules['rules'][0]['adopted_by'], 1)
+        self.assertEqual(self.run_command('rules', '--role', 'worker')['rules_total'], 1)
+        self.assertEqual(self.run_command('rules', '--role', 'assistant')['rules_total'], 0)
+        self.assertEqual(self.run_command('init')['created'], False)
 
 
 if __name__ == '__main__':

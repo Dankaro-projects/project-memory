@@ -34,6 +34,39 @@ MAX_QUERY = 4096
 TREE_INTERVAL = 5.0
 EXPIRED_RUN_SECONDS = 30
 ERRORS = (MemoryError, ValueError, TypeError, KeyError, RecursionError, sqlite3.Error, OSError, subprocess.SubprocessError)
+# Environment variables that Claude Code and Codex set for the commands an assistant runs. A control panel
+# started with one of them present was started by an assistant, not by the user in a terminal.
+ASSISTANT_ENVIRONMENT = ('CLAUDECODE', 'CLAUDE_CODE_ENTRYPOINT', 'CODEX_SANDBOX', 'CODEX_SANDBOX_NETWORK_DISABLED',
+                         'CODEX_THREAD_ID', 'CODEX_CI', 'AI_AGENT')
+STARTED_BY_ASSISTANT = ('This control panel was started from inside an assistant session, so it does not merge delegated '
+                        'work while the project is in production and does not move the project back to development. '
+                        'Start the control panel from your own terminal with project-memory view and record the action '
+                        'there.')
+URL_WITHHELD = ('The control panel address is not printed inside an assistant session, because the address carries the '
+                'access key of the panel. The browser was asked to open it. Run project-memory view in your own terminal '
+                'to print the address.')
+
+
+def assistant_session(environ=None):
+    """The names of the assistant environment variables that are set, or an empty list in a terminal of the user."""
+    environ = os.environ if environ is None else environ
+    return [name for name in ASSISTANT_ENVIRONMENT if str(environ.get(name) or '').strip()]
+
+
+def user_authority_refusal(memory, operation, data):
+    """The refusal for an action that a panel started by an assistant does not carry, or None.
+
+    The gate of the project phase makes the merge in production a user action.
+    A panel that an assistant started itself could otherwise carry that action
+    under the name of the user, so it refuses the merge in production and the
+    return of the project to development. Every other action is unchanged.
+    """
+    from .planning import phase
+    if operation == 'merge' and phase(memory)['phase'] == 'production':
+        return STARTED_BY_ASSISTANT
+    if operation == 'phase' and isinstance(data, dict) and data.get('phase') != 'production':
+        return STARTED_BY_ASSISTANT
+    return None
 
 
 def html():
@@ -67,8 +100,9 @@ class Viewer(ThreadingHTTPServer):
     daemon_threads = True
     tree_interval = TREE_INTERVAL
 
-    def __init__(self, path, token, port=0):
+    def __init__(self, path, token, port=0, *, assistant_started=False):
         self.memory = Memory(path, read_only=True, any_thread=True)
+        self.assistant_started = bool(assistant_started)
         self.lock = threading.Lock()
         self.token = token
         self.boot = uuid.uuid4().hex
@@ -163,7 +197,7 @@ class Viewer(ThreadingHTTPServer):
             self.memory.db.rollback()
         value = {'revision': revision, **value}
         if name == 'health':
-            value.update(csrf=self.csrf, interactive=True)
+            value.update(csrf=self.csrf, interactive=True, assistant_started=self.assistant_started)
         return value
 
     def server_close(self):
@@ -236,6 +270,12 @@ class Handler(BaseHTTPRequestHandler):
             self.server.last_access = time.monotonic()
             from .workspace import action
             with Memory(self.server.memory.path) as memory:
+                refusal = (user_authority_refusal(memory, data.get('operation'), data.get('data'))
+                           if self.server.assistant_started else None)
+                if refusal:
+                    raise InvalidRecord(refusal, execution='not_started',
+                                        next_step={'action': 'start_panel_in_terminal',
+                                                   'reason': 'Run project-memory view in your own terminal.'})
                 value = action(memory, **data)
             status = 200
         except ERRORS as exc:
@@ -320,8 +360,11 @@ def _start(path, state):
         try:
             with build_opener(ProxyHandler({})).open(previous['url'] + 'api/health', timeout=1) as response:
                 health = json.load(response)
+                # A panel started by an assistant is not handed to the user in a terminal, because it does not
+                # carry the actions reserved for the user.
+                reusable = not health.get('assistant_started') or bool(assistant_session())
                 if health.get('database') == str(path):
-                    if health.get('package_version') == __version__:
+                    if health.get('package_version') == __version__ and reusable:
                         return {**{k: v for k, v in previous.items() if k != 'token'}, 'reused': True}
                     # Keep an older viewer intact; the new release opens its own
                     # port instead of reusing stale code or killing an unchecked PID.
@@ -366,7 +409,7 @@ def main():
     args = parser.parse_args()
     state = Path(args.state)
     info = json.loads(state.read_text())
-    with Viewer(args.db, info['token'], info.get('port', 0)) as server:
+    with Viewer(args.db, info['token'], info.get('port', 0), assistant_started=bool(assistant_session())) as server:
         info.update(port=server.server_port, url=f'http://127.0.0.1:{server.server_port}/{info["token"]}/', phase='ready', pid=os.getpid())
         atomic(state, dumps(info))
         state.chmod(0o600)

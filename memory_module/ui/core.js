@@ -66,6 +66,7 @@ const Panel = (() => {
   const NAV = [["now", "Now", "Delivery"], ["plan", "Plan", "Delivery"], ["work", "Work", "Delivery"],
     ["architecture", "Architecture", "Structure"], ["dependencies", "Dependencies", "Structure"],
     ["decisions", "Decisions", "Oversight"], ["learning", "Learning", "Oversight"], ["agents", "Agents", "Oversight"],
+    ["machine", "Machine", "Oversight"],
     ["records", "Records", "Reference"], ["requirements", "Requirements", "Reference"]];
   const COLORS = { blocked: "#b42318", review: "#b54708", in_progress: "#4457e6", ready: "#25715a",
     done: "#6b7280", backlog: "#9ca3af", guarded: "#7a5af8", neutral: "#65625d" };
@@ -332,8 +333,24 @@ const Panel = (() => {
       else node.removeAttribute("aria-current");
     }
   }
+  // The phase of the project decides who merges delegated work, so the top bar states it and offers the change.
+  function updatePhase() {
+    const value = (state.health || {}).phase;
+    const node = $("phase");
+    node.hidden = !value;
+    if (!value) return;
+    const name = words(value.phase);
+    const explanation = value.meaning + (value.reason ? " Reason: " + value.reason : "");
+    const parts = [h("span", { class: "phase-label" }, "Lifecycle"),
+      h("span", { class: "phase-value", dataset: { tone: value.phase === "production" ? "review" : "in_progress" } }, name)];
+    node.replaceChildren(canEdit()
+      ? h("button", { type: "button", class: "phase-button", title: explanation, dataset: { key: "phase-change" },
+        on: { click: (event) => openForm("phase", { phase: value.phase }, event.currentTarget) } }, parts)
+      : h("span", { class: "phase-button", title: explanation }, parts));
+  }
   async function updateShell() {
     $("project-name").textContent = (state.health && state.health.project) || snapshot.project || "Project Memory";
+    updatePhase();
     await loadTemplate();
     const counts = await get("now").then((now) => now.counts || {}, () => ({}));
     $("ledger").replaceChildren(...stateStrip(counts).childNodes);

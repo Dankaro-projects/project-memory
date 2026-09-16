@@ -129,11 +129,19 @@ def assistant_rules(memory, *, session_id, targets, text='', root=None, limit=RU
                guards.matching_guards(memory, paths=list(targets), text=text, guards=triggered, root=root)}
     selected.extend(rule for rule in triggered if rule['lesson_id'] in matched)
     pending = guards.confirm_guards(memory, selected)
-    if not pending:
-        return {'text': '', 'rule_ids': [], 'omitted': []}
-    composed = guards.compose(memory, 'assistant', paths=list(targets), text=text, rules=pending, root=root)
+    machine_memory, opened, _ = guards._machine_memory(None)
+    try:
+        machine_available, machine_seen = _machine_candidates(memory, machine_memory, session_id=session_id,
+                                                              targets=targets, text=text, root=root, recording=recording)
+        if not pending and not machine_available:
+            return {'text': '', 'rule_ids': [], 'omitted': []}
+        composed = guards.compose(memory, 'assistant', paths=list(targets), text=text, rules=pending, root=root,
+                                  machine=machine_memory if machine_available else False, machine_exclude=machine_seen)
+    finally:
+        if opened:
+            machine_memory.close()
     available = {rule['lesson_id']: rule for rule in pending}
-    blocks, shown = [], []
+    blocks, shown, machine_shown = [], [], []
     omitted = list(composed['omitted'])
     # The rule blocks stay within the budget of the role, including the identifier each one carries.
     # The sentence that names the rules left out is a report, not rule text, and follows that budget.
@@ -153,12 +161,30 @@ def assistant_rules(memory, *, session_id, targets, text='', root=None, limit=RU
         blocks.append(block)
         shown.append((lesson_id, matched[:20]))
         used += len(block) + 1
-    if omitted:
-        note = ('These accepted rules also apply and were not carried here: '
-                + ', '.join(entry['lesson_id'] for entry in omitted) + '. Read them with memory_get record.')
+    # The rules promoted to this machine follow the rules of the project, each marked as machine level.
+    for lesson_id in composed['machine_rule_ids']:
+        block = f'Project Memory machine rule {lesson_id}. ' + guards.render_machine_rule(machine_available[lesson_id])
+        if used + len(block) + 1 > rule_limit:
+            omitted.append({'lesson_id': lesson_id, 'level': 'machine',
+                            'reason': f'This machine rule did not fit within the budget of {rule_limit} characters.'})
+            continue
+        blocks.append(block)
+        machine_shown.append(lesson_id)
+        used += len(block) + 1
+    project_omitted = [entry['lesson_id'] for entry in omitted if entry.get('level') != 'machine']
+    machine_omitted = [entry['lesson_id'] for entry in omitted if entry.get('level') == 'machine']
+    notes = []
+    if project_omitted:
+        notes.append('These accepted rules also apply and were not carried here: ' + ', '.join(project_omitted)
+                     + '. Read them with memory_get record.')
+    if machine_omitted:
+        notes.append('These machine rules also apply and were not carried here: ' + ', '.join(machine_omitted)
+                     + '. Read them with memory_get machine.')
+    for note in notes:
         if used + len(note) + 1 <= limit:
             blocks.append(note)
-    if shown and recording:
+            used += len(note) + 1
+    if (shown or machine_shown) and recording:
         with memory._write():
             for lesson_id, matched in shown:
                 key, already = rule_shown(memory, session_id, lesson_id)
@@ -167,7 +193,37 @@ def assistant_rules(memory, *, session_id, targets, text='', root=None, limit=RU
                 receipt(memory, session_id=session_id, event_name='GuardShown', episode_id=None,
                         payload={'lesson_id': lesson_id, 'review_id': available[lesson_id]['review_id'],
                                  'targets': matched}, key=key)
-    return {'text': ' '.join(blocks), 'rule_ids': [lesson_id for lesson_id, _ in shown], 'omitted': omitted}
+            for lesson_id in machine_shown:
+                key, already = rule_shown(memory, session_id, lesson_id)
+                if already:
+                    continue
+                receipt(memory, session_id=session_id, event_name='GuardShown', episode_id=None,
+                        payload={'machine_rule_id': lesson_id, 'level': 'machine'}, key=key)
+    return {'text': ' '.join(blocks), 'rule_ids': [lesson_id for lesson_id, _ in shown],
+            'machine_rule_ids': machine_shown, 'omitted': omitted}
+
+
+def _machine_candidates(memory, machine_memory, *, session_id, targets, text, root, recording):
+    """The machine rules of the assistant that this edit or prompt triggers and the session has not seen.
+
+    The second value names the triggered machine rules the session has already
+    seen, so the composition leaves them out as it leaves out the project rules
+    already shown. A machine memory that cannot be read yields no rule.
+    """
+    if machine_memory is None:
+        return {}, []
+    try:
+        found = guards.machine_rules(machine_memory, 'assistant', paths=list(targets), text=text, root=root)
+    except guards.MACHINE_READ_ERRORS:
+        return {}, []
+    available = {}
+    seen = []
+    for rule in found:
+        if recording and rule_shown(memory, session_id, rule['lesson_id'])[1]:
+            seen.append(rule['lesson_id'])
+        else:
+            available[rule['lesson_id']] = rule
+    return available, seen
 
 
 def record_block(memory, *, session, turn, tool, tool_id, host, result):
@@ -239,6 +295,10 @@ def session_context(memory, session, compacted=False):
         if latest(memory, active['episode_id'], 'work_plan'):
             parts.append(f'Use memory_get next with id {active["episode_id"]} and this session_id to recover its intent, scope and next action.')
     parts.append(f'{state["unconfirmed_total"]} tool calls need reconciliation.' if state['unconfirmed_total'] else 'No tool calls need reconciliation.')
+    from .planning import phase as project_phase
+    if project_phase(memory)['phase'] == 'production':
+        parts.append('This project is in production: delegated work and its review still run, and only the user brings '
+                     'the result into the project, in the control panel.')
     parts.append('Use memory_context before repeating research. Record a decision when choosing or revising an approach with consequences, using this session_id, evidence, uncertainty and alternatives. Routine acknowledgement needs no decision record. '
                  'Tool receipts are observations; outcomes and lesson acceptance require explicit assessment.')
     return ' '.join(parts)

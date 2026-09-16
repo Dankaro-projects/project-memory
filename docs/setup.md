@@ -151,6 +151,20 @@ project-memory view --output review.html --include-bodies --replace --no-open
 
 An explicit output path writes a static snapshot with the same views and no network access. Existing files are protected unless `--replace` is given, and replacement uses a temporary file and an atomic rename. Source bodies are optional. Check an export before sharing it, because it contains project evidence.
 
+## The memory of this machine
+
+One computer holds many projects, each with its own memory, and above them one memory for the machine itself. It holds the rules you promoted out of single projects and a registry of the projects on this computer. It is an ordinary Project Memory database, so the same store, validation and panel apply, and it adds no runtime dependency.
+
+```sh
+project-memory machine init
+project-memory machine list
+project-memory machine rules --role worker
+```
+
+`init` creates the database and records the project of the current folder in the registry. `list` reads the registry, and `rules` reads the promoted rules with the basis written at promotion and the number of projects that promoted each one. The location is `PROJECT_MEMORY_MACHINE_DB`, or `~/.project-memory/machine.sqlite` when that variable is not set. The first promotion you accept in the control panel creates the database as well, so `init` is optional.
+
+The machine memory holds promoted rules and the registry. It holds no customer name, no record identifier of a project, no absolute project path, no document content, no diff and no evidence body. The registry stays on this computer and is never exported. See [agent checks and delegated work](agents.md) for how a rule is proposed, accepted and composed into a prompt.
+
 ## Agent hosts
 
 Configuring Codex or Claude Code also enables agent checks and delegated work through that installed CLI and account. Those runs consume the account's usage. Configuring both hosts lets a check run on a host other than the one that did the work, and lets a delegated run reroute when one host reports a usage limit. See [agent checks and delegated work](agents.md).

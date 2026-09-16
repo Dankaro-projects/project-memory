@@ -18,12 +18,15 @@ def inspect(memory):
     from .coverage import sessions
     coverage = sessions(memory,limit=5) if installed else {'sessions':[],'more':False}
     counts = {r[0]: r[1] for r in memory.db.execute('SELECT event_name,count(*) FROM host_receipts GROUP BY event_name')} if installed else {}
+    from .planning import phase as project_phase, PHASE_MEANING
+    current_phase = project_phase(memory)
     groups=memory.metrics()['groups']
     costs={key: {'total':sum(g['reported_costs'][key]['total'] for g in groups),
                  'reported_decisions':sum(g['reported_costs'][key]['reported_decisions'] for g in groups)}
            for key in ('tokens','context_characters','human_corrections','repeated_research','maintenance_ms')}
     return {'measurements':costs,'decisions':sum(g['decisions'] for g in groups),
             'assessed':sum(g['assessed'] for g in groups),'project': memory.project, 'database': str(memory.path), 'package_version': __version__,
+            'phase': {**current_phase, 'meaning': PHASE_MEANING[current_phase['phase']]},
             'baseline': {'status': 'not_established' if direction['requirements'] == [PLACEHOLDER] else 'recorded',
                          'requirements': 0 if direction['requirements'] == [PLACEHOLDER] else len(direction['requirements']),
                          'version': direction['version'], 'evidence_status': direction.get('status', 'current'),

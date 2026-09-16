@@ -9,8 +9,13 @@ revision; a document with an exception; an accepted lesson with path triggers an
 a recurrence; a rule accepted for every agent role and a reviewer base text saved
 by the user; a proposed lesson; a scope block receipt; a completed delegated run
 with a passing work review that awaits a merge; authored components with links;
+one rule accepted into the machine memory and one promotion that awaits the user;
 and project files for the template (a small source tree, engagement documents or
 exported n8n workflows).
+
+The machine memory of the fixture is created inside the fixture folder, because
+PROJECT_MEMORY_MACHINE_DB is set before the records are written, so no check reads
+or writes the machine memory of this computer.
 
 Agent runs are inserted as finished rows. No host process runs, and the project is
 not a git repository, so delegation from the panel stops with a message. With
@@ -31,7 +36,7 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from memory_module import Memory, architecture, codex_host, graph, hosts, reviews, templates  # noqa: E402
+from memory_module import Memory, architecture, codex_host, graph, hosts, machine, reviews, templates  # noqa: E402
 from memory_module.planning import latest, save  # noqa: E402
 from memory_module.workspace import action  # noqa: E402
 
@@ -42,6 +47,16 @@ BASE_TEXT = ('You are the reviewer in this project. Assess the supplied work aga
              'Give one verdict of pass, changes required or uncertain. Do not edit files, repeat the work or merge.')
 USER = 'workspace-user'
 AGENT = 'assistant'
+# Two rules for the machine memory. Their text names no project, path, record, document, address or host, because the
+# mechanical checks of a promotion refuse text that belongs to one project alone.
+ACCEPTED_RULE = {'when': 'work is delegated to an agent',
+                 'do': 'Name the files the agent may change before the run starts.',
+                 'because': 'A run without a named boundary changes work that nobody reviewed.',
+                 'exceptions': 'A run that only reads and reports.'}
+PROPOSED_RULE = {'when': 'a change is ready to be merged',
+                 'do': 'State which checks ran and what they reported before the merge.',
+                 'because': 'A merge without a recorded check result hides a failure until a user meets it.',
+                 'exceptions': 'A change that only corrects wording in a comment.'}
 
 
 HOST_PROGRAM = '''import json, os, pathlib, sys
@@ -510,6 +525,18 @@ class Builder:
         hosts.mark_unavailable(self.m, 'claude', 'The fixture records a usage limit for this host.')
         self.ids.update(work_run=work, work_review=review_id, diff_source=source['id'])
 
+    def machine_memory(self):
+        """One rule already accepted into the machine memory and one proposal that awaits the user."""
+        accepted = machine.propose(self.m, **ACCEPTED_RULE, basis='Two delegated runs changed work that nobody had named.',
+                                   roles=['worker'], actor=AGENT, request_key='fixture:promote:accepted')
+        result = action(self.m, 'promotion', {'promotion_id': accepted['id'], 'status': 'accepted',
+                                              'reason': 'The rule holds for every project on this computer.'},
+                        'fixture:promotion:accepted')
+        waiting = machine.propose(self.m, **PROPOSED_RULE, basis='A merge without a recorded check result was corrected twice.',
+                                  roles=['reviewer', 'worker'], actor=AGENT, request_key='fixture:promote:proposed')
+        self.ids.update(machine_rule=result['machine_rule_id'], accepted_promotion=accepted['id'],
+                        proposed_promotion=waiting['id'])
+
     def components(self):
         created = {}
         for key, title, kind, description, status, path, actor in self.spec['components']:
@@ -530,6 +557,8 @@ def build(kind, output):
     if root.exists() and any(root.iterdir()):
         raise SystemExit('The output folder must be empty or missing, because the fixture records cannot be created twice.')
     root.mkdir(parents=True, exist_ok=True)
+    # The machine memory of the fixture stays inside the fixture folder, so no check reads the one of this computer.
+    os.environ[machine.DATABASE_VARIABLE] = str(root / '.memory' / 'machine.sqlite')
     for relative, text in spec['files'].items():
         path = root / relative
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -546,6 +575,7 @@ def build(kind, output):
         builder.scope_block()
         builder.delegated_run()
         builder.components()
+        builder.machine_memory()
         ids = builder.ids
     return {'kind': kind, 'project': str(root), 'database': result['database'], 'ids': ids}
 
@@ -558,6 +588,7 @@ def serve(description):
     fake.write_text('#!' + sys.executable + '\nimport sys\nsys.stderr.write("The fixture host does not run agents.\\n")\nsys.exit(1)\n',
                     encoding='utf-8')
     fake.chmod(0o755)
+    os.environ[machine.DATABASE_VARIABLE] = str(root / '.memory' / 'machine.sqlite')
     os.environ['PROJECT_MEMORY_CODEX_BIN'] = str(fake)
     os.environ['PROJECT_MEMORY_CLAUDE_BIN'] = str(fake)
     os.environ['PYTHONPATH'] = str(ROOT) + (os.pathsep + os.environ['PYTHONPATH'] if os.environ.get('PYTHONPATH') else '')

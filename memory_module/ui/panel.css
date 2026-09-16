@@ -146,6 +146,16 @@ input::placeholder, textarea::placeholder { color: #8a867f; }
 .status[data-state="snapshot"]::before { background: var(--dk-status-done); }
 .search input { width: 260px; }
 
+/* The phase of the project decides who merges delegated work, so the top bar states it. */
+.phase { flex: none; }
+.phase-button {
+  display: inline-flex; align-items: center; gap: 6px; min-height: 32px; padding: 4px var(--dk-space-2);
+  font-size: 12px; font-weight: 700; color: var(--dk-color-support); background: var(--dk-color-surface);
+  border: 1px solid var(--dk-color-border); border-radius: var(--dk-radius); white-space: nowrap;
+}
+button.phase-button:hover { background: var(--dk-color-white); border-color: var(--dk-color-accent); }
+.phase-value { padding: 0 6px; border-radius: 4px; color: var(--tone-text, var(--dk-color-ink)); background: var(--tone-bg, transparent); }
+
 /* The bottom rule of the top bar shows the work items by state. */
 .ledger { position: absolute; left: 0; right: 0; bottom: -1px; height: 4px; display: flex; gap: 1px; background: var(--dk-color-border); }
 .strip { display: flex; gap: 2px; min-height: 4px; }

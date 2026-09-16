@@ -11,14 +11,22 @@ The live service binds to `127.0.0.1`, uses a random capability in its address, 
 
 ## Layout
 
-A navigation rail on the left groups the ten views in four sections. Below 900 pixels it collapses into a top menu. The top bar carries the project name, the live state and a search box. Records open in a drawer on the right, which Escape closes and which returns focus to the control that opened it. The page stays usable down to 320 pixels; only graphs, tables and code blocks scroll inside their own container.
+A navigation rail on the left groups the eleven views in four sections. Below 900 pixels it collapses into a top menu. The top bar carries the project name, the live state, the phase of the project and a search box. Records open in a drawer on the right, which Escape closes and which returns focus to the control that opened it. The page stays usable down to 320 pixels; only graphs, tables and code blocks scroll inside their own container.
 
 | Section | Views |
 | --- | --- |
 | Delivery | Now, Plan, Work |
 | Structure | Architecture, Dependencies |
-| Oversight | Decisions, Learning, Agents |
+| Oversight | Decisions, Learning, Agents, Machine |
 | Reference | Records, Requirements |
+
+## The phase of the project
+
+The top bar states the phase under the label Lifecycle, so it is not confused with the phases of a plan: development or production. The phase decides who merges delegated work. In development the orchestrator may merge a run after a passing work review. In production every merge is a user action in the Agents view, and a merge over MCP is refused with the reason that the work is prepared and waiting.
+
+Selecting the phase opens a form that asks for the new phase and a reason. The reason is required. The phase is recorded as a new version, so every earlier phase and its reason stay readable, and only you can record it: a write from an agent to the phase is refused. A change of phase also updates the phase of this project in the registry of the machine memory.
+
+A control panel that was started from inside an assistant session, where Claude Code or Codex set their environment variables, does not merge delegated work in production and does not move the project back to development. Start the panel from your own terminal with `project-memory view` for those actions. Inside an assistant session, `project-memory view` asks the browser to open the panel and does not print its address, because the address carries the access key of the panel.
 
 Labels follow the project template. An engagement calls components "Stakeholders and workstreams", an automation calls them "Systems and workflows", and a product calls them "Components".
 
@@ -97,6 +105,21 @@ The counts are counts only. No model judges a rule, pending and uncertain runs s
 ## Agents
 
 Agents shows one card per configured host with whether it is installed, whether it is available, until when it is unavailable and the reason. The runs table lists the role, the host, the state, the work item, the number of changed files, the review state and the merge state. A run opens with its report, its criterion level findings, its diff summary and the buttons that apply: Merge, Discard and Cancel. The delegation columns stay empty for an agent check, which changes no files.
+
+## Machine
+
+Machine reads the memory of this computer, which sits above the projects on it. The view lists:
+
+| Part | Content |
+| --- | --- |
+| Proposals from this project | The promotions an agent proposed here, with Accept and Decline. The acceptance form opens the text of the rule for correction before it is written. |
+| Rules in force | Each promoted rule with its trigger words, its roles, the basis written at promotion, how many projects promoted it and Retire. |
+| Retired rules | The rules you retired. They reach no prompt and stay readable. |
+| Projects on this machine | The registry: the path, the template, the phase and the dates of every project on this computer. |
+
+The view states the isolation rule in place: effectiveness stays in each project, the adoption count reports how many projects promoted a rule, and no outcome is combined across projects. The registry stays on this computer, it is not part of an export, and no agent reads it. A snapshot carries no machine response at all, so the view says so instead of showing an empty list.
+
+A rule in force is not rewritten. Retire it and promote the corrected text, so the history of both stays readable. Only you write to the machine memory: an agent can propose a promotion and read the rules that were accepted.
 
 ## Records
 
