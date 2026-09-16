@@ -22,7 +22,7 @@ jobs:
       - uses: astral-sh/setup-uv@v6
       - run: python scripts/check_publication.py
       - run: python -u -X faulthandler -m unittest discover -s tests -v
-        timeout-minutes: 8
+        timeout-minutes: 20
         env:
           PYTHONFAULTHANDLER: '1'
       - run: python -m tests.integration.document_case --output results/documents

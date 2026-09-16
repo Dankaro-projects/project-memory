@@ -231,11 +231,11 @@ class GuardHistoryTests(Fixture):
     def test_absolute_and_relative_guard_paths_match_each_other(self):
         relative_lesson = self.lesson(paths=['src/parser'])
         self.accept(relative_lesson)
-        episode = self.work(paths=[str(self.root / 'src' / 'parser')])
+        episode = self.work(paths=[(self.root / 'src' / 'parser').as_posix()])
         with self.assertRaises(InvalidRecord) as caught:
             self.decision(episode)
         self.assertIn(relative_lesson, str(caught.exception))
-        absolute_lesson = self.lesson(paths=[str(self.root / 'src' / 'lexer.py')])
+        absolute_lesson = self.lesson(paths=[(self.root / 'src' / 'lexer.py').as_posix()])
         self.accept(absolute_lesson)
         self.assertEqual([guard['lesson_id'] for guard in guards.matching_guards(self.m, paths=['src/lexer.py'])],
                          [absolute_lesson])
@@ -499,7 +499,7 @@ class ScopeHookTests(Fixture):
         self.assertEqual(self.receipts('PreToolUse'), [])
 
     def test_reminders_match_absolute_guard_paths_and_absolute_targets(self):
-        absolute = self.lesson(paths=[str(self.root / 'src' / 'parser')])
+        absolute = self.lesson(paths=[(self.root / 'src' / 'parser').as_posix()])
         self.accept(absolute)
         relative = self.lesson(paths=['src/lexer.py'])
         self.accept(relative)
