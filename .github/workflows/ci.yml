@@ -25,7 +25,7 @@ jobs:
         timeout-minutes: 5
       - run: python -m tests.integration.document_case --output results/documents
       - run: python -m tests.integration.host_example --output results/host-example
-      - run: node tests/browser/viewer_logic.cjs
+      - run: node tests/browser/static_check.cjs
       - run: uv build
       - run: python scripts/check_artifacts.py dist
       - run: python scripts/installed_smoke.py dist
@@ -41,9 +41,8 @@ jobs:
           node-version: '22'
       - run: npm install --no-save playwright@1.55.1
       - run: npx playwright install --with-deps chromium
-      - run: python -m tests.integration.host_example --output results/host-example
-      - run: node tests/browser/browser_check.cjs
-      - run: node tests/browser/workspace_browser.cjs
-      - run: node tests/browser/knowledge_browser.cjs
-      - run: node tests/browser/dependencies_browser.cjs
-      - run: node tests/browser/usability_browser.cjs
+      - run: node tests/browser/static_check.cjs
+      - run: node tests/browser/panel_browser.cjs
+        timeout-minutes: 15
+      - run: node tests/browser/export_browser.cjs
+        timeout-minutes: 15

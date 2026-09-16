@@ -21,14 +21,14 @@ python scripts/check_publication.py
 python -m unittest discover -s tests -q
 python -m tests.integration.document_case --output results/documents
 python -m tests.integration.host_example --output results/host-example
-node tests/browser/viewer_logic.cjs
+node tests/browser/static_check.cjs
 python scripts/build_bundle.py
 uv build
 python scripts/check_artifacts.py dist
 python scripts/installed_smoke.py dist
 ```
 
-For UI changes, install development-only Playwright and its Chromium browser, then run `node tests/browser/browser_check.cjs` and `node tests/browser/workspace_browser.cjs`. `MEMORY_PLAYWRIGHT` can select an existing Playwright installation and `MEMORY_PYTHON` selects the project interpreter. Native model tests are opt-in; see [testing and limitations](docs/evidence.md).
+For UI changes, install development-only Playwright and its Chromium browser, then run `node tests/browser/panel_browser.cjs` and `node tests/browser/export_browser.cjs`. `MEMORY_PLAYWRIGHT` can select an existing Playwright installation and `MEMORY_PYTHON` selects the project interpreter. Native model tests are opt-in; see [testing and limitations](docs/evidence.md).
 
 Run the publication check before committing, then use `python scripts/check_publication.py --ref HEAD` to check the committed tree before pushing. It checks files against the public layout and scans text for likely credentials, personal paths, session identifiers and private workspace URLs. New documentation requires an intentional addition to the allowlist and source-package configuration. The release gate also inspects the actual wheel, source archive and MCPB.
 

@@ -1,0 +1,160 @@
+// Browser checks for the offline snapshot: one local file, no network, no edit controls, inert payloads.
+// Usage: node tests/browser/export_browser.cjs
+// MEMORY_PLAYWRIGHT selects an existing Playwright installation and MEMORY_PYTHON selects the interpreter.
+const { chromium } = require(process.env.MEMORY_PLAYWRIGHT || "playwright");
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
+const { execFileSync } = require("node:child_process");
+const { pathToFileURL } = require("node:url");
+
+const ROOT = path.resolve(__dirname, "../..");
+const PYTHON = process.env.MEMORY_PYTHON || "python";
+const VIEWS = ["now", "plan", "work", "architecture", "dependencies", "decisions", "learning", "agents", "records", "requirements"];
+const KINDS = {
+  product: { architecture: "Components and packages", term: "Components" },
+  engagement: { architecture: "Stakeholders and workstreams", term: "Stakeholders and workstreams" },
+  automation: { architecture: "Systems and workflows", term: "Systems and workflows" },
+};
+const results = [];
+const step = (name) => { results.push(name); console.log("ok  " + name); };
+
+function snapshot(kind, directory) {
+  const output = path.join(directory, kind);
+  const file = path.join(directory, kind + ".html");
+  const printed = execFileSync(PYTHON, [path.join(ROOT, "tests/browser/fixture.py"), "--kind", kind, "--output", output, "--export", file],
+    { cwd: ROOT, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
+  return JSON.parse(printed);
+}
+function watch(page) {
+  const problems = [];
+  page.on("pageerror", (error) => problems.push("page error: " + error.message));
+  page.on("console", (message) => { if (message.type() === "error") problems.push("console: " + message.text()); });
+  return problems;
+}
+const settle = (page) => page.waitForFunction(() => !document.querySelector("#main .view.pending, .drawer-content.pending"));
+async function go(page, hash) {
+  await page.evaluate((value) => { location.hash = value; }, hash);
+  await page.waitForFunction((name) => document.querySelector(`#main .view[data-view="${name}"]:not(.pending)`), hash.split("/")[0].slice(1));
+  await settle(page);
+}
+async function noOverflow(page, width, label) {
+  await page.setViewportSize({ width, height: 900 });
+  await page.waitForTimeout(250);
+  const size = await page.evaluate(() => [document.documentElement.scrollWidth, document.documentElement.clientWidth]);
+  assert.ok(size[0] <= size[1], `${label} overflows at ${width} pixels: ${size}`);
+}
+const text = (page, selector) => page.locator(selector).first().innerText();
+const drawer = (page) => page.locator("#drawer-body .drawer-content:not(.pending)");
+
+(async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "export-browser-"));
+  const browser = await chromium.launch({ headless: true, args: ["--no-sandbox"] });
+  try {
+    for (const [kind, expected] of Object.entries(KINDS)) {
+      const fixture = snapshot(kind, directory);
+      const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+      const problems = watch(page);
+      const requests = [];
+      page.on("request", (request) => { if (!request.url().startsWith("file:") && !request.url().startsWith("data:")) requests.push(request.url()); });
+      await page.goto(pathToFileURL(fixture.snapshot).href);
+      await page.waitForFunction(() => /^Snapshot from /.test(document.getElementById("live-status").textContent), null, { timeout: 20000 });
+      assert.equal(await page.evaluate(() => Panel.canEdit()), false);
+      assert.equal(await page.locator("#template-notice").isVisible(), false);
+      assert.equal(await page.evaluate(() => Panel.term("components")), expected.term);
+      step(`${kind}: the snapshot opens read only with its own labels and the export time`);
+
+      // Every view renders from the embedded responses alone. An unscoped snapshot holds every
+      // project view, so no view may fall back to the load failure that Panel.errorState renders.
+      for (const name of VIEWS) {
+        await go(page, "#" + name);
+        const body = await text(page, "#main");
+        assert.ok(body.length > 40, `${kind}: the ${name} view is empty`);
+        assert.ok(!body.includes("This content could not be loaded."), `${kind}: the ${name} view failed to load`);
+      }
+      assert.match(await text(page, "#main"), /requirements/i);
+      await go(page, "#now");
+      assert.equal(await text(page, "#main .sentence"), "1 work item is in progress, 2 are blocked and 1 needs review.");
+      await go(page, "#plan");
+      assert.match(await text(page, "#main .sentence"), /16 work items are planned in 7 phases\./);
+      await go(page, "#architecture");
+      assert.equal(await text(page, "#main .view-head h2"), expected.architecture);
+      await page.waitForSelector("#main .graph canvas");
+      await go(page, "#dependencies");
+      assert.match(await text(page, "#dep-panel .sentence"), /8 dependencies connect 10 work items\./);
+      await go(page, "#decisions");
+      assert.equal(await page.locator('#main [data-key^="decision-event_"]').count(), 3);
+      step(`${kind}: all ten views render from the embedded responses`);
+
+      await go(page, "#agents");
+      assert.ok(!(await text(page, "#main")).includes("Not applicable"), `${kind}: the snapshot runs table prints Not applicable`);
+      await go(page, "#now");
+      assert.match(await text(page, "#main"), /occurred once after the lesson was accepted/);
+      assert.equal(await page.locator('#main [data-key^="now-attention-"] .item-action').count(), 8);
+      step(`${kind}: the snapshot counts a single event in the singular and names the action of every attention entry`);
+
+      // No action is offered and none can be opened.
+      for (const name of VIEWS) {
+        await go(page, "#" + name);
+        const controls = await page.locator('#main [data-key^="form:"], #main #arch-add, #main #review-requirements, ' +
+          '#main [data-key^="accept-"], #main [data-key^="retire-"], #main [data-key^="merge-"], #main [data-key^="plan-add-"]').count();
+        assert.equal(controls, 0, `${kind}: the ${name} view offers an edit control in a snapshot`);
+      }
+      assert.equal(await page.evaluate(() => Panel.openForm("plan", {})), null);
+      assert.equal(await page.locator("#form-dialog").evaluate((node) => node.open), false);
+      step(`${kind}: no view offers an edit control and no form can be opened`);
+
+      // A record that the snapshot does not hold says so instead of failing.
+      await page.evaluate(() => Panel.openRecord("event_missing_from_this_snapshot"));
+      await page.waitForFunction(() => /not included in this snapshot/.test(document.getElementById("drawer-body").textContent));
+      await page.evaluate(() => Panel.closeDrawer());
+      step(`${kind}: a record outside the snapshot states that it is not included`);
+
+      // The document keeps its structure, and the payloads inside it stay inert.
+      await page.evaluate((id) => Panel.openRecord(id), fixture.ids.document);
+      await page.waitForFunction(() => /Outline/.test((document.querySelector("#drawer-body .drawer-content:not(.pending)") || {}).textContent || ""));
+      assert.equal(await drawer(page).locator(".document table tbody tr").count(), 2);
+      assert.equal(await drawer(page).locator('a[href^="javascript:"]').count(), 0);
+      assert.equal(await drawer(page).locator("img").count(), 0);
+      assert.equal(await drawer(page).locator('a[href^="https:"]').first().getAttribute("rel"), "noopener noreferrer");
+      assert.match(await drawer(page).innerText(), /<img src=x onerror=/);
+      await drawer(page).locator('[data-key="source-toggle"]').click();
+      assert.equal(await drawer(page).locator("pre.source-text").count(), 1);
+      await page.evaluate(() => Panel.closeDrawer());
+      step(`${kind}: the document keeps its table and outline, and its raw HTML and javascript link stay inert`);
+
+      // The note that carries a closing script tag must not have run.
+      await page.evaluate((id) => Panel.openRecord(id), fixture.ids.review);
+      await page.waitForFunction(() => document.getElementById("drawer-title").textContent !== "Loading");
+      assert.equal(await page.evaluate(() => window.injected), undefined);
+      await page.evaluate(() => Panel.closeDrawer());
+      step(`${kind}: the injected script payload did not run`);
+
+      for (const width of [1440, 768, 390, 320]) {
+        for (const hash of ["#now", "#work", "#architecture", "#records"]) {
+          await go(page, hash);
+          await noOverflow(page, width, `${kind} ${hash}`);
+        }
+      }
+      await page.setViewportSize({ width: 1440, height: 900 });
+      step(`${kind}: no page overflow at 1440, 768, 390 and 320 pixels`);
+
+      assert.deepEqual(requests, [], `${kind}: the snapshot made a network request`);
+      assert.deepEqual(problems, [], `${kind}: the snapshot logged console or page errors`);
+      step(`${kind}: the snapshot made no network request and logged no error`);
+      await page.close();
+    }
+
+    // The unrendered template explains how to open the panel instead of showing an empty page.
+    const template = await browser.newPage();
+    await template.goto(pathToFileURL(path.join(ROOT, "memory_module", "viewer.html")).href);
+    assert.equal(await template.locator("#template-notice").isVisible(), true);
+    assert.equal(await template.locator("#app").isVisible(), false);
+    step("the unrendered template shows the launch instructions and no panel");
+    console.log(`\n${results.length} checks passed.`);
+  } finally {
+    await browser.close();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+})().catch((error) => { console.error(error); process.exit(1); });

@@ -1,0 +1,573 @@
+/*
+ * Project Memory control panel: views_work.js registers the Now, Plan, Work and Decisions views and the "work" and
+ * "decision" drawers. It uses only the Panel contract of core.js.
+ *
+ * Forms: buttons open the forms that forms.js registers under the workspace operation names plan, comment,
+ * allow_paths, delegate, review and answer_kickoff. Work item forms receive {episode_id, expected_version, card,
+ * plan, title}; Add item passes {parent_id, item_type}; allow_paths may pass the blocked paths. A form that is not
+ * registered shows a toast instead of failing. The drawers draw the lineage with Panel.lineageGraph of graphs.js,
+ * which keeps its own toggle to a readable list, and runs open the "run" drawer of views_knowledge.js.
+ */
+(() => {
+  "use strict";
+  const P = Panel;
+  const h = P.h;
+  const STATES = ["backlog", "ready", "in_progress", "blocked", "review", "done", "cancelled"];
+  const TYPES = ["phase", "epic", "story", "task", "research", "deliverable", "workflow"];
+  const CHILD_TYPE = { phase: "epic", epic: "story", story: "task" };
+  const PRIORITY = { high: 0, normal: 1, low: 2 };
+  const REVIEW_STATUS = ["needs_review", "review_due"];
+  const remembered = { open: new Map(), history: new Map(), timers: {} };
+
+  // Shared helpers.
+  const lower = (text) => String(text).charAt(0).toLowerCase() + String(text).slice(1);
+  const noun = (n) => lower(P.term(n === 1 ? "work_item" : "work_items"));
+  const verb = (n, one, many) => (n === 1 ? one : many);
+  const typeLabel = (type) => (type === "deliverable" ? P.term("deliverable") : P.words(type || "task"));
+  const chip = (text, attrs) => h("span", { class: "chip", ...attrs }, text);
+  const toneBadge = (tone, label, state) => h("span", { class: "badge", dataset: { tone, state: state || tone } }, label);
+  const button = (label, key, handler, className, attrs) => h("button", { type: "button", class: className, dataset: { key }, ...attrs,
+    on: { click: (event) => handler(event.currentTarget) } }, label);
+  const heading = (title, count) => h("h3", null, h("span", null, title), typeof count === "number" ? chip(String(count)) : null);
+  const listOf = (items, render, message) => (items && items.length
+    ? h("ul", { class: "list" }, items.map((item, index) => h("li", null, render(item, index)))) : P.empty(message));
+  const present = (value) => value !== undefined && value !== null && value !== "" && !(Array.isArray(value) && !value.length);
+  const kv = (pairs) => h("dl", { class: "kv" }, pairs.filter((pair) => present(pair[1])).map(([label, value]) => [h("dt", null, label), h("dd", null, value)]));
+  const section = (title, ...children) => h("section", { class: "stack" }, h("h3", null, title), ...children);
+  // append() turns null into the text "null", so every list of children passes through this filter.
+  const put = (host, ...children) => host.append(...children.flat(Infinity).filter((node) => node !== null && node !== undefined && node !== false));
+  const textList = (items) => h("ul", null, items.map((item) => h("li", null, typeof item === "string" ? item : JSON.stringify(item))));
+
+  async function openForm(name, context, trigger) {
+    try {
+      return await P.openForm(name, context, trigger);
+    } catch (error) {
+      P.toast("This form is not available in this build of the control panel.", "blocked");
+      return null;
+    }
+  }
+  function tryDrawer(kind, params, trigger) {
+    try {
+      P.openDrawer(kind, params, trigger);
+      return true;
+    } catch (error) {
+      return false;
+    }
+  }
+  const openDecision = (id, trigger) => { if (!tryDrawer("decision", { id }, trigger)) P.openRecord(id, trigger); };
+  const openRun = (run, trigger) => { if (!tryDrawer("run", { id: run.id }, trigger) && run.episode_id) P.openWork(run.episode_id, trigger); };
+  const openable = (id) => /^(episode|event|source|host|direction|check)_/.test(String(id));
+  function openNode(node, trigger) {
+    const id = String(node.id || "");
+    if (node.kind === "decision") return openDecision(id, trigger);
+    if (id.startsWith("episode_")) return P.openWork(id, trigger);
+    if (id.startsWith("check_")) return openRun({ id, episode_id: node.episode_id }, trigger);
+    return P.openRecord(id, trigger);
+  }
+  const workContext = (card, extra) => ({ episode_id: card.id, expected_version: card.version, card, plan: card.plan, title: card.title, ...extra });
+
+  // An unfinished prerequisite is the ordinary state of a planned item, so it is named rather than marked as a fault.
+  function issueInfo(raw) {
+    const list = Array.isArray(raw) ? raw : [];
+    const total = list.length || Number(raw) || 0;
+    if (!total) return null;
+    if (list.length && list.every((issue) => issue.type === "dependency")) {
+      return { tone: "backlog", text: total === 1 ? "Waits for 1 prerequisite" : "Waits for " + total + " prerequisites" };
+    }
+    return { tone: list.length ? "blocked" : "review", text: P.count(total, "open issue") };
+  }
+  function workButton(item, prefix) {
+    const plan = item.plan || {};
+    const type = item.item_type || plan.item_type || "task";
+    const next = item.next_action !== undefined ? item.next_action : plan.next_action;
+    const issue = issueInfo(item.issues);
+    const priority = item.priority || plan.priority;
+    return h("button", { type: "button", class: "item work-item", dataset: { key: prefix + item.id }, on: { click: (event) => P.openWork(item.id, event.currentTarget) } },
+      h("span", { class: "row" }, P.badge(item.state), chip(typeLabel(type)), priority && priority !== "normal" ? chip(P.words(priority) + " priority") : null,
+        issue ? chip(issue.text, { dataset: { tone: issue.tone } }) : null),
+      h("strong", null, item.title), next ? h("span", { class: "muted" }, next) : null);
+  }
+  const OUTCOMES = { good: ["ready", "Good outcome"], bad: ["blocked", "Bad outcome"], mixed: ["review", "Mixed outcome"],
+    unknown: ["neutral", "Outcome unknown"], pending: ["backlog", "Outcome pending"] };
+  function outcomeBadge(assessment) {
+    if (!assessment) return toneBadge("neutral", "No outcome recorded", "no-outcome");
+    const [tone, label] = OUTCOMES[assessment] || ["neutral", "Outcome " + P.words(assessment).toLowerCase()];
+    return toneBadge(tone, label, "outcome-" + assessment);
+  }
+  function runButton(run, prefix) {
+    const facts = [];
+    if (run.changed_files) facts.push("It changed " + P.count(run.changed_files, "file") + ".");
+    if (run.review) facts.push("Its review state is " + P.words(run.review.state).toLowerCase() + ".");
+    if (run.merge) facts.push("The work is " + run.merge.state + ".");
+    if (run.error) facts.push(run.error);
+    return h("button", { type: "button", class: "item work-item", dataset: { key: prefix + run.id }, on: { click: (event) => openRun(run, event.currentTarget) } },
+      h("span", { class: "row" }, P.badge(run.state), chip(P.words(run.role)), chip(P.words(run.host))),
+      h("strong", null, run.summary || P.words(run.role) + " run"), facts.length ? h("span", { class: "muted" }, facts.join(" ")) : null,
+      h("span", { class: "muted" }, P.date(run.updated_at || run.created_at)));
+  }
+  // Keeps focus on the same control after a local re-render of part of a view.
+  function redraw(region, draw) {
+    const active = document.activeElement;
+    const key = active && region.contains(active) ? active.id || active.dataset.key : null;
+    region.replaceChildren();
+    put(region, draw());
+    const target = key && (region.querySelector("#" + CSS.escape(key)) || region.querySelector('[data-key="' + CSS.escape(key) + '"]'));
+    if (target) target.focus({ preventScroll: true });
+  }
+  const debounce = (name, handler) => { clearTimeout(remembered.timers[name]); remembered.timers[name] = setTimeout(handler, 200); };
+  const selectControl = (id, label, options, value, onChange) => P.field(label,
+    P.select(id, options, value, { id, on: { change: (event) => onChange(event.currentTarget.value) } }));
+  const searchControl = (id, label, value, onInput) => P.field(label, P.input(id, value, { id, type: "search", autocomplete: "off",
+    on: { input: (event) => { const text = event.currentTarget.value; debounce(id, () => onInput(text.trim())); } } }));
+  const checkControl = (id, label, checked, onChange) => P.field(label, h("input", { type: "checkbox", id, name: id, checked,
+    on: { change: (event) => onChange(event.currentTarget.checked) } }));
+
+  // graphs.js draws the lineage and keeps its own toggle between the graph and a readable vertical list.
+  const lineageBlock = (host, focus, data) => P.lineageGraph(host, focus, { data, compact: true, title: "Lineage", open: openNode });
+
+  // Now.
+  function nowSentence(now) {
+    const c = now.counts || {};
+    if (!now.total) return "No " + noun(2) + " are recorded yet.";
+    const progress = c.in_progress || 0, blocked = c.blocked || 0, review = c.review || 0;
+    return `${progress} ${noun(progress)} ${verb(progress, "is", "are")} in progress, ${blocked} ${verb(blocked, "is", "are")} blocked and ${review} ${verb(review, "needs", "need")} review.`;
+  }
+  function nowDetail(now) {
+    const parts = [];
+    if (now.lessons_to_accept) parts.push(`${now.lessons_to_accept} proposed ${verb(now.lessons_to_accept, "lesson awaits", "lessons await")} your acceptance.`);
+    if (now.attention_total) parts.push(`${now.attention_total} ${verb(now.attention_total, "item needs", "items need")} your decision.`);
+    if (now.recurrences) parts.push(`Failures recurred ${P.count(now.recurrences, "time")} after a lesson was accepted.`);
+    return parts.join(" ");
+  }
+  const DOCUMENTS = { unchanged: ["review", "Not yet filled"], missing: ["blocked", "Missing"], changed: ["ready", "Filled"], unreadable: ["blocked", "Unreadable"] };
+  function kickoffStep(step, kickoff) {
+    const primary = (label, handler) => button(label, "kickoff-next", handler, "primary");
+    if (step.action === "answer_kickoff" && P.canEdit()) return primary("Answer the open questions", (t) => openForm("answer_kickoff", { question_ids: step.question_ids, questions: kickoff.questions }, t));
+    if (step.action === "fill_documents") return primary("Open the documents", () => P.go("records", { view: "documents" }));
+    if (step.action === "approve_requirements") return primary("Review the requirements", () => P.go("requirements"));
+    if (step.action === "research" && (step.episode_ids || []).length) return primary("Open the first research item", (t) => P.openWork(step.episode_ids[0], t));
+    if (step.action === "continue_phase" && step.episode_id) return primary("Open the phase", (t) => P.openWork(step.episode_id, t));
+    return null;
+  }
+  async function kickoffCard(now) {
+    if (!now.kickoff || now.kickoff.baseline !== "not_established") return null;
+    const kickoff = await P.get("kickoff").catch((error) => ({ error }));
+    const card = h("section", { class: "card kickoff", "aria-labelledby": "kickoff-title" }, h("h3", { id: "kickoff-title" }, "Kickoff checklist"));
+    if (kickoff.error) return card.appendChild(P.errorState(kickoff.error)) && card;
+    const questions = kickoff.questions || [];
+    const answered = questions.filter((question) => question.answered).length;
+    const open = (kickoff.documents || []).filter((doc) => doc.status !== "changed").length;
+    const research = (kickoff.research || []).length;
+    const step = kickoff.next_step || {};
+    const checkItem = (done, label, text, action) => h("div", { class: "check-item" }, toneBadge(done ? "ready" : "review", label), h("div", { class: "stack" }, text, action));
+    // The full checklist stays one card high until the reader opens it, so the project state keeps the first screen.
+    const details = h("details", { class: "kickoff-detail", open: remembered.open.get("kickoff") === true,
+      on: { toggle: (event) => remembered.open.set("kickoff", event.currentTarget.open) } }, h("summary", null, "Show the full checklist"),
+    h("div", { class: "kickoff-grid" },
+        section("Questions", h("p", { class: "muted" }, `${answered} of ${P.count(questions.length, "kickoff question")} ${verb(answered, "is", "are")} answered.`),
+          listOf(questions, (question) => checkItem(question.answered, question.answered ? "Answered" : "Open", h("span", null, question.text),
+            question.answered ? (question.answered_by ? button("Read the answer", "kickoff-answer-" + question.id, (t) => P.openRecord(question.answered_by, t), "small") : null)
+              : P.canEdit() ? button("Answer", "kickoff-question-" + question.id, (t) => openForm("answer_kickoff", { question_ids: [question.id], questions, question }, t), "small") : null),
+          "The template has no kickoff questions.")),
+        section("Research still needed", listOf(kickoff.research, (item) => workButton({ ...item, id: item.episode_id, item_type: "research" }, "kickoff-research-"),
+          "No open research item is recorded.")),
+        section("Starter documents", listOf(kickoff.documents, (doc) => {
+          const [tone, label] = DOCUMENTS[doc.status] || ["neutral", P.words(doc.status)];
+          return h("div", { class: "check-item" }, toneBadge(tone, label, doc.status), h("div", { class: "stack" }, h("span", { class: "mono" }, doc.path),
+            doc.status === "changed" ? null : button("Find it in the records", "kickoff-doc-" + doc.path, () => P.go("records", { view: "documents", query: doc.path }), "small")));
+        }, "The template has no starter documents.")),
+        section("Phases", listOf(kickoff.phases, (phase) => (phase.episode_id ? workButton({ ...phase, id: phase.episode_id, item_type: "phase" }, "kickoff-phase-")
+          : checkItem(false, "Missing", h("span", null, phase.title + " is not recorded as a work item."))), "The template has no phases."))));
+    put(card, h("p", null, `This project uses the ${kickoff.title || P.words(kickoff.template)} template. The requirements baseline is not established. ` +
+      `${answered} of ${P.count(questions.length, "kickoff question")} ${verb(answered, "is", "are")} answered, ` +
+      `${P.count(research, "research item")} ${verb(research, "is", "are")} open and ` +
+      `${P.count(open, "starter document")} ${verb(open, "is", "are")} not filled.`),
+    h("div", { class: "notice" }, h("p", null, h("strong", null, "Next step. "), step.reason || "No next step is recorded."), kickoffStep(step, kickoff)), details);
+    return card;
+  }
+  const ATTENTION = { scope_block: ["blocked", "Edit blocked"], blocked_work: ["blocked", "Blocked"], awaiting_merge: ["review", "Awaiting merge"],
+    agent_follow_up: ["review", "Agent follow up"], guard_recurrence: ["blocked", "Repeated failure"], failure_without_lesson: ["blocked", "Failure without a lesson"],
+    capture_failure: ["blocked", "Recording failed"], recording_gap: ["review", "Recording gap"], work_to_review: ["review", "Needs review"],
+    lessons_to_accept: ["review", "Lessons to accept"] };
+  function openAttention(entry, trigger) {
+    if (entry.type === "blocked_work" || entry.type === "work_to_review") return P.openWork(entry.id, trigger);
+    if (entry.type === "scope_block") return entry.episode_id ? P.openWork(entry.episode_id, trigger) : P.openRecord(entry.id, trigger);
+    if (entry.type === "awaiting_merge") return openRun(entry, trigger);
+    if (entry.type === "lessons_to_accept") return P.go("learning");
+    if (entry.type === "capture_failure" || entry.type === "recording_gap") return P.go("records", { view: "captures" });
+    if (entry.id && openable(entry.id)) return P.openRecord(entry.id, trigger);
+    return null;
+  }
+  // The whole row is the button, so each row names what it opens, as the cards beside it do.
+  const attentionAction = (entry) => ({ scope_block: "Open the " + noun(1), blocked_work: "Open the " + noun(1), work_to_review: "Open the " + noun(1),
+    awaiting_merge: "Open the agent run", agent_follow_up: "Open the agent run", guard_recurrence: "Open the lesson",
+    failure_without_lesson: "Open the outcome", capture_failure: "Open the captures", recording_gap: "Open the captures",
+    lessons_to_accept: "Open the learning view" })[entry.type] || "Open the record";
+  const attentionItem = (entry, index) => {
+    const [tone, label] = ATTENTION[entry.type] || ["neutral", P.words(entry.type)];
+    return h("button", { type: "button", class: "item work-item", dataset: { key: "now-attention-" + entry.type + "-" + (entry.id || index) },
+      on: { click: (event) => openAttention(entry, event.currentTarget) } }, h("span", { class: "row" }, toneBadge(tone, label, entry.type)),
+    h("span", null, entry.reason), h("span", { class: "item-action" }, attentionAction(entry)));
+  };
+  const decisionItem = (decision, prefix) => h("button", { type: "button", class: "item work-item", dataset: { key: prefix + decision.id },
+    on: { click: (event) => openDecision(decision.id, event.currentTarget) } },
+  h("span", { class: "row" }, outcomeBadge(decision.outcome && decision.outcome.assessment), decision.status !== "recorded" ? P.badge(decision.status) : null),
+  h("strong", null, decision.title), h("span", { class: "muted" }, [decision.episode_title, P.date(decision.date)].filter(Boolean).join(". ")));
+  function scopeBlock(block) {
+    const outside = block.still_outside || [];
+    const allowed = (block.allowed_patterns || []).join(", ") || "not recorded";
+    return h("div", { class: "stack" }, h("span", { class: "row" }, outside.length ? toneBadge("blocked", "Still outside the allowed paths") : toneBadge("ready", "Now allowed"),
+      block.host ? chip(P.words(block.host)) : null, h("span", { class: "muted" }, P.date(block.created_at))),
+    h("p", null, `An edit to ${(block.blocked || []).join(", ")} was blocked. The allowed paths were ${allowed}.`),
+    h("div", { class: "row" }, block.episode_id ? button("Open the " + noun(1), "now-block-" + block.id, (t) => P.openWork(block.episode_id, t), "small") : null,
+      outside.length && P.canEdit() && block.episode_id ? button("Allow paths", "now-allow-" + block.id, (t) => openForm("allow_paths", { episode_id: block.episode_id, paths: outside, block }, t), "small") : null));
+  }
+  const allLink = (href, text) => h("a", { href }, text);
+
+  P.registerView("now", {
+    title: "Now",
+    async render(container) {
+      const now = await P.get("now");
+      const counts = now.counts || {};
+      const attention = now.attention || [];
+      const agents = now.agents || {};
+      const detail = nowDetail(now);
+      const stateCard = (title, state, items) => h("section", { class: "card" }, heading(title, counts[state] || 0),
+        listOf(items, (item) => workButton(item, "now-" + state + "-"), `No ${noun(1)} is ${state === "blocked" ? "blocked" : "in progress"}.`),
+        (counts[state] || 0) > (items || []).length ? allLink("#work/state=" + state, `Show all ${counts[state]} on the board`) : null);
+      put(container,
+        h("div", { class: "stack" }, h("p", { class: "sentence" }, nowSentence(now)), detail ? h("p", { class: "muted" }, detail) : null,
+          P.stateStrip(counts, { legend: true })),
+        await kickoffCard(now),
+        h("div", { class: "grid now-grid" },
+          stateCard("In progress", "in_progress", now.in_progress),
+          stateCard("Blocked", "blocked", now.blocked),
+          h("section", { class: "card" }, heading("Needs your decision", now.attention_total || 0), listOf(attention, attentionItem, "Nothing needs your decision."),
+            (now.attention_total || 0) > attention.length ? h("p", { class: "muted" }, `The list shows ${attention.length} of ${now.attention_total} items.`) : null),
+          h("section", { class: "card" }, heading("Agents running", (agents.active || []).length),
+            listOf(agents.active, (run) => runButton(run, "now-active-"), "No agent run is active."),
+            (agents.recent || []).length ? h("details", null, h("summary", null, "Recent runs"), listOf(agents.recent, (run) => runButton(run, "now-recent-"))) : null),
+          h("section", { class: "card" }, heading("Latest decisions", (now.latest_decisions || []).length),
+            listOf(now.latest_decisions, (decision) => decisionItem(decision, "now-decision-"), "No decision is recorded."), allLink("#decisions", "Open all decisions")),
+          h("section", { class: "card" }, heading("Recent scope blocks", (now.scope_blocks || []).length),
+            listOf(now.scope_blocks, scopeBlock, "No edit was blocked for being outside the allowed paths."))));
+    },
+  });
+
+  // Plan.
+  const matches = (node, filter) => (!filter.type || node.item_type === filter.type) && (!filter.state || node.state === filter.state)
+    && (!filter.query || String(node.title).toLowerCase().includes(filter.query.toLowerCase()));
+  const progressText = (node) => {
+    const active = node.descendants - (node.rollup.cancelled || 0);
+    return active ? `${node.rollup.done} of ${active} done` : "No items below";
+  };
+  function planNode(node, cards, filter, depth) {
+    const children = (node.children || []).map((child) => planNode(child, cards, filter, depth + 1)).filter(Boolean);
+    const filtered = Boolean(filter.type || filter.state || filter.query);
+    if (!matches(node, filter) && !children.length) return null;
+    const open = filtered || (remembered.open.has(node.id) ? remembered.open.get(node.id) : depth < 2);
+    const card = cards.get(node.id);
+    const acceptance = card && card.plan ? card.plan.acceptance || [] : [];
+    const toggle = children.length ? button(open ? "▾" : "▸", "plan-toggle-" + node.id, (trigger) => {
+      remembered.open.set(node.id, !open);
+      trigger.dispatchEvent(new CustomEvent("plan-redraw", { bubbles: true }));
+    }, "quiet small", { "aria-expanded": String(open), "aria-label": (open ? "Hide" : "Show") + " the items below " + node.title, disabled: filtered }) : h("span");
+    return h("li", null, h("div", { class: "tree-row" }, toggle,
+      h("button", { type: "button", class: "item work-item", dataset: { key: "plan-open-" + node.id }, on: { click: (event) => P.openWork(node.id, event.currentTarget) } },
+        h("span", { class: "row" }, chip(typeLabel(node.item_type)), P.badge(node.state), node.owner === "human" ? chip("Owner: person") : null), h("strong", null, node.title)),
+      h("div", { class: "tree-meta" }, node.descendants ? [P.progress(node.progress, "Progress of " + node.title), h("span", { class: "muted" }, progressText(node))] : null,
+        P.canEdit() ? button("Add item", "plan-add-" + node.id, (t) => openForm("plan", { parent_id: node.id, item_type: CHILD_TYPE[node.item_type] || "task", parent: node }, t),
+          "small tree-add", { "aria-label": "Add an item below " + node.title }) : null)),
+    node.acceptance_total ? h("details", { class: "acceptance" }, h("summary", null, `Acceptance criteria (${node.acceptance_total})`),
+      acceptance.length ? h("ol", null, acceptance.map((line) => h("li", null, line))) : h("p", { class: "muted" }, "Open the item to read its acceptance criteria.")) : null,
+    children.length ? h("ul", { hidden: !open }, children) : null);
+  }
+  P.registerView("plan", {
+    title: "Plan",
+    async render(container, params) {
+      const [plan, board] = await Promise.all([P.get("plan"), P.get("board", { limit: "100" }).catch(() => null)]);
+      const cards = new Map(((board && board.cards) || []).map((card) => [card.id, card]));
+      const roots = plan.roots || [];
+      const phases = roots.filter((node) => node.item_type === "phase");
+      const counts = plan.counts || {};
+      const active = (plan.total || 0) - (counts.cancelled || 0);
+      const filter = { type: params.type || "", state: params.state || "", query: params.query || "" };
+      const tree = h("div", { class: "stack" });
+      const drawTree = () => {
+        const nodes = roots.map((node) => planNode(node, cards, filter, 0)).filter(Boolean);
+        return nodes.length ? h("ul", { class: "tree" }, nodes) : P.empty(plan.total ? `No ${noun(2)} match these filters.` : `No ${noun(2)} are planned yet.`);
+      };
+      tree.addEventListener("plan-redraw", () => redraw(tree, drawTree));
+      const update = (name, value) => { filter[name] = value; P.setParams({ ...filter }); redraw(tree, drawTree); };
+      const typesPresent = TYPES.filter((type) => JSON.stringify(roots).includes('"item_type":"' + type + '"'));
+      put(container,
+        h("div", { class: "view-head" }, h("div", { class: "stack" },
+          h("p", { class: "sentence" }, `${plan.total || 0} ${noun(plan.total || 0)} ${verb(plan.total || 0, "is", "are")} planned` +
+            (phases.length ? ` in ${P.count(phases.length, "phase")}.` : ".") + ` ${counts.done || 0} ${verb(counts.done || 0, "is", "are")} done.`),
+          P.progress(active ? (counts.done || 0) / active : null, "Share of work items done")),
+        P.canEdit() ? button("Add item", "plan-add-root", (t) => openForm("plan", { parent_id: null, item_type: phases.length ? "epic" : "phase" }, t), "primary") : null),
+        phases.length ? h("section", { class: "stack", "aria-label": "Timeline by phase" }, h("h3", null, "Timeline by phase"),
+          h("ol", { class: "timeline" }, phases.map((phase, index) => h("li", { dataset: { tone: phase.state } },
+            h("button", { type: "button", class: "item", dataset: { key: "plan-phase-" + phase.id }, on: { click: (event) => P.openWork(phase.id, event.currentTarget) } },
+              h("span", { class: "muted" }, "Phase " + (index + 1)), h("strong", null, phase.title), h("span", { class: "row" }, P.badge(phase.state)),
+              P.progress(phase.progress, "Progress of " + phase.title), h("span", { class: "muted" }, progressText(phase))))))) : null,
+        h("div", { class: "toolbar" },
+          selectControl("plan-type", "Item type", [["", "All types"], ...typesPresent.map((type) => [type, typeLabel(type)])], filter.type, (value) => update("type", value)),
+          selectControl("plan-state", "State", [["", "All states"], ...STATES.map((state) => [state, P.words(state)])], filter.state, (value) => update("state", value)),
+          searchControl("plan-query", "Search titles", filter.query, (value) => update("query", value))),
+        tree, h("p", { class: "muted" }, plan.note || ""), plan.truncated ? h("p", { class: "notice" }, "The plan is limited, so some work items are not shown.") : null);
+      redraw(tree, drawTree);
+    },
+  });
+
+  // Work.
+  const SORTS = { title: (c) => String(c.title).toLowerCase(), state: (c) => STATES.indexOf(c.state), type: (c) => (c.plan || {}).item_type || "task",
+    subject: (c) => c.subject, priority: (c) => PRIORITY[(c.plan || {}).priority || "normal"], issues: (c) => (c.issues || []).length, date: (c) => c.date };
+  const COLUMNS = [["title", "Title"], ["state", "State"], ["type", "Type"], ["subject", "Subject"], ["priority", "Priority"], ["issues", "Issues"], ["date", "Created"]];
+  function filterCards(cards, st) {
+    const query = st.query.toLowerCase();
+    return cards.filter((c) => (!st.subject || c.subject === st.subject) && (!st.state || c.state === st.state)
+      && (!st.type || ((c.plan || {}).item_type || "task") === st.type)
+      && (!st.sprint || ((c.plan || {}).sprint_id || "unassigned") === st.sprint || (st.sprint !== "unassigned" && (c.plan || {}).sprint_id === st.sprint))
+      && (!query || (c.title + " " + c.intent + " " + JSON.stringify(c.plan || {})).toLowerCase().includes(query)));
+  }
+  function boardNode(cards, st) {
+    const columns = STATES.map((state) => [state, cards.filter((c) => c.state === state)]);
+    const shown = columns.filter(([state, items]) => items.length || (st.empty && !st.state) || st.state === state);
+    const hidden = columns.length - shown.length;
+    return [h("div", { class: "board" }, shown.map(([state, items]) => h("section", { class: "board-column", dataset: { tone: state }, "aria-label": P.words(state) },
+      h("h3", null, P.badge(state), h("span", { class: "muted" }, String(items.length))),
+      items.length ? h("ul", { class: "list" }, items.map((c) => h("li", null, workButton(c, "work-card-")))) : P.empty(`No ${noun(1)} is in this state.`)))),
+    hidden && !st.state ? h("p", { class: "muted" }, `${hidden} empty ${verb(hidden, "column is", "columns are")} hidden.`) : null];
+  }
+  function tableNode(cards, st, sort) {
+    const getter = SORTS[st.sort] || SORTS.state;
+    const ordered = [...cards].sort((a, b) => { const x = getter(a), y = getter(b); return (x < y ? -1 : x > y ? 1 : 0) * (st.dir === "desc" ? -1 : 1); });
+    return h("div", { class: "table-wrap" }, h("table", { class: "data" },
+      h("thead", null, h("tr", null, COLUMNS.map(([name, label]) => h("th", { scope: "col", "aria-sort": st.sort === name ? (st.dir === "desc" ? "descending" : "ascending") : "none" },
+        h("button", { type: "button", id: "work-sort-" + name, on: { click: () => sort(name) } }, label + (st.sort === name ? (st.dir === "desc" ? " ↓" : " ↑") : "")))))),
+      h("tbody", null, ordered.map((c) => h("tr", null,
+        h("td", null, h("button", { type: "button", class: "quiet", dataset: { key: "work-row-" + c.id }, on: { click: (event) => P.openWork(c.id, event.currentTarget) } }, c.title)),
+        h("td", null, P.badge(c.state)), h("td", null, typeLabel((c.plan || {}).item_type)), h("td", null, P.words(c.subject)),
+        h("td", null, P.words((c.plan || {}).priority || "normal")), h("td", null, (issueInfo(c.issues) || { text: "None" }).text), h("td", null, P.date(c.date)))))));
+  }
+  P.registerView("work", {
+    title: "Work",
+    async render(container, params) {
+      const [base, sprints] = await Promise.all([P.get("board", { limit: "100" }), P.get("sprints", { limit: "100" }).then((value) => value.sprints || [], () => [])]);
+      const st = { tab: params.tab === "list" ? "list" : "board", subject: params.subject || "", state: params.state || "", sprint: params.sprint || "",
+        type: params.type || "", query: params.query || "", empty: params.empty === "1", sort: params.sort || "state", dir: params.dir === "desc" ? "desc" : "asc" };
+      const results = h("div", { class: "stack" });
+      let token = 0;
+      const save = () => P.setParams({ tab: st.tab === "list" ? "list" : "", subject: st.subject, state: st.state, sprint: st.sprint, type: st.type, query: st.query,
+        empty: st.empty ? "1" : "", sort: st.sort === "state" ? "" : st.sort, dir: st.dir === "desc" ? "desc" : "" });
+      const draw = async () => {
+        const mine = ++token;
+        let cards = base.cards || [];
+        // Live mode asks the server when the first page does not hold every work item.
+        if (P.live && base.more && (st.subject || st.sprint || st.query)) {
+          cards = await P.get("board", { limit: "100", subject: st.subject, sprint_id: st.sprint, query: st.query }).then((value) => value.cards || [], () => cards);
+        }
+        if (mine !== token) return;
+        const shown = filterCards(cards, st);
+        redraw(results, () => [h("p", { class: "muted", role: "status" }, `The view shows ${shown.length} of ${base.total || 0} ${noun(base.total || 0)}.` +
+          (base.more ? ` Only the first ${(base.cards || []).length} are loaded without filters.` : "")),
+        st.tab === "board" ? boardNode(shown, st) : tableNode(shown, st, (name) => { st.dir = st.sort === name && st.dir === "asc" ? "desc" : "asc"; st.sort = name; save(); draw(); })]);
+      };
+      const update = (name, value) => { st[name] = value; save(); drawControls(); draw(); };
+      const subjects = [...new Set((base.cards || []).map((c) => c.subject).concat(st.subject ? [st.subject] : []))].sort();
+      const typesPresent = TYPES.filter((type) => (base.cards || []).some((c) => ((c.plan || {}).item_type || "task") === type) || st.type === type);
+      const controls = h("div", { class: "stack" });
+      const drawControls = () => redraw(controls, () => [
+        h("div", { class: "tabs", role: "tablist", "aria-label": "Work display" }, [["board", "Board"], ["list", "List"]].map(([value, label]) =>
+          h("button", { type: "button", role: "tab", id: "work-tab-" + value, "aria-selected": String(st.tab === value), on: { click: () => update("tab", value) } }, label))),
+        h("div", { class: "toolbar" },
+          selectControl("work-subject", "Subject", [["", "All subjects"], ...subjects.map((subject) => [subject, P.words(subject)])], st.subject, (value) => update("subject", value)),
+          selectControl("work-state", "State", [["", "All states"], ...STATES.map((state) => [state, P.words(state)])], st.state, (value) => update("state", value)),
+          selectControl("work-sprint", "Sprint", [["", "All sprints"], ["unassigned", "No sprint"], ...sprints.map((sprint) => [sprint.id, sprint.title])], st.sprint, (value) => update("sprint", value)),
+          selectControl("work-type", "Item type", [["", "All types"], ...typesPresent.map((type) => [type, typeLabel(type)])], st.type, (value) => update("type", value)),
+          searchControl("work-query", "Search", st.query, (value) => { st.query = value; save(); draw(); }),
+          st.tab === "board" ? checkControl("work-empty", "Show empty columns", st.empty, (value) => update("empty", value)) : null)]);
+      drawControls();
+      put(container, h("div", { class: "view-head" }, h("p", { class: "sentence" }, nowSentence({ total: base.total, counts: base.counts })),
+        P.canEdit() ? button("Add item", "work-add", (t) => openForm("plan", { parent_id: null, item_type: "task" }, t), "primary") : null), controls, results);
+      await draw();
+    },
+  });
+
+  // Work item drawer.
+  const NEXT_BUTTONS = {
+    plan: ["Edit plan", "plan"], review_plan: ["Edit plan", "plan"], propose: ["Edit plan", "plan"], review: ["Edit plan", "plan"],
+    finalize: ["Mark as done", "plan", { state: "done" }], request_review: ["Request check", "review", { role: "outcome" }],
+  };
+  function nextAction(work, card) {
+    const step = work.next || {};
+    const detail = step.next_step || {};
+    const blocker = (detail.blockers || [])[0] || {};
+    const read = detail.read_with || {};
+    const known = NEXT_BUTTONS[step.action];
+    if (known && P.canEdit() && (known[1] !== "plan" || card.plan || step.action === "plan")) {
+      return button(known[0], "work-next", (t) => openForm(known[1], workContext(card, known[2]), t), "primary");
+    }
+    if (blocker.episode_id) return button("Open the prerequisite", "work-next", (t) => P.openWork(blocker.episode_id, t), "primary");
+    if (read.view === "record" && read.id) return button("Open the record to review", "work-next", (t) => P.openRecord(read.id, t), "primary");
+    if (detail.check_id) return button("Open the check", "work-next", (t) => openRun({ id: detail.check_id, episode_id: card.id }, t), "primary");
+    if (read.view === "coverage") return button("Open the captures", "work-next", () => P.go("records", { view: "captures" }), "primary");
+    return null;
+  }
+  function checkReports(reviews) {
+    const reported = (reviews.runs || []).filter((run) => run.report);
+    return reported.map((run) => h("details", null, h("summary", null, `${P.words(run.role)} by ${P.words(run.host)}: ${P.words(run.state).toLowerCase()}`),
+      h("div", { class: "stack" }, run.report.summary ? h("p", null, run.report.summary) : null,
+        (run.report.checks || []).length ? section("Checks", h("ul", null, run.report.checks.map((check) => h("li", null,
+          `${(run.conditions || {})[check.criterion] || check.criterion}: ${P.words(check.result).toLowerCase()}. ${check.evidence || ""}`)))) : null,
+        (run.report.findings || []).length ? section("Findings", textList(run.report.findings.map((finding) => finding.summary || finding.finding || finding))) : null,
+        (run.report.checks_run || []).length ? section("Checks run by the agent", h("ul", null, run.report.checks_run.map((check) => h("li", null, `${check.command}: ${check.outcome}`)))) : null)));
+  }
+  P.registerDrawer("work", {
+    async render(body, params, ctx) {
+      const offset = remembered.history.get(params.id) || 0;
+      const work = await P.get("work", { id: params.id });
+      const card = work.card;
+      const plan = card.plan || null;
+      const type = (plan && plan.item_type) || "task";
+      ctx.setTitle(card.title);
+      ctx.setKind(P.term("work_item") + ": " + lower(typeLabel(type)));
+      const edit = ctx.canEdit;
+      const history = offset ? await P.get("work", { id: params.id, offset: String(offset) }).then((value) => value.history, (error) => ({ error })) : work.history;
+      const reviews = work.reviews || {};
+      const runs = (work.runs || {}).runs || [];
+      const dependencyIssues = new Set((card.issues || []).filter((issue) => issue.type === "dependency").map((issue) => issue.episode_id));
+      const step = work.next || {};
+      const titles = new Map(((work.lineage || {}).nodes || []).map((node) => [node.id, node.title]));
+      const lineageHost = h("div", { class: "stack" });
+      put(body,
+        h("div", { class: "row" }, P.badge(card.state), card.recorded_state && card.recorded_state !== card.state ? chip("Recorded as " + lower(P.words(card.recorded_state))) : null,
+          chip(P.words(card.subject)), plan && plan.priority && plan.priority !== "normal" ? chip(P.words(plan.priority) + " priority") : null,
+          plan && plan.owner ? chip("Owner: " + (plan.owner === "human" ? "person" : "agent")) : null, h("span", { class: "muted" }, "Version " + card.version)),
+        edit ? h("div", { class: "row" },
+          button("Edit plan", "work-edit", (t) => openForm("plan", workContext(card), t), "small"),
+          plan ? button("Allow paths", "work-allow", (t) => openForm("allow_paths", workContext(card), t), "small") : null,
+          plan ? button("Delegate", "work-delegate", (t) => openForm("delegate", workContext(card), t), "small") : null,
+          button("Request check", "work-check", (t) => openForm("review", workContext(card, { role: "outcome" }), t), "small"),
+          button("Comment", "work-comment", (t) => openForm("comment", workContext(card), t), "small")) : null,
+        kv([["Intended result", card.intent], ["Done when", card.done_when]]),
+        h("section", { class: "notice", dataset: card.state === "blocked" ? { tone: "blocked" } : null }, h("h3", null, "Next step"),
+          h("p", null, step.reason || "No next step is recorded."),
+          step.next_step && step.next_step.reason && step.next_step.reason !== step.reason ? h("p", { class: "muted" }, step.next_step.reason) : null, nextAction(work, card)),
+        plan && (plan.acceptance || []).length ? section("Acceptance criteria", h("ol", null, plan.acceptance.map((line) => h("li", null, line)))) : null,
+        section("Scope and allowed paths", plan ? kv([["Scope", plan.scope], ["Autonomy", P.words(plan.autonomy)], ["Next action", plan.next_action], ["Reason", plan.reason],
+          ["Allowed paths", (plan.paths || []).length ? h("div", { class: "row" }, plan.paths.map((path) => chip(path, { class: "chip mono" })))
+            : "No allowed paths are recorded. Delegated work needs at least one path."],
+          ["Part of", plan.parent_id ? button("Open the parent item", "work-parent", (t) => P.openWork(plan.parent_id, t), "small") : null],
+          ["Sprint", plan.sprint_id ? h("span", { class: "mono" }, plan.sprint_id) : null]]) : P.empty(`This ${noun(1)} has no recorded plan.`)),
+        section("Dependencies", listOf(plan && plan.depends_on, (ref) => h("button", { type: "button", class: "item work-item", dataset: { key: "work-dependency-" + ref.episode_id },
+          on: { click: (event) => P.openWork(ref.episode_id, event.currentTarget) } },
+        h("span", { class: "row" }, dependencyIssues.has(ref.episode_id) ? toneBadge("blocked", "Not finished") : toneBadge("ready", "Finished")),
+        h("strong", null, titles.get(ref.episode_id) || ref.episode_id), h("span", null, ref.reason)), "No dependency is recorded.")),
+        section("Issues", listOf(card.issues, (issue, index) => h("div", { class: "stack" }, h("span", { class: "row" }, toneBadge("review", P.words(issue.type))), h("span", null, issue.reason),
+          issue.source_id || issue.record_id ? button("Open the evidence", "work-issue-" + index, (t) => P.openRecord(issue.source_id || issue.record_id, t), "small") : null,
+          issue.run_id ? button("Open the check", "work-issue-run-" + index, (t) => openRun({ id: issue.run_id, episode_id: card.id }, t), "small") : null), "No issue is recorded.")),
+        section("Agent checks and delegated runs",
+          h("p", { class: "muted" }, reviews.configured === false ? "No agent host is configured, so agent checks and delegation cannot run."
+            : reviews.current ? `The current ${P.words(reviews.current.role).toLowerCase()} check is ${P.words(reviews.current.state).toLowerCase()}.` : "No outcome check is required yet."),
+          listOf(runs, (run) => runButton(run, "work-run-"), "No agent run is recorded."), checkReports(reviews)),
+        lineageHost,
+        section("History", history.error ? P.errorState(history.error) : [
+          h("p", { class: "muted" }, history.total ? `Records ${history.offset + 1} to ${history.offset + history.records.length} of ${history.total} are shown, oldest first.` : "No history is recorded."),
+          listOf(history.records, (record) => h("button", { type: "button", class: "item work-item", dataset: { key: "work-history-" + record.id },
+            on: { click: (event) => openNode(record, event.currentTarget) } }, h("span", { class: "row" }, chip(P.words(record.kind)), P.badge(record.status)),
+          h("strong", null, record.title), h("span", { class: "muted" }, P.date(record.date))), ""),
+          h("div", { class: "row" },
+            history.offset > 0 ? button("Earlier records", "work-history-previous", () => { remembered.history.set(card.id, Math.max(0, history.offset - history.limit)); P.refresh(); }, "small") : null,
+            history.more ? (P.live ? button("Later records", "work-history-next", () => { remembered.history.set(card.id, history.offset + history.limit); P.refresh(); }, "small")
+              : h("p", { class: "muted" }, "This snapshot includes the first page of history only.")) : null)]));
+      await lineageBlock(lineageHost, card.id, work.lineage);
+    },
+  });
+
+  // Decisions.
+  function reviewReasons(record) {
+    const reasons = [];
+    const outcome = record.outcome;
+    const assessment = outcome && ((outcome.detail || {}).payload || {}).assessment;
+    if (REVIEW_STATUS.includes(record.status)) reasons.push("The evidence of this decision changed after it was recorded.");
+    if (outcome && REVIEW_STATUS.includes(outcome.status)) reasons.push("The evidence of its outcome changed after it was recorded.");
+    if ((assessment === "bad" || assessment === "mixed") && !(record.detail || {}).replaced_by) reasons.push("The outcome is not good and no revised decision is recorded.");
+    return reasons;
+  }
+  const assessmentOf = (record) => (record.outcome ? ((record.outcome.detail || {}).payload || {}).assessment || "unknown" : "none");
+  P.registerView("decisions", {
+    title: "Decisions",
+    async render(container, params) {
+      const page = await P.get("records", { view: "decisions", limit: "100" });
+      const records = page.records || [];
+      const filter = { query: params.query || "", outcome: params.outcome || "", review: params.review === "1", current: params.current === "1" };
+      const results = h("div", { class: "stack" });
+      const draw = () => {
+        const query = filter.query.toLowerCase();
+        const shown = records.filter((record) => (!filter.outcome || assessmentOf(record) === filter.outcome) && (!filter.review || reviewReasons(record).length)
+          && (!filter.current || !(record.detail || {}).replaced_by) && (!query || (record.title + " " + (record.episode_title || "") + " " + JSON.stringify((record.detail || {}).payload || {})).toLowerCase().includes(query)));
+        return [h("p", { class: "muted", role: "status" }, `The list shows ${shown.length} of ${P.count(page.total || 0, "decision")}.` +
+          (page.more ? ` Only the first ${records.length} are loaded. Search the records to find earlier decisions.` : "")),
+        listOf(shown, (record) => {
+          const reasons = reviewReasons(record);
+          return h("button", { type: "button", class: "item work-item", dataset: { key: "decision-" + record.id }, on: { click: (event) => openDecision(record.id, event.currentTarget) } },
+            h("span", { class: "row" }, outcomeBadge(record.outcome && assessmentOf(record)), record.status !== "recorded" ? P.badge(record.status) : null,
+              reasons.length ? toneBadge("review", "Needs review", "needs-review-marker") : null),
+            h("strong", null, record.title), h("span", { class: "muted" }, [record.episode_title, P.date(record.date)].filter(Boolean).join(". ")),
+            reasons.length ? h("span", null, reasons.join(" ")) : null);
+        }, records.length ? "No decision matches these filters." : "No decision is recorded.")];
+      };
+      const update = (name, value) => { filter[name] = value; P.setParams({ query: filter.query, outcome: filter.outcome, review: filter.review ? "1" : "", current: filter.current ? "1" : "" }); redraw(results, draw); };
+      const bad = records.filter((record) => assessmentOf(record) === "bad").length;
+      const review = records.filter((record) => reviewReasons(record).length).length;
+      put(container, h("p", { class: "sentence" }, `${P.count(page.total || 0, "decision")} ${verb(page.total || 0, "is", "are")} recorded. ` +
+        `${bad} ${verb(bad, "has", "have")} a bad outcome and ${review} ${verb(review, "needs", "need")} review.`),
+      h("div", { class: "toolbar" }, searchControl("decision-query", "Search", filter.query, (value) => update("query", value)),
+        selectControl("decision-outcome", "Outcome", [["", "All outcomes"], ["good", "Good"], ["bad", "Bad"], ["mixed", "Mixed"], ["unknown", "Unknown"], ["pending", "Pending"], ["none", "No outcome recorded"]],
+          filter.outcome, (value) => update("outcome", value)),
+        checkControl("decision-review", "Only decisions that need review", filter.review, (value) => update("review", value)),
+        checkControl("decision-current", "Hide replaced decisions", filter.current, (value) => update("current", value))), results);
+      redraw(results, draw);
+    },
+  });
+  P.registerDrawer("decision", {
+    async render(body, params, ctx) {
+      const { record } = await P.get("record", { id: params.id });
+      const detail = record.detail || {};
+      const payload = detail.payload || {};
+      ctx.setTitle(record.title || record.id);
+      ctx.setKind(P.words(record.kind));
+      const outcome = record.outcome;
+      const observed = outcome ? (outcome.detail || {}).payload || {} : null;
+      const reasons = reviewReasons(record);
+      const lineageHost = h("div", { class: "stack" });
+      put(body,
+        h("div", { class: "row" }, P.badge(record.status), record.kind === "decision" ? outcomeBadge(observed && (observed.assessment || "unknown")) : null,
+          reasons.length ? toneBadge("review", "Needs review", "needs-review-marker") : null, detail.actor ? chip("Recorded by " + detail.actor) : null,
+          h("span", { class: "muted" }, P.date(record.date))),
+        reasons.length ? h("div", { class: "notice", dataset: { tone: "review" } }, reasons.map((reason) => h("p", null, reason))) : null,
+        h("div", { class: "row" }, record.episode_id ? button(`Open the ${noun(1)}${record.episode_title ? ": " + record.episode_title : ""}`, "decision-work", (t) => P.openWork(record.episode_id, t), "small") : null,
+          detail.supersedes ? button("Open the earlier decision", "decision-earlier", (t) => openDecision(detail.supersedes, t), "small") : null,
+          detail.replaced_by ? button("Open the revised decision", "decision-revised", (t) => openDecision(detail.replaced_by, t), "small") : null),
+        kv([["Decision", payload.decision], ["Reason", payload.why], ["Reconsider when", payload.reconsider_when], ["Uncertainty", payload.uncertainty || (record.kind === "decision" ? "No uncertainty is recorded." : null)]]),
+        record.kind === "decision" ? h("section", { class: "stack" }, h("h3", null, "Expected and observed"), h("div", { class: "compare" },
+          h("div", { class: "card" }, h("h4", null, "Expected"), h("p", null, payload.expected || "No expected result is recorded.")),
+          h("div", { class: "card" }, h("h4", null, "Observed"), observed ? [h("p", null, observed.observed || "The outcome has no observation text."),
+            kv([["Assessment", observed.assessment_reason], ["Completion", observed.completion ? P.words(observed.completion) : null],
+              ["Failure type", observed.failure_type ? h("span", { class: "mono" }, observed.failure_type) : null], ["Severity", observed.severity ? P.words(observed.severity) : null]]),
+            button("Open the outcome", "decision-outcome", (t) => P.openRecord(outcome.id, t), "small")] : h("p", null, "No outcome is recorded yet.")))) : null,
+        section("Alternatives", (payload.alternatives || []).length ? textList(payload.alternatives) : P.empty("No alternatives are recorded.")),
+        section("Lessons considered", listOf(payload.lessons_considered, (entry) => h("div", { class: "stack" },
+          h("span", { class: "row" }, entry.applies === "yes" ? toneBadge("guarded", "Applies") : toneBadge("neutral", "Does not apply"),
+            button("Open the lesson", "decision-lesson-" + entry.lesson_id, (t) => P.openRecord(entry.lesson_id, t), "small")), h("span", null, entry.reason)),
+        "No lesson is recorded as considered for this decision.")),
+        section("Evidence", listOf(detail.evidence, (ref) => h("button", { type: "button", class: "item work-item", dataset: { key: "decision-evidence-" + ref.source_id },
+          on: { click: (event) => P.openRecord(ref.source_id, event.currentTarget) } }, h("span", { class: "row" }, ref.status ? P.badge(ref.status) : null, ref.origin ? chip(P.words(ref.origin)) : null),
+        h("strong", null, ref.title || ref.source_id), h("span", { class: "muted" }, ref.reason)), "No evidence is recorded.")),
+        lineageHost);
+      await lineageBlock(lineageHost, record.id, null);
+    },
+  });
+})();

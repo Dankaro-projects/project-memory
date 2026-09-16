@@ -1,14 +1,11 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <meta
-      http-equiv="Content-Security-Policy"
-      content="default-src 'none'; script-src 'sha256-__SCRIPT_HASH__'; style-src 'sha256-__STYLE_HASH__'; font-src data:; base-uri 'none'; form-action 'none'"
-    />
-    <title>Project Memory</title>
-    <!-- Embedded Manrope fonts: Copyright 2019 The Manrope Project Authors (https://github.com/sharanda/manrope)
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src __SCRIPT_HASHES__; style-src __STYLE_HASH__; font-src data:; base-uri 'none'; form-action 'none'" />
+<title>Project Memory</title>
+<!-- Embedded Manrope fonts: Copyright 2019 The Manrope Project Authors (https://github.com/sharanda/manrope)
 
 This Font Software is licensed under the SIL Open Font License, Version 1.1.
 This license is copied below, and is also available with a FAQ at:
@@ -102,302 +99,48 @@ DAMAGES, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
 FROM, OUT OF THE USE OR INABILITY TO USE THE FONT SOFTWARE OR FROM
 OTHER DEALINGS IN THE FONT SOFTWARE.
  -->
-    <style>
-      __WORKSPACE_CSS__
-    </style>
-  </head>
-  <body>
-    <section id="template-notice">
-      <h1>Open Project Memory</h1>
-      <p>
-        This file is the application template. To open your workspace, run this
-        command in your project folder:
-      </p>
-      <pre>project-memory view</pre>
-      <p>
-        If you used uvx to set up the project, use
-        <code>uvx project-memory-mcp view</code>.
-      </p>
-      <p>
-        The command opens the live workspace with your records and automatic
-        updates. No HTML installation or rebuild is needed.
-      </p>
-    </section>
-    <div id="workspace-app" hidden>
-      <aside
-        class="sidebar"
-        id="record-navigation"
-        aria-label="Project navigation"
-      >
-        <div class="brand">
-          <span class="brand-mark" aria-hidden="true">m</span>
-          <div><strong>Project Memory</strong><small>by Dankaro</small></div>
-        </div>
-        <nav aria-label="Workspace sections">
-          <button data-section="overview" aria-pressed="true">Overview</button>
-          <button data-section="work" aria-pressed="false">Work</button>
-          <button data-section="decisions" aria-pressed="false">
-            Decisions
-          </button>
-          <button data-section="knowledge" aria-pressed="false">
-            Knowledge
-          </button>
-          <button data-section="activity" aria-pressed="false">Activity</button>
-        </nav>
-        <div class="sidebar-bottom">
-          <button id="about-open">Project information</button>
-          <p>Local workspace</p>
-        </div>
-      </aside>
-      <main class="app-main">
-        <header class="top">
-          <button
-            id="menu-toggle"
-            aria-label="Toggle navigation"
-            aria-controls="record-navigation"
-            aria-expanded="false"
-          >
-            ☰
-          </button>
-          <div class="breadcrumb">
-            <span id="project">Project Memory</span
-            ><span class="separator">/</span>
-            <h1 id="view-title">Episodes</h1>
-          </div>
-          <span
-            id="live-status"
-            class="connection-indicator"
-            data-state="snapshot"
-            >Snapshot</span
-          >
-        </header>
-        <div class="workspace">
-          <nav id="view-tabs" class="view-tabs" aria-label="Section views">
-            <div data-views="overview">
-              <button data-view="overview" aria-pressed="true">
-                Project overview</button
-              ><button data-view="attention" aria-pressed="false">
-                Needs attention
-              </button>
-            </div>
-            <div data-views="work" hidden>
-              <button data-view="board" aria-pressed="false">Work board</button
-              ><button data-view="episodes" aria-pressed="false">
-                Episodes</button
-              ><button data-view="pending" aria-pressed="false">
-                Follow-up work</button
-              ><button data-view="map" aria-pressed="false">Project map</button
-              ><button data-view="dependencies" aria-pressed="false">Dependencies</button>
-            </div>
-            <div data-views="decisions" hidden>
-              <button data-view="decisions" aria-pressed="false">
-                Decisions</button
-              ><button data-view="drift" aria-pressed="false">
-                Evidence drift
-              </button>
-            </div>
-            <div data-views="knowledge" hidden>
-              <button data-view="documents" aria-pressed="false">
-                Documents</button
-              ><button data-view="sources" aria-pressed="false">Sources</button
-              ><button data-view="direction" aria-pressed="false">
-                Project requirements</button
-              ><button data-view="research" aria-pressed="false">
-                Research</button
-              ><button data-view="corrections" aria-pressed="false">
-                Writing corrections</button
-              ><button data-view="lessons" aria-pressed="false">Lessons</button
-              ><button data-view="patterns" aria-pressed="false">
-                Patterns</button
-              ><button data-view="skills" aria-pressed="false">Skills</button>
-            </div>
-            <div data-views="activity" hidden>
-              <button data-view="events" aria-pressed="false">Events</button
-              ><button data-view="captures" aria-pressed="false">
-                Host capture
-              </button>
-            </div>
-          </nav>
-          <div class="page-heading">
-            <h2 id="page-title">Episodes</h2>
-            <div class="board-options" id="board-options" hidden>
-              <label
-                ><input id="show-empty" type="checkbox" />Show empty
-                columns</label
-              >
-            </div>
-          </div>
-          <p id="connection" role="status" hidden></p>
-          <div class="filters">
-            <label
-              >Search<input
-                id="query"
-                type="search"
-                placeholder="Search titles and record contents" /></label
-            ><label
-              >Subject<select id="subject">
-                <option value="">All subjects</option>
-              </select></label
-            ><label
-              >Status<select id="status">
-                <option value="">All statuses</option>
-              </select></label
-            ><label
-              >Episode<select id="episode">
-                <option value="">All episodes</option>
-              </select></label
-            ><label>From<input id="from" type="date" /></label
-            ><label>To<input id="to" type="date" /></label
-            ><label
-              >Order<select id="order">
-                <option value="newest">Newest first</option>
-                <option value="oldest">Oldest first</option>
-                <option value="title">Title</option>
-              </select></label
-            ><button id="clear">Clear filters</button>
-          </div>
-          <div class="presentation-controls" id="presentation-controls">
-            <label
-              >View<select id="presentation" aria-label="View format"></select
-            ></label>
-          </div>
-          <section id="board-controls" class="board-controls" hidden>
-            <label
-              >Sprint<select id="sprint">
-                <option value="">All sprints</option>
-                <option value="unassigned">Unassigned work</option>
-              </select></label
-            ><button id="more-sprints" hidden>Load more sprints</button>
-            <div id="workspace-actions" class="workspace-actions" hidden>
-              <button id="edit-sprint" disabled>Edit sprint</button
-              ><button id="new-sprint">New sprint</button
-              ><button id="new-work" class="primary">New action</button>
-            </div>
-          </section>
-          <section id="extension-view" hidden></section>
-          <div id="knowledge-actions" hidden>
-            <button id="edit-requirements" class="primary">
-              Review requirements
-            </button>
-          </div>
-          <p id="workspace-message" role="status"></p>
-          <p id="recording-status" role="status" hidden></p>
-          <section id="board" hidden>
-            <div id="sprint-summary" class="sprint-summary"></div>
-            <div id="board-grid" class="board-grid"></div>
-          </section>
-          <p id="pending-note" hidden>
-            Unconfirmed execution requires a host check. Do not repeat the
-            action automatically.
-          </p>
-          <section id="reading-view" aria-label="Records" hidden></section>
-          <div class="table-wrap" id="record-table">
-            <table>
-              <thead>
-                <tr>
-                  <th>Date (UTC)</th>
-                  <th>Subject</th>
-                  <th>Type</th>
-                  <th>Record</th>
-                  <th>Status</th>
-                  <th>Details</th>
-                </tr>
-              </thead>
-              <tbody id="rows"></tbody>
-            </table>
-            <p id="empty" hidden>No records match these filters.</p>
-          </div>
-          <div class="pager">
-            <span id="count" aria-live="polite"></span>
-            <div>
-              <label
-                >Rows<select id="page-size">
-                  <option>10</option>
-                  <option selected>25</option>
-                  <option>50</option>
-                  <option>100</option>
-                </select></label
-              ><button id="previous">Previous</button><span id="page"></span
-              ><button id="next">Next</button>
-            </div>
-          </div>
-        </div>
-      </main>
-      <dialog id="about" aria-labelledby="about-title">
-        <button id="about-close">Close</button>
-        <h2 id="about-title">Project information</h2>
-        <p id="snapshot"></p>
-        <p id="scope"></p>
-        <details class="rules">
-          <summary>Using this workspace</summary>
-          <p id="workspace-help">
-            This is an offline snapshot. It does not update or save changes. Run
-            <code>project-memory view</code> in your project folder to open the
-            live workspace.
-          </p>
-          <ul>
-            <li>
-              Use Work board to follow progress. Open a card to read its plan,
-              decisions and outcomes.
-            </li>
-            <li>
-              Tell your assistant when priorities or requirements change. It
-              records the revision and retains the earlier decision.
-            </li>
-            <li>
-              Check blocked work and recording issues before continuing. Live
-              means the viewer is connected; it does not prove that every
-              decision has been recorded.
-            </li>
-          </ul>
-          <p>
-            No HTML installation or rebuild is needed. If you used uvx for
-            setup, run <code>uvx project-memory-mcp view</code>.
-          </p>
-        </details>
-        <details class="rules">
-          <summary>Agreed requirements</summary>
-          <ul id="requirements"></ul>
-        </details>
-        <h3>Recorded measurements</h3>
-        <p id="overview"></p>
-        <footer>
-          Read-only snapshot. Regenerate it after database or document changes.
-          Filters cover this export only.
-        </footer>
-      </dialog>
-      <dialog id="detail" aria-labelledby="detail-title">
-        <div class="detail-toolbar">
-          <button id="detail-back" hidden>Back</button
-          ><span id="detail-kind">Record</span
-          ><button id="detail-expand" aria-pressed="false">Expand</button
-          ><button id="close" aria-label="Close details">Close</button>
-        </div>
-        <div class="detail-head"><h2 id="detail-title" tabindex="-1"></h2></div>
-        <p id="detail-connection" role="status" hidden></p>
-        <div id="detail-body"></div>
-      </dialog>
-      <dialog id="editor" aria-labelledby="editor-title">
-        <h2 id="editor-title"></h2>
-        <form id="work-form">
-          <div id="editor-fields" class="editor-grid"></div>
-          <p id="editor-error" class="form-error" role="alert" hidden></p>
-          <div class="editor-actions">
-            <button type="button" id="editor-reload" hidden>
-              Reload saved version</button
-            ><button type="button" id="editor-cancel">Cancel</button
-            ><button type="submit" id="editor-save" class="primary">
-              Save
-            </button>
-          </div>
-        </form>
-      </dialog>
-    </div>
-    <script id="memory-data" type="application/json">
-      __MEMORY_DATA__
-    </script>
-    <script>
-      __WORKSPACE_JS__;
-    </script>
-  </body>
+<style>__PANEL_CSS__</style>
+</head>
+<body>
+<section id="template-notice" class="template-notice">
+<h1>Open Project Memory</h1>
+<p>This file is the application template. To open the control panel, run this command in your project folder:</p>
+<pre>project-memory view</pre>
+<p>If you used uvx to set up the project, run <code>uvx project-memory-mcp view</code>. The command opens the live control panel with your records and automatic updates.</p>
+</section>
+<div id="app" class="shell" hidden>
+<nav id="rail" class="rail" aria-label="Control panel sections">
+<div class="brand"><strong>Project Memory</strong><span id="mode-label">Local control panel</span></div>
+<div id="nav"></div>
+</nav>
+<div class="column">
+<header class="topbar">
+<button id="menu-toggle" class="menu-toggle" type="button" aria-controls="rail" aria-expanded="false">Menu</button>
+<div class="titles"><span id="project-name">Project Memory</span><h1 id="view-title" tabindex="-1">Now</h1></div>
+<span id="live-status" class="status" data-state="connecting">Connecting</span>
+<form id="search" class="search" role="search"><label class="visually-hidden" for="search-input">Search records</label><input id="search-input" type="search" name="query" placeholder="Search records" autocomplete="off" /></form>
+<div id="ledger" class="ledger" hidden></div>
+</header>
+<div id="alerts" class="alerts" role="alert" aria-live="assertive"></div>
+<main id="main" class="main" tabindex="-1"></main>
+</div>
+<aside id="drawer" class="drawer" role="dialog" aria-modal="false" aria-labelledby="drawer-title" hidden>
+<div class="drawer-bar"><button id="drawer-back" type="button" class="small" hidden>Back</button><span id="drawer-kind" class="drawer-kind"></span><button id="drawer-close" type="button" class="small">Close</button></div>
+<h2 id="drawer-title" tabindex="-1"></h2>
+<div id="drawer-body" class="drawer-body"></div>
+</aside>
+<dialog id="form-dialog" class="form-dialog" aria-labelledby="form-title">
+<form id="form" novalidate>
+<h2 id="form-title"></h2>
+<div id="form-fields" class="form-fields"></div>
+<p id="form-error" class="form-error" role="alert" hidden></p>
+<div class="form-actions"><button type="button" id="form-reload" hidden>Reload saved version</button><button type="button" id="form-cancel">Cancel</button><button type="submit" id="form-save" class="primary">Save</button></div>
+</form>
+</dialog>
+<div id="toasts" class="toasts" role="status" aria-live="polite"></div>
+</div>
+<script id="memory-data" type="application/json">__MEMORY_DATA__</script>
+<script>__VENDOR_JS__</script>
+<script>__PANEL_JS__</script>
+</body>
 </html>

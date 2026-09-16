@@ -431,13 +431,16 @@ def now(memory, params):
         attention.append({'type': 'blocked_work', 'id': item['id'], 'reason': item['title'] + ' is blocked. ' + first})
     for run in awaiting_merge(memory, limit=20):
         review = (run.get('review') or {}).get('state', 'missing').replace('_', ' ')
+        changed = run['changed_files']
         attention.append({'type': 'awaiting_merge', 'id': run['id'], 'episode_id': run['episode_id'],
-                          'reason': f'Delegated work changed {run["changed_files"]} files and awaits a merge decision. Its review is {review}.'})
+                          'reason': f'Delegated work changed {changed} file{"" if changed == 1 else "s"} and awaits a merge decision. '
+                                    f'Its review is {review}.'})
     attention.extend(follow_up_attention(memory, limit=10))
     recurring = guards.recurrences(memory, limit=50)
     for entry in recurring:
+        times = 'once' if entry['total'] == 1 else f'{entry["total"]} times'
         attention.append({'type': 'guard_recurrence', 'id': entry['lesson_id'],
-                          'reason': f'The failure type {entry["failure_type"]} occurred {entry["total"]} times after the lesson was accepted.'})
+                          'reason': f'The failure type {entry["failure_type"]} occurred {times} after the lesson was accepted.'})
     failures = guards.failures_without_lesson(memory, limit=1000)
     for entry in failures[:10]:
         attention.append({'type': 'failure_without_lesson', 'id': entry['outcome_id'], 'episode_id': entry['episode_id'],

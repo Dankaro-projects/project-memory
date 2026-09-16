@@ -15,48 +15,68 @@ can name related records outside a scope, as evidence references always did.
 import base64
 import hashlib
 from pathlib import Path
+import re
 from subprocess import SubprocessError
 from urllib.parse import urlencode
 
 from . import api, delegation
 from .core import InvalidRecord, Conflict, dumps, _time
 
-UI_SCRIPTS = ('state.js', 'records.js', 'api.js', 'sync.js', 'navigation.js',
-              'board.js', 'editor.js', 'reviews.js', 'approvals.js', 'skills.js', 'map.js', 'dependencies.js', 'reading.js', 'overview.js', 'boot.js')
+# The application script joins these files in this order. Every listed file is
+# required in a published package (scripts/check_artifacts.py). While the panel is
+# being built, html_template skips a listed file that does not exist yet.
+UI_SCRIPTS = ('core.js', 'graphs.js', 'views_work.js', 'views_knowledge.js', 'forms.js')
+UI_STYLES = ('panel.css',)
+VENDOR_SCRIPT = 'vendor/cytoscape.min.js'
+PLACEHOLDERS = re.compile(r'__(PANEL_CSS|VENDOR_JS|PANEL_JS)__')
+EXECUTABLE_SCRIPT = re.compile(r'<script>(.*?)</script>', re.S)
 PROJECT_VIEWS = ('now', 'work_graph', 'architecture', 'learning', 'agents', 'kickoff', 'plan', 'components')
 RECORD_LIMIT = '100'
 
 
 def html_template():
+    """The page with the stylesheet, the vendor script and the application script in place.
+
+    Content is inserted in one pass, so text inside an inserted file is never
+    treated as a placeholder.
+    """
     root = Path(__file__).parent
     template = (root / 'viewer.html').read_text(encoding='utf-8')
-    template = template.replace('__WORKSPACE_CSS__', (root / 'ui/workspace.css').read_text(encoding='utf-8'))
-    script = '\n'.join((root / 'ui' / name).read_text(encoding='utf-8') for name in UI_SCRIPTS)
-    template = template.replace('__WORKSPACE_JS__', script)
-    # Opening the source file shows launch instructions; rendered pages reveal the workspace.
-    template = template.replace('<div id="workspace-app" hidden>', '<div id="workspace-app">')
+    # Opening the source file shows launch instructions; a rendered page shows the panel.
+    template = template.replace('<section id="template-notice"', '<section id="template-notice" hidden', 1)
+    template = template.replace('<div id="app" class="shell" hidden>', '<div id="app" class="shell">', 1)
+    css = '\n'.join((root / 'ui' / name).read_text(encoding='utf-8') for name in UI_STYLES)
     for weight in (400, 700):
         font = (root / 'assets' / f'manrope-latin-{weight}.woff2').read_bytes()
-        template = template.replace(f'__MANROPE_{weight}__', base64.b64encode(font).decode())
-    return template
+        css = css.replace(f'__MANROPE_{weight}__', base64.b64encode(font).decode())
+    script = '\n'.join((root / 'ui' / name).read_text(encoding='utf-8') for name in UI_SCRIPTS if (root / 'ui' / name).exists())
+    parts = {'PANEL_CSS': css, 'VENDOR_JS': (root / VENDOR_SCRIPT).read_text(encoding='utf-8'), 'PANEL_JS': script}
+    for name, text in parts.items():
+        if '</' + ('style' if name == 'PANEL_CSS' else 'script') in text.lower():
+            raise ValueError(f'The {name} content must not contain a closing tag.')
+    return PLACEHOLDERS.sub(lambda match: parts[match.group(1)], template)
+
+
+def _digest(body):
+    return "'sha256-" + base64.b64encode(hashlib.sha256(body.encode('utf-8')).digest()).decode() + "'"
 
 
 def render(template, data, *, live=False):
     """The page with hashed style and script elements and the escaped data.
 
-    The hashes replace their placeholders before the data is inserted, so record
-    text that contains a placeholder is kept unchanged.
+    Every script element without attributes is executable and gets its own hash:
+    the vendor script and the application script. The data element is JSON and
+    needs none. The policy sits before all content, so each replacement changes
+    only its first occurrence, and the data is inserted last.
     """
-    page = template
-    for tag in ('style', 'script'):
-        # Only the executable script has no attributes.
-        body = template.split('<' + tag + '>', 1)[1].split('</' + tag + '>', 1)[0]
-        digest = base64.b64encode(hashlib.sha256(body.encode()).digest()).decode()
-        page = page.replace('__' + tag.upper() + '_HASH__', digest)
+    style = template.split('<style>', 1)[1].split('</style>', 1)[0]
+    scripts = EXECUTABLE_SCRIPT.findall(template)
+    page = template.replace('__STYLE_HASH__', _digest(style), 1)
+    page = page.replace('__SCRIPT_HASHES__', ' '.join(_digest(body) for body in scripts), 1)
     if live:
-        page = page.replace("base-uri 'none'", "connect-src 'self'; base-uri 'none'")
+        page = page.replace("base-uri 'none'", "connect-src 'self'; base-uri 'none'", 1)
     encoded = dumps(data).replace('&', '\\u0026').replace('<', '\\u003c').replace('>', '\\u003e')
-    return page.replace('__MEMORY_DATA__', encoded)
+    return page.replace('__MEMORY_DATA__', encoded, 1)
 
 
 def response_key(endpoint, params=None):
