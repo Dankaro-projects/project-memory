@@ -213,7 +213,10 @@ async function views(page, kind, expected) {
   assert.match(learning, /2 accepted guards are active, and 1 guard recorded a recurrence\./);
   assert.match(learning, /Recurred 1 time/);
   assert.match(learning, /Failures without lessons/);
-  step(`${kind}: Learning shows the accepted guards, the recurrence and the failures without lessons`);
+  assert.equal(await page.locator('#main .kn-guard[data-tone="blocked"] [data-key^="form:reassess:"]').count(), 1,
+    `${kind}: the counted recurrence has no Reassess action next to it`);
+  assert.equal(await page.locator('#main [data-key^="form:reassess:"]').first().innerText(), "Reassess");
+  step(`${kind}: Learning shows the accepted guards, the recurrence with its Reassess action and the failures without lessons`);
 
   // Instructions: one panel per role with its base text, its rules, its omissions and its budget.
   assert.equal(await page.locator('#main [data-key^="instructions-"]').count(), 3);
@@ -399,6 +402,27 @@ async function editing(page, ids, posts) {
     document.querySelector('[data-key="instructions-reviewer"]').textContent), null, { timeout: 15000 });
   assert.match(await text(page, '[data-key="base-reviewer"]'), /State the evidence for every judgement and give one verdict\./);
   step("a new version of the reviewer base text is saved and the panel shows it");
+
+  // Reassessing the counted recurrence as the user removes it from the count.
+  const recurrencesBefore = await page.evaluate(async () => (await Panel.get("learning")).recurrences.reduce((sum, entry) => sum + entry.total, 0));
+  assert.equal(recurrencesBefore, 1);
+  await page.locator(`#main [data-key^="form:reassess:"][data-key$=":${ids.recurrence_outcome}"]`).click();
+  await page.waitForSelector("#form-dialog[open] textarea[name=reason]");
+  assert.match(await text(page, "#form-fields"), /Observed/);
+  assert.equal(await page.locator('input[name="assessment"][value="good"]').isChecked(), true);
+  await field(page, "reason").fill("The archive import was repeated and every character arrived.");
+  await page.locator("#form-save").click();
+  await savedToast(page, /The outcome is reassessed as good\./);
+  await page.waitForFunction(() => !/recorded a recurrence/.test(document.querySelector("#main .view:not(.pending) .sentence").textContent), null, { timeout: 15000 });
+  await settle(page);
+  assert.equal(await page.locator('#main [data-key^="form:reassess:"]').count(), 0);
+  assert.doesNotMatch(await text(page, "#main"), /Recurred 1 time/);
+  const after = await page.evaluate(async () => {
+    const learning = await Panel.get("learning");
+    return [learning.recurrences.length, learning.guards.reduce((sum, guard) => sum + (guard.recurrences || 0), 0)];
+  });
+  assert.deepEqual(after, [0, 0]);
+  step("the user reassesses the counted recurrence and the recurrence count drops from 1 to 0");
 
   // Allowing the blocked path of the scope block.
   await go(page, "#now");

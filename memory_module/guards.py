@@ -43,11 +43,23 @@ from functools import lru_cache
 
 from .core import USER_ACTOR, InvalidRecord, MemoryError, _digest, _text
 
-# A failure stays counted until the user reassesses its decision. Superseding alone is not enough, because the
+# A failure stays counted until the user reassesses it. Superseding alone is not enough, because the
 # agent whose work failed may record the next outcome, and a count it can clear would reward hiding failures.
+# The reassess action of the control panel records an outcome by the user that links to the one outcome it
+# reassesses. That reassessment decides for the linked outcome only: good or unknown removes it from the count and
+# bad keeps it counted. A reassessment is never counted itself, so a confirmed failure is counted once and keeps
+# its place before or after the acceptance of a guard. An outcome by the user without such a link reassesses
+# every earlier outcome of its decision.
+REASSESSMENT_LINK = """SELECT 1 FROM event_links k JOIN events t ON t.id=k.prior_event_id
+                       WHERE k.event_id={outcome}.id AND t.kind='outcome'"""
 COUNTED_FAILURE = f"""o.kind='outcome' AND json_extract(o.payload,'$.assessment')='bad'
+    AND NOT (o.actor='{USER_ACTOR}' AND EXISTS ({REASSESSMENT_LINK.format(outcome='o')}))
+    AND COALESCE((SELECT json_extract(r.payload,'$.assessment') FROM event_links k JOIN events r ON r.id=k.event_id
+                  WHERE k.prior_event_id=o.id AND r.kind='outcome' AND r.actor='{USER_ACTOR}'
+                  ORDER BY r.rowid DESC LIMIT 1), 'bad')='bad'
     AND NOT EXISTS (SELECT 1 FROM events n WHERE n.kind='outcome' AND n.decision_id=o.decision_id
-                    AND n.rowid > o.rowid AND n.actor='{USER_ACTOR}')"""
+                    AND n.rowid > o.rowid AND n.actor='{USER_ACTOR}'
+                    AND NOT EXISTS ({REASSESSMENT_LINK.format(outcome='n')}))"""
 
 TRIGGERS = ('paths', 'keywords', 'failure_type')
 # A lesson review may replace the triggers and the roles of the lesson it accepts.

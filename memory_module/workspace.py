@@ -17,7 +17,7 @@ from .shared import prior_result, run_summary, store_result
 
 KEY_REUSED = 'This action key was already used for different changes.'
 RECORD_OPERATIONS = ('plan', 'sprint', 'comment', 'requirements', 'lesson_review', 'allow_paths', 'link', 'component',
-                     'answer_kickoff', 'instructions', 'phase')
+                     'answer_kickoff', 'instructions', 'phase', 'reassess')
 RUN_OPERATIONS = ('delegate', 'merge', 'discard', 'review', 'cancel_run', 'request_work_review')
 # Promotion actions write to the machine memory, which is a second database, so they run outside the
 # action transaction of this project, as the agent run actions do.
@@ -35,6 +35,7 @@ FIELDS = {
     'answer_kickoff': ({'question_ids', 'text'}, {'episode_id'}),
     'instructions': ({'role', 'text'}, {'reason', 'actor'}),
     'phase': ({'phase', 'reason'}, set()),
+    'reassess': ({'decision_id', 'assessment', 'reason'}, {'outcome_id'}),
     'delegate': ({'episode_id'}, {'host', 'max_seconds'}),
     'merge': ({'run_id'}, {'override_reason'}),
     'discard': ({'run_id', 'reason'}, set()),
@@ -54,6 +55,7 @@ MESSAGES = {
     'answer_kickoff': 'Select the kickoff questions and write the answer.',
     'instructions': 'Select the role and write the base instructions. The reason is optional.',
     'phase': 'Select the phase of the project and write the reason for the change.',
+    'reassess': 'Select the decision, the new assessment and the reason. The outcome you reviewed is optional.',
     'delegate': 'Select the work item to delegate. The host and time limit are optional.',
     'merge': 'Select the delegated run to merge. An override reason is optional.',
     'discard': 'Select the delegated run to discard and give the reason.',
@@ -327,9 +329,77 @@ def instructions(memory, data, request_key):
             'used': composed['used'], 'text': composed['text']}
 
 
+# The user may judge an outcome good, bad or unknown. Pending is the state of an outcome that nobody has judged yet.
+REASSESSMENTS = ('good', 'bad', 'unknown')
+
+
+def reassess(memory, data, request_key):
+    """Record a new outcome of a decision as the user for one outcome of that decision.
+
+    The new outcome supersedes the latest outcome of the decision, as every outcome does, and links to
+    the outcome the user reassesses: `outcome_id`, or without it the latest counted failure of the decision,
+    or when none is counted the latest outcome that is not itself a reassessment. guards.COUNTED_FAILURE reads that link, so a good or unknown assessment removes exactly
+    that outcome from the recurrence count, and a bad assessment keeps it counted where it was, with its
+    failure type and severity. This is the only way a failure leaves the count.
+    """
+    from . import guards
+    if data.get('actor', USER) != USER:
+        raise InvalidRecord('Reassessing an outcome is a user action. The recorded actor is ' + USER +
+                            ', so another actor name is not accepted.', actor=USER)
+    decision_id = _text(data['decision_id'], 'decision_id', 200)
+    decision = memory._event(decision_id)
+    if decision['kind'] != 'decision':
+        raise InvalidRecord('Select a decision to reassess. The selected record is not a decision.')
+    assessment = data['assessment']
+    if assessment not in REASSESSMENTS:
+        raise InvalidRecord('Select the new assessment. Use one of: ' + ', '.join(REASSESSMENTS) + '.',
+                            assessments=list(REASSESSMENTS))
+    reason = _text(data['reason'], 'reason', 2000)
+    outcomes = [row['id'] for row in memory.db.execute(
+        "SELECT id FROM events WHERE decision_id=? AND kind='outcome' ORDER BY seq", (decision_id,))]
+    if not outcomes:
+        raise InvalidRecord('This decision has no recorded outcome, so there is nothing to reassess.')
+    earlier = {row['id'] for row in memory.db.execute(
+        "SELECT o.id FROM events o WHERE o.decision_id=? AND o.kind='outcome' AND o.actor=? "
+        f"AND EXISTS ({guards.REASSESSMENT_LINK.format(outcome='o')})", (decision_id, USER))}
+    if 'outcome_id' in data:
+        target = _text(data['outcome_id'], 'outcome_id', 200)
+        if target not in outcomes:
+            raise InvalidRecord('Select an outcome of this decision to reassess.')
+        if target in earlier:
+            raise InvalidRecord('This outcome is an earlier reassessment. Reassess the outcome that it assessed instead.')
+    else:
+        counted = [row['id'] for row in memory.db.execute(
+            f"SELECT o.id FROM events o WHERE o.decision_id=? AND {guards.COUNTED_FAILURE} ORDER BY o.seq", (decision_id,))]
+        target = (counted or [identifier for identifier in outcomes if identifier not in earlier])[-1]
+    previous = memory._event(target)['payload']
+    episode = memory.episode(decision['episode_id'])
+    # A bad assessment keeps the recorded severity of a failure. An earlier outcome without a failure has no severity to keep.
+    if assessment == 'good':
+        severity = 'none'
+    elif assessment == 'bad' and previous['severity'] in ('minor', 'major'):
+        severity = previous['severity']
+    else:
+        severity = 'unknown'
+    payload = {'observed': 'The user reassesses an outcome of this decision in the control panel.',
+               'assessment': assessment, 'assessment_reason': reason, 'severity': severity,
+               'attribution': previous['attribution']}
+    if assessment == 'bad' and previous.get('failure_type'):
+        payload['failure_type'] = previous['failure_type']
+    sentences = ['The user reassesses the outcome of this decision: ' + str(decision['payload'].get('decision', decision_id)),
+                 'The new assessment is: ' + assessment + '.', 'The reason is: ' + reason]
+    evidence = _user_source(memory, request_key, 'Reassessment for ' + episode['title'], sentences, episode['subject'])
+    result = memory.record(episode['id'], 'outcome', payload, expected_version=episode['version'], actor=USER,
+                           evidence=evidence, decision_id=decision_id, supersedes=outcomes[-1],
+                           links=[{'event_id': target, 'reason': 'The user reassesses this outcome.'}],
+                           request_key=request_key + ':outcome')
+    return {**result, 'decision_id': decision_id, 'episode_id': episode['id'], 'supersedes': outcomes[-1],
+            'reassessed': target, 'assessment': assessment}
+
+
 RECORD_HANDLERS = {'plan': plan, 'sprint': sprint, 'comment': comment, 'requirements': requirements,
                    'lesson_review': lesson_review, 'allow_paths': allow_paths, 'link': link, 'component': component,
-                   'answer_kickoff': answer_kickoff, 'instructions': instructions, 'phase': phase}
+                   'answer_kickoff': answer_kickoff, 'instructions': instructions, 'phase': phase, 'reassess': reassess}
 
 
 # Agent run actions.

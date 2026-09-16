@@ -1,23 +1,20 @@
 /*
- * Project Memory control panel: core.js, the foundation for graphs.js, views.js and forms.js.
+ * Project Memory control panel: core.js, the foundation for graphs.js, views_work.js, views_knowledge.js and forms.js.
  *
- * viewer.py joins the application files in the order core, graphs, views, forms into one script
- * element. vendor/cytoscape.min.js is a separate script element that runs first and defines the
- * global `cytoscape`. Every file uses the global `Panel`. Boot runs after all files are evaluated,
- * so the other files register their views, drawers and forms at load time.
+ * viewer.py joins the application files in that order into one script element. vendor/cytoscape.min.js is a separate
+ * script element that runs first and defines the global `cytoscape`. Every file uses the global `Panel`. Boot runs
+ * after all files are evaluated, so the other files register their views, drawers and forms at load time.
  *
- * Rules: build elements with Panel.h. Never use innerHTML, outerHTML, insertAdjacentHTML, eval or
- * new Function. Set computed sizes and colours through element.style, because the content security
- * policy blocks style attributes in markup. Link to outside pages only with Panel.link. Interface
- * text uses complete, plain sentences without dashes as punctuation.
+ * Rules: build elements with Panel.h. Never use innerHTML, outerHTML, insertAdjacentHTML, eval or new Function. Set
+ * computed sizes and colours through element.style, because the content security policy blocks style attributes in
+ * markup. Link to outside pages only with Panel.link. Interface text uses complete, plain sentences without dashes as
+ * punctuation.
  *
  * Data access
  *   Panel.live; Panel.canEdit() is false in a snapshot and before the first health response. Hide edit controls then.
  *   Panel.get(name, params): promise of GET api/<name> with string values (empty values are dropped). Live mode sends
  *     the stored ETag, reuses the cached value on 304 and shares identical requests in flight. Export mode reads
- *     snapshot.responses[Panel.key(name, params)] and rejects with error.notIncluded. viewer.py exports the keys now,
- *     board {limit: '100'}, records {view, limit: '100'}, work {id}, record {id}, run {id}, lineage {id},
- *     architecture, learning, agents, kickoff, plan and components.
+ *     snapshot.responses[Panel.key(name, params)] and rejects with error.notIncluded.
  *   Panel.action(op, data, key): POST api/actions {operation, data, request_key} with the X-Project-Memory CSRF
  *     header. Rejects with a Panel.Error with status, conflict (409) and details. Success triggers a poll.
  *     Panel.requestKey(prefix) is created when a form opens and reused for every submit of that draft.
@@ -30,26 +27,31 @@
  * Views: Panel.registerView(name, {title, section, render(container, params, ctx)}). Hash #name/key=value&key=value.
  *   render may be async; the container is laid out but hidden until it resolves, and a rejected render shows
  *   Panel.errorState. ctx: live, canEdit, revision, onShown(fn). Rail order: now, plan, work, architecture,
- *   dependencies, decisions, learning, agents, records, requirements; section names the rail group of any other view.
- *   Panel.go(name, params), Panel.route(), Panel.setParams(params) (hash only, no render), Panel.refresh().
+ *   dependencies, decisions, learning, agents, machine, records, requirements; section names the rail group of any
+ *   other view. Panel.go(name, params), Panel.route(), Panel.setParams(params) (hash only, no render), Panel.refresh().
  *
  * Drawer (non modal): Panel.registerDrawer(kind, {render(body, params, ctx)}); ctx adds setTitle(text) and
  *   setKind(text). Panel.openDrawer(kind, params, trigger) pushes an open entry on the back stack and the trigger
  *   gets focus on close. Panel.openRecord(id, trigger) uses the 'record' drawer and Panel.openWork(id, trigger) the
- *   'work' drawer, both registered by views_knowledge.js and views_work.js. Escape closes the drawer.
+ *   'work' drawer, registered by views_knowledge.js and views_work.js. Escape closes the drawer.
  *
  * Forms (modal dialog): Panel.registerForm(name, {title, submitLabel, render(fields, context, form),
- *   submit(values, context, form) -> {operation, data}, done(result, context) -> toast text, reload(context)}).
+ *   submit(values, context, form) -> {operation, data}, done(result, context) -> toast text, reload}).
  *   Panel.openForm(name, context, trigger) resolves with the action result, or null when closed. A 409 keeps the
- *   draft and shows "Reload saved version", which calls reload and draws the form with a new key. Throw
+ *   draft and shows "Reload saved version", which draws the form again with a new key from the context the form
+ *   opened with. reload(context) returns another context instead, and reload: false offers no reload. Throw
  *   new Panel.FormError(message) in submit to stop before sending.
  *   Panel.formValues(form): checkboxes as booleans, data-list controls as arrays of non empty lines, data-number
  *   controls as numbers or null, multiple selects as arrays, other controls as trimmed text.
  *   Panel.field(label, control, hint), Panel.input, Panel.textarea, Panel.select(name, options, value, attrs).
+ *   Panel.filterField(kind, id, label, value, onChange, options): a labelled select, check or search control with a
+ *   stable id that reports its new value on change. options are the select options or the search placeholder.
  *
  * Elements and text
  *   Panel.h(tag, attrs, ...children): attrs class, text, dataset, style (object), on (events), hidden, value,
  *     checked, disabled, selected, multiple, required, href (# links only) and other attributes.
+ *   Panel.put(host, ...children) appends every child that is not null. Panel.button(label, key, handler(trigger),
+ *     className, attrs), Panel.chip(text, attrs), Panel.kv(pairs) (leaves out empty values), Panel.lower(text).
  *   Panel.badge(state, label), Panel.tone(state) (blocked, review, in_progress, ready, done, backlog, guarded,
  *     neutral), Panel.colors (hex per tone), Panel.link(href, text) (http and https only), Panel.markdown(text)
  *     (raw HTML stays text), Panel.words(value), Panel.term(key) (template aware), Panel.template(), Panel.date,
@@ -141,6 +143,14 @@ const Panel = (() => {
   }
   const count = (n, singular, plural) => n + " " + (n === 1 ? singular : plural || singular + "s");
   const empty = (message) => h("p", { class: "empty" }, message);
+  const lower = (value) => String(value).charAt(0).toLowerCase() + String(value).slice(1);
+  // append() turns null into the text "null", so views add their children through put.
+  const put = (host, ...children) => host.append(...children.flat(Infinity).filter((node) => node !== null && node !== undefined && node !== false));
+  const chip = (value, attrs) => h("span", { class: "chip", ...attrs }, value);
+  const button = (label, key, handler, className, attrs) => h("button", { type: "button", class: className, dataset: { key }, ...attrs,
+    on: { click: (event) => handler(event.currentTarget) } }, label);
+  const filled = (value) => value !== undefined && value !== null && value !== "" && !(Array.isArray(value) && !value.length);
+  const kv = (pairs) => h("dl", { class: "kv" }, pairs.filter((pair) => filled(pair[1])).map(([label, value]) => [h("dt", null, label), h("dd", null, value)]));
   function progress(fraction, label) {
     const known = typeof fraction === "number" && Number.isFinite(fraction);
     const percent = known ? Math.round(Math.max(0, Math.min(1, fraction)) * 100) : 0;
@@ -256,13 +266,7 @@ const Panel = (() => {
   }
   const timeout = (ms) => (typeof AbortSignal !== "undefined" && AbortSignal.timeout ? AbortSignal.timeout(ms) : undefined);
   const readJson = (response) => response.json().catch(() => ({}));
-  async function request(path, options, failure) {
-    try {
-      return await fetch(path, { cache: "no-store", ...options });
-    } catch (error) {
-      throw new PanelError(failure, { network: true });
-    }
-  }
+  const request = (path, options, failure) => fetch(path, { cache: "no-store", ...options }).catch(() => { throw new PanelError(failure, { network: true }); });
   async function fetchResponse(requestKey) {
     const cached = cache.get(requestKey);
     const response = await request("api/" + requestKey, { headers: cached ? { "If-None-Match": cached.etag } : {}, signal: timeout(15000) },
@@ -490,7 +494,7 @@ const Panel = (() => {
     return renderDrawer({ focus: true });
   }
   const openRecord = (id, trigger) => openDrawer("record", { id }, trigger);
-  const openWork = (id, trigger) => (drawers.has("work") ? openDrawer("work", { id }, trigger) : openRecord(id, trigger));
+  const openWork = (id, trigger) => openDrawer("work", { id }, trigger);
 
   // Forms.
   function field(label, control, hint) {
@@ -506,6 +510,12 @@ const Panel = (() => {
       const [optionValue, label] = Array.isArray(option) ? option : [option, words(option)];
       return h("option", { value: String(optionValue), selected: chosen.includes(String(optionValue)) }, label);
     }));
+  }
+  function filterField(kind, id, label, value, onChange, options) {
+    const report = (event) => onChange(kind === "check" ? event.currentTarget.checked : event.currentTarget.value.trim());
+    return field(label, kind === "select" ? select(id, options, value, { id, on: { change: report } })
+      : kind === "check" ? h("input", { type: "checkbox", id, name: id, checked: value, on: { change: report } })
+        : input(id, value, { id, type: "search", autocomplete: "off", placeholder: options, on: { change: report } }));
   }
   function formValues(form) {
     const values = {};
@@ -548,7 +558,8 @@ const Panel = (() => {
     }
     if (state.form) return Promise.resolve(null);
     return new Promise((resolve) => {
-      state.form = { name, definition, context: formContext, key: requestKey(name), result: null, busy: false, resolve, trigger: trigger || document.activeElement };
+      state.form = { name, definition, context: formContext, initial: { ...formContext }, key: requestKey(name), result: null, busy: false, resolve,
+        trigger: trigger || document.activeElement };
       $("form-dialog").showModal();
       drawForm();
     });
@@ -570,7 +581,7 @@ const Panel = (() => {
     } catch (error) {
       if (state.form !== current) return;
       setFormError(error.message || String(error));
-      $("form-reload").hidden = !(error.conflict && current.definition.reload);
+      $("form-reload").hidden = !(error.conflict && current.definition.reload !== false);
     } finally {
       current.busy = false;
       if (state.form === current) $("form-save").disabled = false;
@@ -578,9 +589,10 @@ const Panel = (() => {
   }
   async function reloadForm() {
     const current = state.form;
-    if (!current || !current.definition.reload) return;
+    if (!current || current.definition.reload === false) return;
     try {
-      current.context = await current.definition.reload(current.context);
+      const reload = current.definition.reload;
+      current.context = typeof reload === "function" ? await reload(current.context) : { ...current.initial };
       current.key = requestKey(current.name);
       await drawForm();
     } catch (error) {
@@ -630,9 +642,6 @@ const Panel = (() => {
   }
 
   // Boot.
-  const placeholder = (title) => ({ title, render(container) {
-    container.append(h("div", { class: "view-head" }, h("h2", null, title)), empty("This view is not part of this build of the control panel yet."));
-  } });
   function bindEvents() {
     window.addEventListener("hashchange", () => { state.route = parseHash(); setMenu(false); renderView({ focus: true }); });
     $("menu-toggle").addEventListener("click", () => setMenu($("app").dataset.menu !== "open"));
@@ -653,7 +662,6 @@ const Panel = (() => {
     document.addEventListener("visibilitychange", () => { if (!document.hidden) poll(); });
   }
   function boot() {
-    for (const [name, title] of NAV) if (!views.has(name)) views.set(name, placeholder(title));
     buildNav();
     bindEvents();
     state.route = parseHash();
@@ -673,8 +681,8 @@ const Panel = (() => {
     registerView: (name, definition) => views.set(name, definition), registerDrawer: (kind, definition) => drawers.set(kind, definition),
     registerForm: (name, definition) => forms.set(name, definition),
     go, route: () => ({ name: state.route.name, params: { ...state.route.params } }), setParams, refresh,
-    openDrawer, closeDrawer, backDrawer, openRecord, openWork, openForm, formValues, field, input, textarea, select,
-    h, badge, tone, link, markdown, words, term, template, date, count, progress, stateStrip, empty, errorState, toast, alert, clearAlert,
+    openDrawer, closeDrawer, backDrawer, openRecord, openWork, openForm, formValues, field, input, textarea, select, filterField,
+    h, put, button, chip, kv, lower, badge, tone, link, markdown, words, term, template, date, count, progress, stateStrip, empty, errorState, toast, alert, clearAlert,
   };
 })();
 window.Panel = Panel;

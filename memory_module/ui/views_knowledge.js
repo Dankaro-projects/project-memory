@@ -1,26 +1,15 @@
 /*
- * Project Memory control panel: views_knowledge.js.
- *
- * Views: learning, agents, machine, records and requirements. Drawers: record and run. Buttons open the forms of
- * forms.js: lesson_review {lesson_id, status}, instructions {role}, merge, discard, cancel_run and
- * request_work_review {run_id}, requirements {}, promotion {promotion_id, status}, machine_rule {rule_id}.
- *
- * Endpoints read: learning {offset}, agents {offset}, run {id}, records {view, limit, offset, query, subject, status,
- * episode, from, to, order, related}, record {id, body_offset}, requirements {offset, revision_offset}, machine {}.
+ * Project Memory control panel: views_knowledge.js registers the Learning, Agents, Machine, Records and Requirements
+ * views and the "record" and "run" drawers. Buttons open the forms of forms.js: lesson_review {lesson_id, status},
+ * instructions {role}, merge, discard, cancel_run and request_work_review {run_id}, requirements {}, promotion
+ * {promotion_id, status}, machine_rule {rule_id}, and reassess {decision_id, outcome_id} next to each counted recurrence.
  * A snapshot holds records {view, limit: 100} for each view, so the Records view filters and pages those in the
  * browser. A snapshot carries no machine response, because the machine memory stays on the computer that holds it.
- *
- * The Instructions section of the Learning view reads learning.instructions and learning.effectiveness: one panel per
- * agent role with the base text in force, the rules composed into that prompt, the rules that wait for a matching run,
- * the rules left out with the reason, and the character budget.
  */
 (() => {
   "use strict";
-  const P = Panel;
-  const h = P.h;
-  const PAGE = 25;
-  const SNAPSHOT_PAGE = "100";
-  const ACTIVE = ["queued", "running", "cancelling"];
+  const P = Panel, { h, put, button } = P;
+  const PAGE = 25, SNAPSHOT_PAGE = "100", ACTIVE = ["queued", "running", "cancelling"];
   const RETRY_REVIEW = ["failed", "timed_out", "cancelled", "host_unavailable", "interrupted", "stale"];
   const SUBJECTS = ["general", "code", "writing", "research"];
   const STATUSES = ["recorded", "needs_review", "review_due", "superseded", "proposed", "accepted", "rejected", "retired",
@@ -28,26 +17,27 @@
   const ALL_VIEWS = ["episodes", "events", "sources", "captures", "direction"];
 
   // Shared helpers.
-  const put = (parent, ...nodes) => parent.append(...nodes.flat(Infinity).filter((node) => node !== null && node !== undefined && node !== false));
   const number = (n) => Number(n || 0).toLocaleString("en-GB");
   const isAre = (n) => (n === 1 ? "is" : "are");
   const sentence = (text) => h("p", { class: "sentence" }, text);
   const heading = (text, extra) => h("div", { class: "row kn-heading" }, h("h3", null, text), extra || null);
   const section = (title, extra, ...children) => h("section", { class: "stack" }, heading(title, extra), children);
+  const counted = (n, noun) => h("span", { class: "muted" }, P.count(n, noun));
   const chips = (values, prefix) => (values || []).map((value) => h("span", { class: "chip mono" }, (prefix || "") + value));
   // Every cell names its column, so a narrow screen shows the table as labelled rows instead of a sideways scroll.
   const cell = (label, ...children) => h("td", { dataset: { label } }, children);
-  function episodeTitle(id) {
-    const found = ((P.health() || {}).episodes || []).find((item) => item.id === id);
-    return found ? found.title : id;
-  }
-  function openButton(label, id, options = {}) {
-    const open = (event) => (options.work ? P.openWork(id, event.currentTarget) : P.openRecord(id, event.currentTarget));
-    return h("button", { type: "button", class: options.class || "quiet kn-link", dataset: { key: (options.prefix || "open-") + id }, on: { click: open } }, label);
-  }
-  function actionButton(label, key, open, tone) {
-    return h("button", { type: "button", class: ["small", tone], dataset: { key }, on: { click: (event) => open(event.currentTarget) } }, label);
-  }
+  const dateCell = (label, value) => h("td", { class: "kn-nowrap", dataset: { label } }, value ? P.date(value) : "Not recorded");
+  const table = (columns, rows) => h("div", { class: "table-wrap" }, h("table", { class: "data kn-table" },
+    h("thead", null, h("tr", null, columns.map((name) => h("th", { scope: "col" }, name)))), h("tbody", null, rows)));
+  const episodeTitle = (id) => (((P.health() || {}).episodes || []).find((item) => item.id === id) || { title: id }).title;
+  const listOf = (list, render, message) => (list.length ? h("ul", { class: "list" }, list.map((item, index) => h("li", { class: "stack kn-item" }, render(item, index))))
+    : P.empty(message));
+  const grid = (list, render, message) => (list.length ? h("div", { class: "grid" }, list.map(render)) : P.empty(message));
+  const openButton = (label, id, options = {}) => button(label, (options.prefix || "open-") + id,
+    (trigger) => (options.work ? P.openWork(id, trigger) : P.openRecord(id, trigger)), options.class || "quiet kn-link");
+  const actionButton = (label, key, open, tone) => button(label, key, open, ["small", tone]);
+  const openForm = (name, context) => (trigger) => P.openForm(name, context, trigger);
+  const openRun = (id) => (trigger) => P.openDrawer("run", { id }, trigger);
   function valueNode(value, name) {
     if (value === null || value === undefined || value === "") return "Not recorded";
     if (Array.isArray(value)) return value.length ? h("ul", { class: "kn-plain" }, value.map((item) => h("li", null, valueNode(item)))) : "None recorded";
@@ -61,14 +51,14 @@
     const { offset, count, total, more, limit } = info;
     if (!count && !offset) return null;
     const end = offset + count;
-    const text = typeof total === "number" ? "Showing " + number(offset + 1) + " to " + number(end) + " of " + number(total) + "."
-      : "Showing " + number(offset + 1) + " to " + number(end) + ".";
+    const text = "Showing " + number(offset + 1) + " to " + number(end) + (typeof total === "number" ? " of " + number(total) : "") + ".";
     return h("nav", { class: "row kn-pager", "aria-label": "Pages" }, h("span", { class: "muted" }, text),
-      h("button", { type: "button", class: "small", disabled: offset <= 0, dataset: { key: prefix + "-previous" }, on: { click: () => go(Math.max(0, offset - limit)) } }, "Previous"),
-      h("button", { type: "button", class: "small", disabled: !more, dataset: { key: prefix + "-next" }, on: { click: () => go(end) } }, "Next"));
+      button("Previous", prefix + "-previous", () => go(Math.max(0, offset - limit)), "small", { disabled: offset <= 0 }),
+      button("Next", prefix + "-next", () => go(end), "small", { disabled: !more }));
   }
   // A section that loads on its own, so a missing snapshot key does not hide the rest of the view.
   const failed = (error) => (error && error.notIncluded ? h("p", { class: "muted" }, "This part is not included in this snapshot.") : P.errorState(error));
+
   // Learning.
   function lessonText(lesson) {
     return [h("p", null, h("strong", null, lesson.do || "No action is recorded.")),
@@ -77,24 +67,23 @@
       lesson.exceptions ? h("p", { class: "muted" }, "Exceptions: " + lesson.exceptions) : null];
   }
   const lower = (text) => (text ? text.charAt(0).toLowerCase() + text.slice(1) : "no condition is recorded.");
-  function triggerChips(item) {
-    const parts = [...chips(item.paths, "Path "), ...chips(item.keywords, "Keyword "), ...(item.failure_type ? chips([item.failure_type], "Failure type ") : [])];
-    return parts.length ? h("div", { class: "row" }, parts) : h("p", { class: "muted" }, "No triggers are recorded for this guard.");
+  // Guards name their paths and rules name their roles; both name their keywords and failure type.
+  function triggerChips(item, first, empty) {
+    const parts = [...chips(item[first], first === "paths" ? "Path " : "Role "), ...chips(item.keywords, "Keyword "), ...chips(item.failure_type ? [item.failure_type] : [], "Failure type ")];
+    return parts.length ? h("div", { class: "row" }, parts) : empty;
   }
-  function lessonReview(lesson, status, trigger) {
-    P.openForm("lesson_review", { lesson_id: lesson.id, status }, trigger);
-  }
+  const lessonReview = (lesson, status) => openForm("lesson_review", { lesson_id: lesson.id, status });
   function guardCard(guard, recurrence, ctx) {
     const count = guard.recurrences || 0;
-    const lesson = { ...guard, id: guard.lesson_id };
     return h("article", { class: "card kn-guard", dataset: { tone: count ? "blocked" : "guarded" } },
       h("h3", null, h("span", null, P.words(guard.pattern_type || "guard")), count ? P.badge("blocked", "Recurred " + P.count(count, "time")) : P.badge("guarded", "Active guard")),
-      lessonText(guard), triggerChips(guard),
+      lessonText(guard), triggerChips(guard, "paths", h("p", { class: "muted" }, "No triggers are recorded for this guard.")),
       count ? h("div", { class: "notice", dataset: { tone: "blocked" } },
         h("p", null, "The failure type " + (guard.failure_type || "of this guard") + " was recorded " + P.count(count, "time") + " after this lesson was accepted on " + P.date(guard.accepted_at) + "."),
-        h("ul", { class: "kn-plain" }, ((recurrence || {}).outcomes || []).map((outcome) => h("li", null, openButton(outcome.observed || outcome.id, outcome.id, { prefix: "recurrence-" }), " ", h("span", { class: "muted" }, P.date(outcome.created_at)))))) : null,
+        h("ul", { class: "kn-plain" }, ((recurrence || {}).outcomes || []).map((outcome) => h("li", null, openButton(outcome.observed || outcome.id, outcome.id, { prefix: "recurrence-" }), " ", h("span", { class: "muted" }, P.date(outcome.created_at)), " ",
+          P.formButton("Reassess", "reassess", { decision_id: outcome.decision_id, outcome_id: outcome.id }, { class: "small" }))))) : null,
       h("div", { class: "row" }, openButton("Open the lesson", guard.lesson_id, { class: "small", prefix: "guard-" }),
-        ctx.canEdit ? actionButton("Retire", "retire-" + guard.lesson_id, (trigger) => lessonReview(lesson, "retired", trigger)) : null));
+        ctx.canEdit ? actionButton("Retire", "retire-" + guard.lesson_id, lessonReview({ id: guard.lesson_id }, "retired")) : null));
   }
   function proposedCard(lesson, ctx) {
     return h("article", { class: "card proposed" },
@@ -104,9 +93,8 @@
       h("div", { class: "row" }, h("span", { class: "muted" }, P.term("work_item") + ":"), openButton(lesson.episode_title || lesson.episode_id, lesson.episode_id, { work: true, prefix: "lesson-work-" })),
       lesson.evidence && lesson.evidence.length ? h("ul", { class: "kn-plain" }, lesson.evidence.map((ref) => h("li", null, openButton(ref.title || ref.source_id, ref.source_id, { prefix: "lesson-evidence-" + lesson.id + "-" }), h("span", { class: "muted" }, " " + ref.reason)))) : null,
       h("div", { class: "row" }, openButton("Open the lesson", lesson.id, { class: "small", prefix: "proposed-" }),
-        ctx.canEdit ? [actionButton("Accept", "accept-" + lesson.id, (trigger) => lessonReview(lesson, "accepted", trigger), "primary"),
-          actionButton("Reject", "reject-" + lesson.id, (trigger) => lessonReview(lesson, "rejected", trigger)),
-          actionButton("Retire", "retire-" + lesson.id, (trigger) => lessonReview(lesson, "retired", trigger), "quiet")] : null));
+        ctx.canEdit ? [actionButton("Accept", "accept-" + lesson.id, lessonReview(lesson, "accepted"), "primary"),
+          actionButton("Reject", "reject-" + lesson.id, lessonReview(lesson, "rejected")), actionButton("Retire", "retire-" + lesson.id, lessonReview(lesson, "retired"), "quiet")] : null));
   }
   // Instructions: the text each agent role receives, the rules composed into it and the rules left out.
   const RULE_STATE = { effective: "ready", unproven: "backlog", ineffective: "blocked" };
@@ -126,8 +114,7 @@
       rule.note ? h("p", { class: "muted" }, rule.note) : null);
   }
   function rolePanel(role, value, rules, accepted, max) {
-    const omitted = value.omitted || [];
-    const mine = rules.filter((rule) => (rule.roles || []).indexOf(role) >= 0);
+    const omitted = value.omitted || [], mine = rules.filter((rule) => (rule.roles || []).indexOf(role) >= 0);
     const found = (id) => mine.find((rule) => rule.lesson_id === id) || { lesson_id: id };
     const composed = (value.rule_ids || []).map(found);
     const waiting = mine.filter((rule) => !has(value.rule_ids, rule.lesson_id) && !has(omitted, rule.lesson_id));
@@ -149,146 +136,108 @@
       h("h4", null, "Rules in force"),
       composed.length ? h("ul", { class: "list" }, composed.map((rule) => ruleEntry(rule, role))) : P.empty("No rule is composed into this prompt."),
       waiting.length ? [h("h4", null, "Rules that wait for a matching run"), h("ul", { class: "list" }, waiting.map((rule) => ruleEntry(rule, role)))] : null,
-      omitted.length ? [h("h4", null, "Rules left out"),
-        h("ul", { class: "list" }, omitted.map((entry) => ruleEntry(found(entry.lesson_id), role, entry.reason)))] : null);
+      omitted.length ? [h("h4", null, "Rules left out"), h("ul", { class: "list" }, omitted.map((entry) => ruleEntry(found(entry.lesson_id), role, entry.reason)))] : null);
   }
   function instructionsSection(data) {
-    const value = data.instructions || {};
-    const roles = Object.keys(value.roles || {});
-    const rules = data.effectiveness || [];
-    return section("Instructions", h("span", { class: "muted" }, P.count(roles.length, "role")),
-      value.note ? h("p", { class: "muted" }, value.note) : null,
-      roles.length ? h("div", { class: "grid" }, roles.map((role) => rolePanel(role, value.roles[role], rules,
-        (value.counts || {})[role] || 0, value.max_rules || 0))) : P.empty("No instruction text is available in this snapshot."));
+    const value = data.instructions || {}, roles = Object.keys(value.roles || {});
+    return section("Instructions", counted(roles.length, "role"), value.note ? h("p", { class: "muted" }, value.note) : null,
+      grid(roles, (role) => rolePanel(role, value.roles[role], data.effectiveness || [], (value.counts || {})[role] || 0, value.max_rules || 0),
+        "No instruction text is available in this snapshot."));
   }
-  P.registerView("learning", {
-    title: "Learning",
-    async render(container, params, ctx) {
-      const offset = Number(params.lesson_offset) || 0;
-      const data = await P.get("learning", offset ? { offset: String(offset) } : {});
-      const proposed = data.proposed_lessons || { lessons: [], total: 0 };
-      const recurring = data.recurrences || [];
-      const failures = data.failures_without_lesson || [];
+  P.registerView("learning", { title: "Learning", async render(container, params, ctx) {
+      const offset = Number(params.lesson_offset) || 0, data = await P.get("learning", offset ? { offset: String(offset) } : {});
+      const proposed = data.proposed_lessons || { lessons: [], total: 0 }, failures = data.failures_without_lesson || [];
       const ineffective = (data.guards || []).filter((guard) => guard.recurrences > 0).length;
       // A rule can be judged ineffective by the verdicts of its runs alone, with no recurrence recorded.
       const weak = (data.effectiveness || []).filter((rule) => rule.state === "ineffective").length;
       put(container, sentence([P.count(data.guards_total || 0, "accepted guard") + " " + isAre(data.guards_total || 0) + " active",
-        ineffective ? ", and " + P.count(ineffective, "guard") + " recorded a recurrence" : "", ". ",
-        weak ? P.count(weak, "rule") + " " + isAre(weak) + " judged ineffective and " + (weak === 1 ? "waits" : "wait")
-          + " for your decision. " : "",
-        P.count(proposed.total, "proposed lesson") + " " + (proposed.total === 1 ? "awaits" : "await") + " your decision."].join("")));
-      put(container, instructionsSection(data));
-      const byLesson = Object.fromEntries(recurring.map((entry) => [entry.lesson_id, entry]));
+        ineffective ? ", and " + P.count(ineffective, "guard") + " recorded a recurrence" : "", ". ", weak ? P.count(weak, "rule") + " " + isAre(weak) + " judged ineffective and " + (weak === 1 ? "waits" : "wait") + " for your decision. " : "",
+        P.count(proposed.total, "proposed lesson") + " " + (proposed.total === 1 ? "awaits" : "await") + " your decision."].join("")), instructionsSection(data));
+      const byLesson = Object.fromEntries((data.recurrences || []).map((entry) => [entry.lesson_id, entry]));
       const guards = [...(data.guards || [])].sort((a, b) => (b.recurrences || 0) - (a.recurrences || 0));
-      put(container, section("Accepted guards", h("span", { class: "muted" }, P.count(data.guards_total || 0, "guard")),
-        guards.length ? h("div", { class: "grid" }, guards.map((guard) => guardCard(guard, byLesson[guard.lesson_id], ctx))) : P.empty("No lesson has been accepted as a guard yet."),
+      put(container, section("Accepted guards", counted(data.guards_total || 0, "guard"),
+        grid(guards, (guard) => guardCard(guard, byLesson[guard.lesson_id], ctx), "No lesson has been accepted as a guard yet."),
         data.guards_more ? h("p", { class: "muted" }, "Only the first " + guards.length + " guards are shown.") : null));
-      put(container, section("Proposed lessons", h("span", { class: "muted" }, P.count(proposed.total, "lesson")),
-        proposed.lessons.length ? h("div", { class: "grid" }, proposed.lessons.map((lesson) => proposedCard(lesson, ctx))) : P.empty("No proposed lesson awaits a decision."),
+      put(container, section("Proposed lessons", counted(proposed.total, "lesson"),
+        grid(proposed.lessons, (lesson) => proposedCard(lesson, ctx), "No proposed lesson awaits a decision."),
         pager({ offset, count: proposed.lessons.length, total: proposed.total, more: proposed.more, limit: PAGE }, "lessons",
           (next) => P.go("learning", { ...params, lesson_offset: next ? String(next) : "" }))));
-      put(container, section("Failures without lessons", h("span", { class: "muted" }, P.count(failures.length, "failure")),
-        failures.length ? h("ul", { class: "list" }, failures.map((item) => h("li", { class: "stack kn-item" },
-          h("div", { class: "row" }, openButton(item.title || item.episode_id, item.episode_id, { work: true, prefix: "failure-work-" }), P.badge("failed", P.words(item.severity) + " severity")),
-          h("p", null, item.observed), h("div", { class: "row" }, item.failure_type ? chips([item.failure_type], "Failure type ") : null,
-            h("span", { class: "muted" }, P.date(item.created_at)), openButton("Open the outcome", item.outcome_id, { class: "small", prefix: "failure-" }))))) : P.empty("Every failed outcome has a lesson or a later complete result.")));
+      put(container, section("Failures without lessons", counted(failures.length, "failure"),
+        listOf(failures, (item) => [h("div", { class: "row" }, openButton(item.title || item.episode_id, item.episode_id, { work: true, prefix: "failure-work-" }),
+          P.badge("failed", P.words(item.severity) + " severity")), h("p", null, item.observed), h("div", { class: "row" }, item.failure_type ? chips([item.failure_type], "Failure type ") : null,
+          h("span", { class: "muted" }, P.date(item.created_at)), openButton("Open the outcome", item.outcome_id, { class: "small", prefix: "failure-" }))],
+        "Every failed outcome has a lesson or a later complete result.")));
       const changes = data.scope_changes || [];
-      put(container, section("Scope widened by agents", h("span", { class: "muted" }, P.count(changes.length, "change")),
-        changes.length ? h("ul", { class: "list" }, changes.map((item) => h("li", { class: "stack kn-item" },
-          h("div", { class: "row" }, openButton(episodeTitle(item.episode_id), item.episode_id, { work: true, prefix: "scope-work-" }), h("span", { class: "muted" }, P.date(item.created_at))),
-          h("p", null, "The actor " + item.actor + " added " + P.count(item.added.length, "path") + " to the allowed paths."),
-          h("div", { class: "row" }, chips(item.added)), item.reason ? h("p", { class: "muted" }, "Reason: " + item.reason) : null,
-          h("div", null, openButton("Open the plan revision", item.plan_id, { class: "small", prefix: "scope-plan-" }))))) : P.empty("No agent has added allowed paths to a work item.")));
+      put(container, section("Scope widened by agents", counted(changes.length, "change"),
+        listOf(changes, (item) => [h("div", { class: "row" }, openButton(episodeTitle(item.episode_id), item.episode_id, { work: true, prefix: "scope-work-" }),
+          h("span", { class: "muted" }, P.date(item.created_at))), h("p", null, "The actor " + item.actor + " added " + P.count(item.added.length, "path") + " to the allowed paths."),
+        h("div", { class: "row" }, chips(item.added)), item.reason ? h("p", { class: "muted" }, "Reason: " + item.reason) : null,
+        h("div", null, openButton("Open the plan revision", item.plan_id, { class: "small", prefix: "scope-plan-" }))], "No agent has added allowed paths to a work item.")));
       const signals = (data.signals || {}).signals || [];
-      put(container, section("Signals", h("span", { class: "muted" }, P.count(signals.length, "signal")),
+      put(container, section("Signals", counted(signals.length, "signal"),
         (data.signals || {}).note ? h("p", { class: "muted" }, data.signals.note) : null,
-        signals.length ? h("ul", { class: "list" }, signals.map((signal, index) => h("li", { class: "stack kn-item" },
-          h("div", { class: "row" }, h("strong", null, P.words(signal.type)), signal.failure_type ? chips([signal.failure_type], "Failure type ") : null),
+        listOf(signals, (signal, index) => [h("div", { class: "row" }, h("strong", null, P.words(signal.type)), signal.failure_type ? chips([signal.failure_type], "Failure type ") : null),
           signal.type === "repeated_failure" ? h("p", null, "The failure was recorded " + P.count(signal.failure_count, "time") + " in " + P.count(signal.assessed, "assessed outcome") + ", of which " + number(signal.successful) + " succeeded.") : null,
           h("p", { class: "muted" }, signal.reason),
-          h("div", { class: "row" }, (signal.record_ids || []).map((id, position) => openButton("Record " + (position + 1), id, { class: "small", prefix: "signal-" + index + "-" })))))) : P.empty("No signal is recorded.")));
-    },
-  });
+          h("div", { class: "row" }, (signal.record_ids || []).map((id, position) => openButton("Record " + (position + 1), id, { class: "small", prefix: "signal-" + index + "-" })))], "No signal is recorded.")));
+  } });
 
   // Agents.
-  const hostName = (host) => P.words(host);
   // These three columns describe delegated work. For an agent check they stay empty, and a sentence says so once.
-  function mergeLabel(run) {
-    if (run.role !== "work") return null;
-    if (run.merge) return P.badge(run.merge.state);
-    if (run.state === "completed" && run.changed_files) return P.badge("review", "Awaiting a decision");
-    return "Not merged";
-  }
-  function reviewLabel(run) {
-    if (run.role !== "work") return null;
-    return run.review ? P.badge(run.review.state) : "No review";
-  }
+  const mergeLabel = (run) => (run.role !== "work" ? null : run.merge ? P.badge(run.merge.state)
+    : run.state === "completed" && run.changed_files ? P.badge("review", "Awaiting a decision") : "Not merged");
+  const reviewLabel = (run) => (run.role !== "work" ? null : run.review ? P.badge(run.review.state) : "No review");
   const canMerge = (run) => run.role === "work" && run.state === "completed" && run.changed_files > 0 && !run.merge && !(run.review && ACTIVE.includes(run.review.state));
   const canDiscard = (run) => run.role === "work" && !run.merge && !ACTIVE.includes(run.state) && !(run.review && ACTIVE.includes(run.review.state));
   const canRetryReview = (run) => run.role === "work" && run.state === "completed" && !run.merge && (!run.review || RETRY_REVIEW.includes(run.review.state));
   function runActions(run, ctx) {
     if (!ctx.canEdit) return null;
-    const buttons = [
-      canMerge(run) ? actionButton("Merge", "merge-" + run.id, (trigger) => P.openForm("merge", { run_id: run.id }, trigger), "primary") : null,
-      canRetryReview(run) ? actionButton("Request review", "review-" + run.id, (trigger) => P.openForm("request_work_review", { run_id: run.id }, trigger)) : null,
-      ACTIVE.includes(run.state) ? actionButton("Cancel", "cancel-" + run.id, (trigger) => P.openForm("cancel_run", { run_id: run.id }, trigger), "danger") : null,
-      canDiscard(run) ? actionButton("Discard", "discard-" + run.id, (trigger) => P.openForm("discard", { run_id: run.id }, trigger), "danger") : null,
-    ].filter(Boolean);
+    const context = { run_id: run.id };
+    const buttons = [canMerge(run) ? actionButton("Merge", "merge-" + run.id, openForm("merge", context), "primary") : null,
+      canRetryReview(run) ? actionButton("Request review", "review-" + run.id, openForm("request_work_review", context)) : null,
+      ACTIVE.includes(run.state) ? actionButton("Cancel", "cancel-" + run.id, openForm("cancel_run", context), "danger") : null,
+      canDiscard(run) ? actionButton("Discard", "discard-" + run.id, openForm("discard", context), "danger") : null].filter(Boolean);
     return buttons.length ? h("div", { class: "row" }, buttons) : null;
   }
   function hostCard(host) {
     const ready = host.installed && host.available;
     return h("article", { class: "card" },
-      h("h3", null, hostName(host.host), P.badge(ready ? "available" : "unavailable", ready ? "Can run work" : "Cannot run work")),
+      h("h3", null, P.words(host.host), P.badge(ready ? "available" : "unavailable", ready ? "Can run work" : "Cannot run work")),
       h("div", { class: "row" }, P.badge(host.installed ? "available" : "missing", host.installed ? "Installed" : "Not installed"),
         P.badge(host.available ? "available" : "unavailable", host.available ? "Available" : "Unavailable")),
       !host.available ? h("p", null, host.until ? "The host is unavailable until " + P.date(host.until) + "." : "The host is unavailable. No end time is recorded.") : null,
       host.reason ? h("p", { class: "muted" }, "Reason: " + host.reason) : null,
       !host.installed ? h("p", { class: "muted" }, "The program of this host was not found on this computer.") : null);
   }
-  P.registerView("agents", {
-    title: "Agents",
-    async render(container, params, ctx) {
-      const offset = Number(params.offset) || 0;
-      const data = await P.get("agents", offset ? { offset: String(offset) } : {});
-      const hosts = data.hosts || [];
-      const runs = (data.runs || {}).runs || [];
+  P.registerView("agents", { title: "Agents", async render(container, params, ctx) {
+      const offset = Number(params.offset) || 0, data = await P.get("agents", offset ? { offset: String(offset) } : {});
+      const hosts = data.hosts || [], runs = (data.runs || {}).runs || [], active = data.active || [];
       const ready = hosts.filter((host) => host.installed && host.available).length;
       const awaiting = runs.filter((run) => run.role === "work" && run.state === "completed" && run.changed_files && !run.merge).length;
-      const active = data.active || [];
       put(container, sentence((data.configured ? number(ready) + " of " + P.count(hosts.length, "configured host") + " can run work now. " : "No agent host is configured for this project. ") +
         (active.length ? P.count(active.length, "agent run") + " " + isAre(active.length) + " active. " : "No agent run is active. ") +
         (awaiting ? P.count(awaiting, "delegated run") + " " + (awaiting === 1 ? "awaits" : "await") + " a merge decision." : "")));
       if (!data.configured) put(container, h("div", { class: "notice" }, h("p", null, "Configure an agent host for this project before you delegate work or request checks.")));
-      if (hosts.length) put(container, section("Hosts", null, h("div", { class: "grid" }, hosts.map(hostCard))));
+      if (hosts.length) put(container, section("Hosts", null, grid(hosts, hostCard)));
       if ((data.attention || []).length) {
-        put(container, section("Follow ups that need attention", null, h("ul", { class: "list" }, data.attention.map((item) => h("li", { class: "stack kn-item" },
-          h("p", null, item.reason), h("div", { class: "row" }, h("span", { class: "muted" }, P.date(item.created_at)),
-            item.run_id ? actionButton("Open the run", "attention-" + item.id, (trigger) => P.openDrawer("run", { id: item.run_id }, trigger)) : null))))));
+        put(container, section("Follow ups that need attention", null, listOf(data.attention, (item) => [h("p", null, item.reason),
+          h("div", { class: "row" }, h("span", { class: "muted" }, P.date(item.created_at)), item.run_id ? actionButton("Open the run", "attention-" + item.id, openRun(item.run_id)) : null)])));
       }
-      const columns = ["Run", "Host", "State", P.term("work_item"), "Changed files", "Review", "Merge", "Started"];
-      const table = h("table", { class: "data kn-table" }, h("thead", null, h("tr", null, columns.map((name) => h("th", { scope: "col" }, name)))),
-        h("tbody", null, runs.map((run) => h("tr", null,
-          cell("Run", h("button", { type: "button", class: "quiet kn-link", dataset: { key: "run-" + run.id }, on: { click: (event) => P.openDrawer("run", { id: run.id }, event.currentTarget) } }, P.words(run.role))),
-          cell("Host", hostName(run.host)), cell("State", P.badge(run.state)),
-          cell(P.term("work_item"), openButton(episodeTitle(run.episode_id), run.episode_id, { work: true, prefix: "run-work-" + run.id + "-" })),
-          cell("Changed files", run.role === "work" ? number(run.changed_files) : null), cell("Review", reviewLabel(run)), cell("Merge", mergeLabel(run)),
-          h("td", { class: "kn-nowrap", dataset: { label: "Started" } }, P.date(run.created_at))))));
-      put(container, section("Runs", null, runs.length ? h("div", { class: "table-wrap" }, table) : P.empty("No agent run is recorded."),
+      const rows = runs.map((run) => h("tr", null, cell("Run", button(P.words(run.role), "run-" + run.id, openRun(run.id), "quiet kn-link")),
+        cell("Host", P.words(run.host)), cell("State", P.badge(run.state)),
+        cell(P.term("work_item"), openButton(episodeTitle(run.episode_id), run.episode_id, { work: true, prefix: "run-work-" + run.id + "-" })),
+        cell("Changed files", run.role === "work" ? number(run.changed_files) : null), cell("Review", reviewLabel(run)), cell("Merge", mergeLabel(run)), dateCell("Started", run.created_at)));
+      put(container, section("Runs", null, runs.length ? table(["Run", "Host", "State", P.term("work_item"), "Changed files", "Review", "Merge", "Started"], rows) : P.empty("No agent run is recorded."),
         runs.length ? h("p", { class: "muted" }, "The changed files, review and merge columns describe delegated work. They stay empty for an agent check.") : null,
         pager({ offset, count: runs.length, more: (data.runs || {}).more, limit: 20 }, "runs", (next) => P.go("agents", { ...params, offset: next ? String(next) : "" }))));
-    },
-  });
+  } });
 
   function diffFiles(text) {
     const files = [];
-    let current = null;
     for (const line of String(text || "").split("\n")) {
-      if (line.startsWith("diff --git ")) {
-        const found = line.match(/ b\/(.+)$/);
-        current = { path: found ? found[1] : line.slice(11), added: 0, removed: 0 };
-        files.push(current);
-      } else if (current && line.startsWith("+") && !line.startsWith("+++")) current.added++;
+      const current = files[files.length - 1];
+      if (line.startsWith("diff --git ")) files.push({ path: (line.match(/ b\/(.+)$/) || [null, line.slice(11)])[1], added: 0, removed: 0 });
+      else if (current && line.startsWith("+") && !line.startsWith("+++")) current.added++;
       else if (current && line.startsWith("-") && !line.startsWith("---")) current.removed++;
     }
     return files;
@@ -300,48 +249,39 @@
       const detail = record.detail || {};
       if (typeof detail.body !== "string") { put(holder, h("p", { class: "muted" }, "The text of the diff is not included in this snapshot.")); return holder; }
       const files = diffFiles(detail.body);
-      put(holder, files.length ? h("div", { class: "table-wrap" }, h("table", { class: "data kn-table" },
-        h("thead", null, h("tr", null, ["File", "Added lines", "Removed lines"].map((name) => h("th", { scope: "col" }, name)))),
-        h("tbody", null, files.map((file) => h("tr", null, h("td", { class: "mono", dataset: { label: "File" } }, file.path),
-          cell("Added lines", number(file.added)), cell("Removed lines", number(file.removed))))))) : P.empty("The diff names no changed file."),
+      put(holder, files.length ? table(["File", "Added lines", "Removed lines"], files.map((file) => h("tr", null, h("td", { class: "mono", dataset: { label: "File" } }, file.path),
+        cell("Added lines", number(file.added)), cell("Removed lines", number(file.removed))))) : P.empty("The diff names no changed file."),
       detail.body_more ? h("p", { class: "muted" }, "The summary covers the first part of the diff only.") : null);
     } catch (error) {
       put(holder, failed(error));
     }
     return holder;
   }
-  P.registerDrawer("run", {
-    async render(body, params, ctx) {
-      const { run } = await P.get("run", { id: params.id });
-      const report = run.report || {};
+  P.registerDrawer("run", { async render(body, params, ctx) {
+      const { run } = await P.get("run", { id: params.id }), report = run.report || {};
       ctx.setKind("Agent run");
-      ctx.setTitle(P.words(run.role) + " run on " + hostName(run.host));
+      ctx.setTitle(P.words(run.role) + " run on " + P.words(run.host));
       put(body, h("div", { class: "row" }, P.badge(run.state), run.role === "work" ? mergeLabel(run) : null, h("span", { class: "muted" }, P.date(run.created_at))),
         h("p", { class: "mono muted" }, run.id), run.summary ? h("p", null, run.summary) : null, runActions(run, ctx),
         run.error ? h("div", { class: "notice", dataset: { tone: "blocked" } }, h("p", null, run.error)) : null,
         kv([[P.term("work_item"), openButton(episodeTitle(run.episode_id), run.episode_id, { work: true, prefix: "drawer-work-" })],
-          ["Role", P.words(run.role)], ["Host", hostName(run.host)], ["Updated", P.date(run.updated_at)],
+          ["Role", P.words(run.role)], ["Host", P.words(run.host)], ["Updated", P.date(run.updated_at)],
           ["Allowed paths", run.paths && run.paths.length ? h("div", { class: "row" }, chips(run.paths)) : "None recorded"],
           ["Review", run.role === "work" ? reviewLabel(run) : undefined],
           ["Branch", run.branch || undefined], ["Workspace", run.workspace || undefined],
-          ["Parent run", run.parent_run ? actionButton("Open the delegated run", "parent-" + run.parent_run, (trigger) => P.openDrawer("run", { id: run.parent_run }, trigger)) : undefined],
+          ["Parent run", run.parent_run ? actionButton("Open the delegated run", "parent-" + run.parent_run, openRun(run.parent_run)) : undefined],
           ["Commit", (run.metrics || {}).commit || undefined]]));
       const checks = report.checks_run || report.checks || [];
       put(body, section("Report checks", null, checks.length ? h("ul", { class: "list" }, checks.map((check) => h("li", null, valueNode(check)))) : P.empty("The report lists no checks.")));
       const findings = report.findings || [];
-      if (report.verdict || findings.length || run.role !== "work") {
-        put(body, section("Findings", report.verdict ? P.badge(report.verdict, "Verdict: " + P.words(report.verdict)) : null,
-          findings.length ? h("ul", { class: "list" }, findings.map((finding) => h("li", null, valueNode(finding)))) : P.empty("The report records no findings.")));
-      }
+      if (report.verdict || findings.length || run.role !== "work") put(body, section("Findings", report.verdict ? P.badge(report.verdict, "Verdict: " + P.words(report.verdict)) : null,
+        findings.length ? h("ul", { class: "list" }, findings.map((finding) => h("li", null, valueNode(finding)))) : P.empty("The report records no findings.")));
       const other = Object.fromEntries(Object.entries(report).filter(([key]) => !["summary", "checks_run", "checks", "findings", "verdict", "lesson_proposals"].includes(key)));
       if (Object.keys(other).length) put(body, section("Other report fields", null, kv(Object.entries(other).map(([key, value]) => [P.words(key), value]))));
       if (run.diff_source) put(body, await diffSummary(run.diff_source));
-      if ((run.reviews || []).length) {
-        put(body, section("Work reviews", null, h("ul", { class: "list" }, run.reviews.map((review) => h("li", { class: "row" }, P.badge(review.state), hostName(review.host), h("span", { class: "muted" }, P.date(review.created_at)),
-          actionButton("Open the review", "review-run-" + review.id, (trigger) => P.openDrawer("run", { id: review.id }, trigger)))))));
-      }
-    },
-  });
+      if ((run.reviews || []).length) put(body, section("Work reviews", null, h("ul", { class: "list" }, run.reviews.map((review) => h("li", { class: "row" }, P.badge(review.state),
+        P.words(review.host), h("span", { class: "muted" }, P.date(review.created_at)), actionButton("Open the review", "review-run-" + review.id, openRun(review.id)))))));
+  } });
 
   // Records.
   const recordViews = () => [["all", "All record kinds"], ["episodes", P.term("work_items")], ["decisions", "Decisions"], ["pending", "Pending decisions"],
@@ -362,18 +302,12 @@
     if (!P.live) return localPage(await P.get("records", { view, limit: SNAPSHOT_PAGE }), filters, offset, limit);
     return P.get("records", { view, ...filters, limit: String(limit), offset: offset ? String(offset) : "" });
   }
-  function openRecordAny(record, trigger) {
-    if (record.kind === "episode") P.openWork(record.id, trigger);
-    else P.openRecord(record.id, trigger);
-  }
+  const openRecordAny = (record, trigger) => (record.kind === "episode" ? P.openWork(record.id, trigger) : P.openRecord(record.id, trigger));
   function recordTable(records) {
-    return h("div", { class: "table-wrap" }, h("table", { class: "data kn-table" },
-      h("thead", null, h("tr", null, ["Title", "Kind", "Status", "Subject", P.term("work_item"), "Date"].map((name) => h("th", { scope: "col" }, name)))),
-      h("tbody", null, records.map((record) => h("tr", null,
-        cell("Title", h("button", { type: "button", class: "quiet kn-link", dataset: { key: "record-" + record.id }, on: { click: (event) => openRecordAny(record, event.currentTarget) } }, record.title || record.id)),
-        cell("Kind", record.kind === "episode" ? P.term("work_item") : P.words(record.kind)), cell("Status", P.badge(record.status)), cell("Subject", P.words(record.subject)),
-        cell(P.term("work_item"), record.episode_id && record.episode_id !== record.id ? episodeTitle(record.episode_id) : null),
-        h("td", { class: "kn-nowrap", dataset: { label: "Date" } }, record.date ? P.date(record.date) : "Not recorded"))))));
+    return table(["Title", "Kind", "Status", "Subject", P.term("work_item"), "Date"], records.map((record) => h("tr", null,
+      cell("Title", button(record.title || record.id, "record-" + record.id, (trigger) => openRecordAny(record, trigger), "quiet kn-link")),
+      cell("Kind", record.kind === "episode" ? P.term("work_item") : P.words(record.kind)), cell("Status", P.badge(record.status)), cell("Subject", P.words(record.subject)),
+      cell(P.term("work_item"), record.episode_id && record.episode_id !== record.id ? episodeTitle(record.episode_id) : null), dateCell("Date", record.date))));
   }
   function recordFilters(params, view) {
     const episodes = ((P.health() || {}).episodes || []).map((item) => [item.id, item.title]);
@@ -399,12 +333,9 @@
     return h("details", { class: "kn-filter-box", id: "records-filters", open: active || window.innerWidth >= 640 },
       h("summary", null, active ? "Filters are applied" : "Filters"), form);
   }
-  P.registerView("records", {
-    title: "Records",
-    async render(container, params) {
-      const view = params.view || "all";
+  P.registerView("records", { title: "Records", async render(container, params) {
+      const view = params.view || "all", labels = Object.fromEntries(recordViews()), label = labels[view] || P.words(view);
       const filters = Object.fromEntries(FILTERS.filter((name) => params[name]).map((name) => [name, params[name]]));
-      const label = Object.fromEntries(recordViews())[view] || P.words(view);
       put(container, recordFilters(params, view));
       if (!P.live) put(container, h("p", { class: "muted" }, "This snapshot filters the first " + SNAPSHOT_PAGE + " records of each kind in the browser."));
       if (view === "all") {
@@ -412,22 +343,20 @@
         const total = groups.reduce((sum, [, page]) => sum + (page ? page.total : 0), 0);
         put(container, sentence(P.count(total, "record") + " " + (total === 1 ? "matches" : "match") + (Object.keys(filters).length ? " these filters." : " across all kinds.")));
         for (const [name, page, error] of groups) {
-          const title = Object.fromEntries(recordViews())[name];
+          const title = labels[name];
           if (error) { put(container, section(title, null, failed(error))); continue; }
           if (!page.total) continue;
-          put(container, section(title, h("span", { class: "muted" }, P.count(page.total, "record")), recordTable(page.records),
-            page.total > page.records.length ? h("div", null, h("button", { type: "button", class: "small", dataset: { key: "records-all-" + name }, on: { click: () => P.go("records", { ...filters, view: name }) } }, "Show all " + number(page.total) + " " + title.toLowerCase())) : null));
+          put(container, section(title, counted(page.total, "record"), recordTable(page.records),
+            page.total > page.records.length ? h("div", null, button("Show all " + number(page.total) + " " + title.toLowerCase(), "records-all-" + name, () => P.go("records", { ...filters, view: name }), "small")) : null));
         }
         return;
       }
-      const offset = Number(params.offset) || 0;
-      const page = await loadRecords(view, filters, offset, PAGE);
+      const offset = Number(params.offset) || 0, page = await loadRecords(view, filters, offset, PAGE);
       put(container, sentence(P.count(page.total, "record") + " in " + label.toLowerCase() + " " + (page.total === 1 ? "matches" : "match") + (Object.keys(filters).length ? " these filters." : ".")));
       if (page.partial) put(container, h("p", { class: "muted" }, "This kind holds more records than the snapshot includes."));
       put(container, page.records.length ? recordTable(page.records) : P.empty("No records match these filters."),
         pager({ offset, count: page.records.length, total: page.total, more: page.more, limit: PAGE }, "records", (next) => P.go("records", { ...params, offset: next ? String(next) : "" })));
-    },
-  });
+  } });
 
   // Record drawer: fields, evidence, reverse references and paged source text with an outline.
   function outline(text) {
@@ -435,7 +364,8 @@
     let fenced = false;
     for (const line of String(text).split("\n")) {
       if (line.startsWith("```")) fenced = !fenced;
-      else if (!fenced) { const match = line.match(/^(#{1,6})\s+(.+)$/); if (match) found.push({ level: match[1].length, text: match[2] }); }
+      const match = !fenced && line.match(/^(#{1,6})\s+(.+)$/);
+      if (match) found.push({ level: match[1].length, text: match[2] });
     }
     return found;
   }
@@ -443,13 +373,10 @@
     const holder = h("section", { class: "stack" });
     const state = { offset: Number(first.body_offset) || 0, original: false, detail: first };
     const draw = () => {
-      const detail = state.detail;
-      const body = detail.body;
-      const headings = outline(body);
+      const detail = state.detail, body = detail.body, headings = outline(body);
       const content = state.original ? h("pre", { class: "source-text" }, body) : P.markdown(body);
       const end = state.offset + body.length;
-      const toggle = h("button", { type: "button", class: "small", dataset: { key: "source-toggle" }, on: { click: () => { state.original = !state.original; draw(); } } },
-        state.original ? "Show formatted text" : "Show original text");
+      const toggle = button(state.original ? "Show formatted text" : "Show original text", "source-toggle", () => { state.original = !state.original; draw(); }, "small");
       const go = async (offset) => {
         try {
           const { record } = await P.get("record", offset ? { id, body_offset: String(offset) } : { id });
@@ -461,8 +388,8 @@
         }
       };
       const parts = h("div", { class: "row kn-pager" }, h("span", { class: "muted" }, "Characters " + number(state.offset + 1) + " to " + number(end) + (detail.body_more ? ". More text follows." : ".")),
-        h("button", { type: "button", class: "small", disabled: state.offset <= 0, dataset: { key: "source-previous" }, on: { click: () => go(Math.max(0, state.offset - 12000)) } }, "Previous part"),
-        h("button", { type: "button", class: "small", disabled: !detail.body_more, dataset: { key: "source-next" }, on: { click: () => go(detail.next_offset) } }, "Next part"));
+        button("Previous part", "source-previous", () => go(Math.max(0, state.offset - 12000)), "small", { disabled: state.offset <= 0 }),
+        button("Next part", "source-next", () => go(detail.next_offset), "small", { disabled: !detail.body_more }));
       const nav = headings.length && !state.original ? h("nav", { class: "kn-outline", "aria-label": "Document outline" }, h("h4", null, "Outline"),
         h("ul", { class: "kn-plain" }, headings.map((item, index) => h("li", { dataset: { level: String(item.level) } },
           h("button", { type: "button", class: "quiet kn-link", dataset: { key: "outline-" + index }, on: { click: () => {
@@ -476,15 +403,13 @@
   }
   function referenceList(page) {
     return page.records.length ? h("ul", { class: "list" }, page.records.map((record) => h("li", { class: "row" },
-      h("button", { type: "button", class: "quiet kn-link", dataset: { key: "related-" + record.id }, on: { click: (event) => openRecordAny(record, event.currentTarget) } }, record.title || record.id),
+      button(record.title || record.id, "related-" + record.id, (trigger) => openRecordAny(record, trigger), "quiet kn-link"),
       h("span", { class: "muted" }, P.words(record.kind)), P.badge(record.status)))) : P.empty("No other record refers to this record.");
   }
-  P.registerDrawer("record", {
-    async render(body, params, ctx) {
+  P.registerDrawer("record", { async render(body, params, ctx) {
       const [{ record }, related] = await Promise.all([P.get("record", { id: params.id }),
         P.get("records", { related: params.id, limit: String(PAGE) }).catch((error) => error)]);
-      const detail = record.detail || {};
-      const payload = detail.payload || {};
+      const detail = record.detail || {}, payload = detail.payload || {};
       ctx.setTitle(record.title || record.id);
       ctx.setKind(record.kind === "episode" ? P.term("work_item") : P.words(record.kind));
       put(body, h("div", { class: "row" }, P.badge(record.status), h("span", { class: "chip" }, P.words(record.subject)), h("span", { class: "muted" }, P.date(record.date))),
@@ -492,13 +417,11 @@
       if (record.kind === "lesson" && ctx.canEdit) {
         const lesson = { ...payload, id: record.id, episode_id: record.episode_id };
         const status = detail.lesson_status || record.status;
-        put(body, h("div", { class: "row" }, status === "proposed" ? [actionButton("Accept", "drawer-accept", (trigger) => lessonReview(lesson, "accepted", trigger), "primary"),
-          actionButton("Reject", "drawer-reject", (trigger) => lessonReview(lesson, "rejected", trigger))] : null,
-        status === "accepted" ? actionButton("Retire", "drawer-retire", (trigger) => lessonReview(lesson, "retired", trigger)) : null));
+        put(body, h("div", { class: "row" }, status === "proposed" ? [actionButton("Accept", "drawer-accept", lessonReview(lesson, "accepted"), "primary"),
+          actionButton("Reject", "drawer-reject", lessonReview(lesson, "rejected"))] : null, status === "accepted" ? actionButton("Retire", "drawer-retire", lessonReview(lesson, "retired")) : null));
       }
-      if (record.episode_id && record.episode_id !== record.id) {
-        put(body, h("p", null, P.term("work_item") + ": ", openButton(record.episode_title || episodeTitle(record.episode_id), record.episode_id, { work: true, prefix: "drawer-episode-" })));
-      }
+      if (record.episode_id && record.episode_id !== record.id) put(body, h("p", null, P.term("work_item") + ": ",
+        openButton(record.episode_title || episodeTitle(record.episode_id), record.episode_id, { work: true, prefix: "drawer-episode-" })));
       const fields = record.kind === "episode" ? { objective: detail.objective, criterion: detail.criterion, task_type: detail.task_type, status: detail.status, version: detail.version }
         : record.kind === "source" ? { summary: detail.summary, origin: detail.origin, version: detail.version, checked_at: detail.checked_at, review_after: detail.review_after, ...(detail.document ? { path: detail.document.path, format: detail.document.format, authority: detail.document.authority } : {}) }
           : record.kind === "project_revision" ? { requirements: detail.requirements, reason: detail.reason, actor: detail.actor }
@@ -514,36 +437,24 @@
       }
       const chain = [["Replaces", detail.supersedes], ["Replaced by", detail.replaced_by], ["Decision", detail.decision_id]].filter(([, id]) => id);
       if (chain.length) put(body, h("dl", { class: "kv" }, chain.map(([label, id]) => [h("dt", null, label), h("dd", null, openButton(id, id, { prefix: "drawer-chain-" }))])));
-      if (record.kind === "source") {
-        if (typeof detail.body === "string") put(body, sourceText(record.id, detail));
-        else put(body, section("Content", null, h("p", { class: "muted" }, "The source text is not included in this snapshot.")));
-      }
+      if (record.kind === "source") put(body, typeof detail.body === "string" ? sourceText(record.id, detail)
+        : section("Content", null, h("p", { class: "muted" }, "The source text is not included in this snapshot.")));
       const evidence = detail.evidence || [];
-      put(body, section("Evidence", h("span", { class: "muted" }, P.count(evidence.length, "reference")), evidence.length ? h("ul", { class: "list" }, evidence.map((ref) => h("li", { class: "stack kn-item" },
-        h("div", { class: "row" }, openButton(ref.title || ref.source_id, ref.source_id, { prefix: "evidence-" }), ref.status ? P.badge(ref.status) : null, ref.origin ? h("span", { class: "muted" }, P.words(ref.origin)) : null),
-        ref.reason ? h("p", { class: "muted" }, ref.reason) : null))) : P.empty("No evidence is attached to this record.")));
-      if ((detail.links || []).length) {
-        put(body, section("Earlier records", null, h("ul", { class: "list" }, detail.links.map((ref) => h("li", { class: "stack kn-item" },
-          openButton(ref.event_id, ref.event_id, { prefix: "link-" }), ref.reason ? h("p", { class: "muted" }, ref.reason) : null)))));
-      }
-      put(body, section("Referenced by", related instanceof Error ? null : h("span", { class: "muted" }, P.count(related.total, "record")),
+      put(body, section("Evidence", counted(evidence.length, "reference"), listOf(evidence, (ref) => [h("div", { class: "row" }, openButton(ref.title || ref.source_id, ref.source_id, { prefix: "evidence-" }),
+        ref.status ? P.badge(ref.status) : null, ref.origin ? h("span", { class: "muted" }, P.words(ref.origin)) : null), ref.reason ? h("p", { class: "muted" }, ref.reason) : null],
+      "No evidence is attached to this record.")));
+      if ((detail.links || []).length) put(body, section("Earlier records", null, listOf(detail.links, (ref) => [openButton(ref.event_id, ref.event_id, { prefix: "link-" }),
+        ref.reason ? h("p", { class: "muted" }, ref.reason) : null])));
+      put(body, section("Referenced by", related instanceof Error ? null : counted(related.total, "record"),
         related instanceof Error ? failed(related) : referenceList(related),
         !(related instanceof Error) && related.more ? h("p", { class: "muted" }, "Only the first " + related.records.length + " references are shown.") : null));
-    },
-  });
+  } });
 
   // Requirements.
-  P.registerView("requirements", {
-    title: "Requirements",
-    async render(container, params, ctx) {
-      const offset = Number(params.offset) || 0;
-      const revisionOffset = Number(params.revision_offset) || 0;
-      const query = {};
-      if (offset) query.offset = String(offset);
-      if (revisionOffset) query.revision_offset = String(revisionOffset);
-      const data = await P.get("requirements", query);
-      const items = data.items || { items: [], total: 0 };
-      const current = data.current || {};
+  P.registerView("requirements", { title: "Requirements", async render(container, params, ctx) {
+      const offset = Number(params.offset) || 0, revisionOffset = Number(params.revision_offset) || 0;
+      const data = await P.get("requirements", { offset: offset ? String(offset) : "", revision_offset: revisionOffset ? String(revisionOffset) : "" });
+      const items = data.items || { items: [], total: 0 }, current = data.current || {};
       const established = items.status !== "not_established";
       put(container, h("div", { class: "view-head" }, sentence(established
         ? "Version " + current.version + " of the project requirements is current, with " + P.count(items.total, "requirement") + "."
@@ -555,30 +466,21 @@
         h("ol", { class: "kn-requirements", start: String(offset + 1) }, items.items.map((item) => h("li", null, item.text))),
         pager({ offset, count: items.items.length, total: items.total, more: items.more, limit: PAGE }, "requirements", (next) => P.go("requirements", { ...params, offset: next ? String(next) : "" })),
         h("p", { class: "muted" }, "The recorded requirements govern decisions. They do not prove that the project covers every need.")));
-      put(container, section("Approval evidence", h("span", { class: "muted" }, P.count(items.evidence_total || 0, "reference")),
-        (items.evidence || []).length ? h("ul", { class: "list" }, items.evidence.map((ref, index) => h("li", { class: "stack kn-item" },
-          openButton(ref.title || "Approval source " + (offset + index + 1), ref.source_id, { prefix: "requirement-evidence-" }), ref.reason ? h("p", { class: "muted" }, ref.reason) : null)))
-          : P.empty("No approval evidence is recorded for this version.")));
+      put(container, section("Approval evidence", counted(items.evidence_total || 0, "reference"),
+        listOf(items.evidence || [], (ref, index) => [openButton(ref.title || "Approval source " + (offset + index + 1), ref.source_id, { prefix: "requirement-evidence-" }),
+          ref.reason ? h("p", { class: "muted" }, ref.reason) : null], "No approval evidence is recorded for this version.")));
       const revisions = data.revisions || [];
-      put(container, section("History", null, h("div", { class: "table-wrap" }, h("table", { class: "data kn-table" },
-        h("thead", null, h("tr", null, ["Version", "Requirements", "Evidence", "Approved by", "Date", "Reason"].map((name) => h("th", { scope: "col" }, name)))),
-        h("tbody", null, revisions.map((revision) => h("tr", null,
-          cell("Version", openButton("Version " + revision.version, "direction_" + revision.version, { prefix: "revision-" })),
-          cell("Requirements", number(revision.requirement_count)), cell("Evidence", number(revision.evidence_count)), cell("Approved by", revision.actor || "Not recorded"),
-          h("td", { class: "kn-nowrap", dataset: { label: "Date" } }, revision.created_at ? P.date(revision.created_at) : "Not recorded"),
-          cell("Reason", revision.reason || (revision.version === current.version ? current.reason : "") || "Not recorded")))))),
+      put(container, section("History", null, table(["Version", "Requirements", "Evidence", "Approved by", "Date", "Reason"], revisions.map((revision) => h("tr", null,
+        cell("Version", openButton("Version " + revision.version, "direction_" + revision.version, { prefix: "revision-" })),
+        cell("Requirements", number(revision.requirement_count)), cell("Evidence", number(revision.evidence_count)), cell("Approved by", revision.actor || "Not recorded"),
+        dateCell("Date", revision.created_at), cell("Reason", revision.reason || (revision.version === current.version ? current.reason : "") || "Not recorded")))),
       pager({ offset: revisionOffset, count: revisions.length, more: data.more, limit: 10 }, "revisions", (next) => P.go("requirements", { ...params, revision_offset: next ? String(next) : "" }))));
-    },
-  });
+  } });
 
   // Machine: the rules the user promoted out of single projects, the projects on this computer and the proposals
   // this project recorded. The machine memory is read here and is written only by an action of the user.
   const ruleFacts = (rule) => kv([["When", rule.when], ["Do", rule.do], ["Because", rule.because], ["Exceptions", rule.exceptions]]);
-  function ruleTriggers(rule) {
-    const parts = [...chips(rule.roles, "Role "), ...chips(rule.keywords, "Keyword "),
-      ...(rule.failure_type ? chips([rule.failure_type], "Failure type ") : [])];
-    return parts.length ? h("div", { class: "row" }, parts) : null;
-  }
+  const ruleTriggers = (rule) => triggerChips(rule, "roles", null);
   function machineRule(rule, ctx) {
     const retired = rule.status !== "accepted";
     return h("article", { class: "card", dataset: { key: "machine-rule-" + rule.rule_id, tone: retired ? "done" : "guarded" } },
@@ -587,10 +489,10 @@
       h("p", { class: "muted" }, P.count(rule.adopted_by || 0, "project") + " promoted this rule. It was recorded on " + P.date(rule.recorded_at) + "."),
       rule.basis ? h("p", { class: "muted" }, "Basis: " + rule.basis) : null,
       ctx.canEdit && !retired ? h("div", { class: "row" }, actionButton("Retire", "retire-rule-" + rule.rule_id,
-        (trigger) => P.openForm("machine_rule", { rule_id: rule.rule_id }, trigger))) : null);
+        openForm("machine_rule", { rule_id: rule.rule_id }))) : null);
   }
   function promotionCard(item, ctx) {
-    const open = (status) => (trigger) => P.openForm("promotion", { promotion_id: item.id, status }, trigger);
+    const open = (status) => openForm("promotion", { promotion_id: item.id, status });
     const waiting = item.state === "proposed";
     return h("article", { class: ["card", waiting ? "proposed" : null], dataset: { key: "promotion-" + item.id } },
       h("h3", null, h("span", null, (item.rule || {}).do || "No action is recorded."), P.badge(item.state)),
@@ -603,18 +505,12 @@
         actionButton("Decline", "decline-promotion-" + item.id, open("declined"))) : null);
   }
   function registryTable(projects, here) {
-    return h("div", { class: "table-wrap" }, h("table", { class: "data kn-table" },
-      h("thead", null, h("tr", null, ["Project", "Template", "Lifecycle", "First seen", "Updated"].map((name) => h("th", { scope: "col" }, name)))),
-      h("tbody", null, projects.map((item) => h("tr", { dataset: { key: "machine-project-" + item.id } },
-        cell("Project", h("span", { class: "mono" }, item.path), item.path === here ? [" ", P.badge("current", "This project")] : null),
-        cell("Template", item.template ? P.words(item.template) : "Not recorded"),
-        cell("Lifecycle", P.badge(item.phase === "production" ? "review" : "in_progress", P.words(item.phase))),
-        h("td", { class: "kn-nowrap", dataset: { label: "First seen" } }, P.date(item.first_seen)),
-        h("td", { class: "kn-nowrap", dataset: { label: "Updated" } }, P.date(item.updated_at)))))));
+    return table(["Project", "Template", "Lifecycle", "First seen", "Updated"], projects.map((item) => h("tr", { dataset: { key: "machine-project-" + item.id } },
+      cell("Project", h("span", { class: "mono" }, item.path), item.path === here ? [" ", P.badge("current", "This project")] : null),
+      cell("Template", item.template ? P.words(item.template) : "Not recorded"), cell("Lifecycle", P.badge(item.phase === "production" ? "review" : "in_progress", P.words(item.phase))),
+      dateCell("First seen", item.first_seen), dateCell("Updated", item.updated_at))));
   }
-  P.registerView("machine", {
-    title: "Machine",
-    async render(container, params, ctx) {
+  P.registerView("machine", { title: "Machine", async render(container, params, ctx) {
       let data;
       try {
         data = await P.get("machine");
@@ -624,40 +520,24 @@
           : failed(error));
         return;
       }
-      const rules = data.rules || [];
-      const promotions = data.promotions || [];
-      const waiting = promotions.filter((item) => item.state === "proposed");
-      const decided = promotions.filter((item) => item.state !== "proposed");
-      put(container, sentence(data.exists
-        ? P.count(data.rules_total || 0, "rule") + " " + isAre(data.rules_total || 0) + " in force on " + data.machine + ", promoted from "
-          + P.count(data.projects_total || 0, "project") + ". " + P.count(waiting.length, "proposal") + " from this project "
-          + (waiting.length === 1 ? "awaits" : "await") + " your decision."
-        : "No machine memory exists on this computer yet. " + P.count(waiting.length, "proposal") + " from this project "
-          + (waiting.length === 1 ? "awaits" : "await") + " your decision."));
+      const rules = data.rules || [], promotions = data.promotions || [], retired = data.retired || [];
+      const waiting = promotions.filter((item) => item.state === "proposed"), decided = promotions.filter((item) => item.state !== "proposed");
+      put(container, sentence((data.exists ? P.count(data.rules_total || 0, "rule") + " " + isAre(data.rules_total || 0) + " in force on " + data.machine + ", promoted from "
+        + P.count(data.projects_total || 0, "project") + ". " : "No machine memory exists on this computer yet. ")
+        + P.count(waiting.length, "proposal") + " from this project " + (waiting.length === 1 ? "awaits" : "await") + " your decision."));
       put(container, h("div", { class: "notice", dataset: { key: "machine-isolation" } },
         h("p", null, data.note), data.error ? h("p", null, "The machine memory could not be read: " + data.error) : null,
         h("p", { class: "muted" }, "Database: " + data.database)));
-      put(container, section("Proposals from this project", h("span", { class: "muted" }, P.count(waiting.length, "proposal")),
-        waiting.length ? h("div", { class: "grid" }, waiting.map((item) => promotionCard(item, ctx)))
-          : P.empty("No proposal awaits your decision. An agent proposes a rule with the promote_rule action."),
+      put(container, section("Proposals from this project", counted(waiting.length, "proposal"),
+        grid(waiting, (item) => promotionCard(item, ctx), "No proposal awaits your decision. An agent proposes a rule with the promote_rule action."),
         h("p", { class: "muted" }, "A proposal stays in this project until you accept it. Correct its text in the acceptance form when a word belongs to this project alone.")));
-      put(container, section("Rules in force", h("span", { class: "muted" }, P.count(rules.length, "rule")),
-        rules.length ? h("div", { class: "grid" }, rules.map((rule) => machineRule(rule, ctx)))
-          : P.empty("No rule is promoted to this machine yet."),
+      put(container, section("Rules in force", counted(rules.length, "rule"),
+        grid(rules, (rule) => machineRule(rule, ctx), "No rule is promoted to this machine yet."),
         h("p", { class: "muted" }, "A rule in force is not rewritten. Retire it and promote the corrected text when it needs a change.")));
-      const retired = data.retired || [];
-      if (retired.length) {
-        put(container, section("Retired rules", h("span", { class: "muted" }, P.count(retired.length, "rule")),
-          h("div", { class: "grid" }, retired.map((rule) => machineRule(rule, ctx)))));
-      }
-      put(container, section("Projects on this machine", h("span", { class: "muted" }, P.count(data.projects_total || 0, "project")),
-        (data.projects || []).length ? registryTable(data.projects, data.project_path)
-          : P.empty("No project is recorded in the registry yet."),
+      if (retired.length) put(container, section("Retired rules", counted(retired.length, "rule"), grid(retired, (rule) => machineRule(rule, ctx))));
+      put(container, section("Projects on this machine", counted(data.projects_total || 0, "project"),
+        (data.projects || []).length ? registryTable(data.projects, data.project_path) : P.empty("No project is recorded in the registry yet."),
         h("p", { class: "muted" }, "The registry stays on this computer. It is not part of an export and no agent reads it.")));
-      if (decided.length) {
-        put(container, section("Decided proposals", h("span", { class: "muted" }, P.count(decided.length, "proposal")),
-          h("div", { class: "grid" }, decided.map((item) => promotionCard(item, ctx)))));
-      }
-    },
-  });
+      if (decided.length) put(container, section("Decided proposals", counted(decided.length, "proposal"), grid(decided, (item) => promotionCard(item, ctx))));
+  } });
 })();
