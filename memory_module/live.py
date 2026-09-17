@@ -42,6 +42,9 @@ STARTED_BY_ASSISTANT = ('This control panel was started from inside an assistant
                         'work while the project is in production and does not move the project back to development. '
                         'Start the control panel from your own terminal with project-memory view and record the action '
                         'there.')
+FOCUS_STARTED_BY_ASSISTANT = ('This control panel was started from inside an assistant session, so it does not set the check of a '
+                              'focused problem or start its attempts, because the check runs a command on this computer. Start '
+                              'the control panel from your own terminal with project-memory view and record the action there.')
 URL_WITHHELD = ('The control panel address is not printed inside an assistant session, because the address carries the '
                 'access key of the panel. The browser was asked to open it. Run project-memory view in your own terminal '
                 'to print the address.')
@@ -66,6 +69,8 @@ def user_authority_refusal(memory, operation, data):
         return STARTED_BY_ASSISTANT
     if operation == 'phase' and isinstance(data, dict) and data.get('phase') != 'production':
         return STARTED_BY_ASSISTANT
+    if operation in ('focus_check', 'focus_start'):
+        return FOCUS_STARTED_BY_ASSISTANT
     return None
 
 

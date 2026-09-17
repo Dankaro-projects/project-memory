@@ -3,14 +3,17 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import posixpath
 import re
 import subprocess
+import sys
 import time
+import unicodedata
 
 from .core import Conflict, InvalidRecord, USER_ACTOR, _text, dumps
 from . import codex_host, delegation, guards, planning, reviews
 from .shared import git, latest_review, settlement
-from .worktree import remains
+from .worktree import cleanup, remains
 
 FOCUS_ACTOR = 'focus-orchestrator'
 MAX_ATTEMPTS = 3
@@ -33,12 +36,20 @@ CHECK_FILE_UNCOMMITTED = ('The check names a file that is not committed with its
                           'file before setting the check, because every attempt starts from the last commit.')
 CHECK_FILE_REFUSED = ('The worker changed files that the check of the focused problem names: {files}. '
                       'An attempt may not change its own check, so this attempt is refused.')
+CHECK_SUPPORT_REFUSED = ('The worker changed files that the check of the focused problem can load: {files}. An attempt may not '
+                         'change the folder of a file the check names, and may not add a module that takes the place of a '
+                         'standard Python module or of a test configuration module, so this attempt is refused.')
 BLOCKED_NEXT_ACTION = ('Every attempt of the focused problem failed its check. Ask the user for direction before another '
                        'attempt.')
 REVIEW_FAILED_NEXT_ACTION = ('The selected attempt passed its check but not its work review. Ask the user for direction before '
                              'another attempt.')
 REQUEST_FAILED_NEXT_ACTION = ('The next attempt of the focused problem could not be requested. Ask the user for direction before '
                               'another attempt.')
+CANCELLED_NEXT_ACTION = ('An attempt of the focused problem was cancelled. Ask the user for direction before another attempt.')
+MERGE_FAILED_NEXT_ACTION = ('The selected attempt passed its check and its work review, but Project Memory could not merge it. '
+                            'Ask the user to resolve the cause, then merge or discard the run.')
+# Module names that Python or a test runner loads by name from any folder on the import path.
+SHADOWED_MODULES = frozenset(sys.stdlib_module_names) | {'sitecustomize', 'usercustomize', 'conftest'}
 ALREADY_RUNNING = 'A focused problem of this work item is already running. Wait for it to finish.'
 CHECK_WHILE_RUNNING = 'The check cannot change while attempts of the focused problem are running. Wait until they finish.'
 PARALLEL_LIMIT = 'Parallel mode allows 1 or 2 attempts, because a project runs at most two agent runs at the same time.'
@@ -95,7 +106,8 @@ def validate_hypothesis(payload):
 
 
 def normalise(statement):
-    return re.sub(r'[\W_]+', ' ', statement.lower(), flags=re.UNICODE).strip()
+    # NFKC first, so a statement typed with combining accents (common in text from macOS) equals its composed form.
+    return re.sub(r'[\W_]+', ' ', unicodedata.normalize('NFKC', statement).lower(), flags=re.UNICODE).strip()
 
 
 def check_hypothesis(memory, episode, payload, supersedes, actor):
@@ -157,6 +169,33 @@ def _receipt(memory, name, payload):
 def _running(receipts):
     ended = {entry['start_key'] for entry in receipts if entry['name'] in ('FocusCompleted', 'FocusBlocked')}
     return any(entry['name'] == 'FocusStarted' and entry['start_key'] not in ended for entry in receipts)
+
+
+def _scoped(episode_id, key):
+    """An internal request key for a start key, unique across work items, because run request keys are unique per project."""
+    return hashlib.sha256((episode_id + '\0' + key).encode()).hexdigest()[:32]
+
+
+def settle(memory, episode_id=None):
+    """Judge attempts of running starts that ended without reaching judge, such as a queued attempt that was cancelled.
+
+    A cancelled queued run never executes, so delegation.after_work never calls judge for it. Without this step the
+    start would stay running with no active run, and the item could neither start again nor change its check.
+    """
+    judged = []
+    for started in _receipts(memory, episode_id, name='FocusStarted'):
+        entries = _receipts(memory, started['episode_id'], start_key=started['start_key'])
+        if any(item['name'] in ('FocusCompleted', 'FocusBlocked') for item in entries):
+            continue
+        done = {item['run_id'] for item in entries if item['name'] == 'FocusCheckRecorded'}
+        done |= {item['from_run'] for item in entries if item['name'] == 'FocusAttemptRerouted'}
+        runs = [item['run_id'] for item in entries if item['name'] == 'FocusAttemptRequested']
+        runs += [item['to_run'] for item in entries if item['name'] == 'FocusAttemptRerouted']
+        for run_id in runs:
+            if run_id not in done and reviews.read(memory, run_id)['state'] == 'cancelled':
+                judge(memory, run_id)
+                judged.append(run_id)
+    return judged
 
 
 def reasons(memory, episode_id):
@@ -230,9 +269,12 @@ def check_files(project, command):
     for argument in command:
         if Path(argument).is_absolute():
             continue
-        candidates = [Path(argument)]
-        if all(part.isidentifier() for part in argument.split('.')):
-            candidates.append(Path(argument.replace('.', '/') + '.py'))
+        # A pytest node id such as tests/test_x.py::test_one names the file before the first ::.
+        candidates = [Path(argument.split('::', 1)[0])]
+        parts = argument.split('.')
+        if all(part.isidentifier() for part in parts):
+            # A unittest target may name a module, a class or a method, so every leading part is tried as a module.
+            candidates += [Path('/'.join(parts[:end]) + '.py') for end in range(len(parts), 0, -1)]
         for candidate in candidates:
             path = project / candidate
             if path.is_file() and path.resolve().is_relative_to(project):
@@ -246,9 +288,33 @@ def _committed(project, path):
             and git(project, 'cat-file', '-e', 'HEAD:./' + path, check=False).returncode == 0)
 
 
+def check_support(project, base, changed, check_files):
+    """The changed files, other than the named check files, that the check can load in place of what the user set.
+
+    These are files in the folder of a named check file other than the project folder, and added modules whose
+    name takes the place of a standard Python module or of a module that Python or pytest loads by name.
+    """
+    named = set(check_files)
+    folders = {posixpath.dirname(path) for path in named} - {''}
+    result = []
+    for path in changed:
+        if path in named or path.startswith('/'):
+            continue
+        parts = path.split('/')
+        name = parts[-1]
+        stem = (parts[-2] if len(parts) > 1 else None) if name == '__init__.py' else name[:-3] if name.endswith('.py') else None
+        if name.endswith('.pth'):
+            stem = 'sitecustomize'
+        added = stem in SHADOWED_MODULES and git(project, 'cat-file', '-e', base + ':./' + path, check=False).returncode != 0
+        if posixpath.dirname(path) in folders or added or stem in ('sitecustomize', 'usercustomize', 'conftest'):
+            result.append(path)
+    return result
+
+
 def set_check(memory, episode_id, *, command, timeout_seconds, request_key, actor):
     if actor != USER_ACTOR:
         raise InvalidRecord(CHECK_USER_ONLY)
+    settle(memory, episode_id)
     with memory._write():
         block = (planning.latest(memory, episode_id, 'work_plan') or {}).get('focus')
         if not block:
@@ -291,7 +357,7 @@ def _request_attempt(memory, started, number, *, problem):
                              for item in _ruled_out(memory, episode_id)],
                'check': {field: started['check'][field] for field in ('command', 'timeout_seconds')},
                'check_files': [item['path'] for item in started['check'].get('files', [])]}
-    return delegation.request_work(memory, episode_id, request_key=f'{key}:attempt:{number}',
+    return delegation.request_work(memory, episode_id, request_key=f'focus:{_scoped(episode_id, key)}:attempt:{number}',
                                    host=work if number % 2 else other, focus_attempt=attempt)
 
 
@@ -305,6 +371,7 @@ def start(memory, episode_id, *, request_key, actor):
     if actor != USER_ACTOR:
         raise InvalidRecord(START_USER_ONLY)
     _text(request_key, 'request_key', 180)
+    settle(memory, episode_id)
     with memory._write():
         receipts = _receipts(memory, episode_id)
         if any(item['name'] == 'FocusStarted' and item['start_key'] == request_key for item in receipts):
@@ -360,12 +427,18 @@ def _check(memory, run):
         return result
     snapshot = run['snapshot']
     project = Path(snapshot['project'])
-    lines = git(project, 'diff', '--numstat', snapshot['base_commit'], run['branch']).stdout.splitlines()
+    commit = run['metrics'].get('commit') or run['branch']
+    lines = git(project, 'diff', '--numstat', snapshot['base_commit'], commit).stdout.splitlines()
     result['changed_lines'] = sum(int(number) for line in lines for number in line.split('\t')[:2] if number.isdigit())
+    # The check runs in a clean checkout of the collected commit, not in the worktree of the worker. A file hidden
+    # from git, or a cache file that the collection leaves out, then cannot change the result of the check.
+    tree = project / (run['workspace'] + '-check')
+    cleanup(project, tree, None)
     begun = time.monotonic()
     output = ''
     try:
-        checked = subprocess.run(check['command'], cwd=project / run['workspace'] / snapshot.get('repository_prefix', ''),
+        git(project, 'worktree', 'add', '-q', '--detach', str(tree), commit)
+        checked = subprocess.run(check['command'], cwd=tree / snapshot.get('repository_prefix', ''),
                                  timeout=check['timeout_seconds'], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                  text=True, errors='replace')
         output = checked.stdout
@@ -382,8 +455,10 @@ def _check(memory, run):
         if isinstance(output, bytes):
             output = output.decode('utf-8', errors='replace')
         result.update(timed_out=True, evidence_summary=f'The check did not finish within {check["timeout_seconds"]} seconds.')
-    except OSError as exc:
+    except (OSError, InvalidRecord) as exc:
         result['evidence_summary'] = ('The check could not start: ' + str(exc))[:2000]
+    finally:
+        cleanup(project, tree, None)
     result['duration_ms'] = round((time.monotonic() - begun) * 1000)
     result['output_tail'] = output[-OUTPUT_TAIL:]
     return result
@@ -405,7 +480,7 @@ def _block(memory, started, next_action=BLOCKED_NEXT_ACTION, reason=''):
         detail = ' '.join(item['statement'] + ' ' + item['evidence_summary'] for item in hypotheses)
         _revise(memory, episode_id, {'state': 'blocked', 'next_action': next_action,
                                      'reason': (reason + ' ' + next_action + ' ' + detail).strip()[:2000]},
-                 request_key='focus-block:' + key, actor=FOCUS_ACTOR)
+                 request_key='focus-block:' + _scoped(episode_id, key), actor=FOCUS_ACTOR)
         _receipt(memory, 'FocusBlocked', {'episode_id': episode_id, 'start_key': key, 'hypotheses': hypotheses})
 
 
@@ -470,7 +545,10 @@ def _advance(memory, run):
             for item in results:
                 _discard(memory, item['run_id'], 'The check of the focused problem failed for this attempt.')
             number = max(item['attempt'] for item in results) + 1
-            if started['mode'] == 'relay' and number <= started['attempts']:
+            if any(reviews.read(memory, item['run_id'])['state'] == 'cancelled' for item in results):
+                # A cancellation comes from the user, so no further attempt starts without the user.
+                _block(memory, started, CANCELLED_NEXT_ACTION)
+            elif started['mode'] == 'relay' and number <= started['attempts']:
                 try:
                     follow = _request_attempt(memory, started, number, problem=attempt['problem'])
                     _requested(memory, follow)
@@ -496,7 +574,7 @@ def after_review(memory, review_run_id):
     episode_id, key = run['episode_id'], attempt['start_key']
     with memory._write():
         receipts = _receipts(memory, episode_id, start_key=key)
-        completed = next((item for item in receipts if item['name'] == 'FocusCompleted'), None)
+        completed = next((item for item in receipts if item['name'] in ('FocusCompleted', 'FocusBlocked')), None)
         if completed:
             return {field: value for field, value in completed.items() if field != 'name'}
         if not any(item['name'] == 'FocusSelected' and item['run_id'] == run['id'] for item in receipts):
@@ -505,7 +583,14 @@ def after_review(memory, review_run_id):
         if review['state'] == 'pass':
             merged = 'waiting_for_user'
             if planning.phase(memory)['phase'] != 'production':
-                delegation.merge(memory, run['id'], request_key='focus-merge:' + run['id'], actor=FOCUS_ACTOR)
+                try:
+                    with memory._write():
+                        delegation.merge(memory, run['id'], request_key='focus-merge:' + run['id'], actor=FOCUS_ACTOR)
+                except (InvalidRecord, Conflict) as exc:
+                    # A merge conflict ends the start as blocked. The branch stays, so the user can merge or discard it.
+                    _block(memory, {'episode_id': episode_id, 'start_key': key}, MERGE_FAILED_NEXT_ACTION, str(exc))
+                    return {'episode_id': episode_id, 'start_key': key, 'run_id': run['id'], 'review_state': review['state'],
+                            'merge': 'not_merged', 'error': str(exc)}
                 merged = 'merged'
         result = {'episode_id': episode_id, 'start_key': key, 'run_id': run['id'], 'review_state': review['state'], 'merge': merged}
         _receipt(memory, 'FocusCompleted', result)
@@ -606,17 +691,25 @@ def report(memory, *, episode_id=None):
         totals['first_attempt_sufficient'] += int(sufficient)
         item = {'episode_id': started['episode_id'], 'start_key': started['start_key'], 'state': _state(entries),
                 'first_attempt_sufficient': sufficient, 'attempts': []}
+        rerouted = {item['to_run']: item['from_run'] for item in entries if item['name'] == 'FocusAttemptRerouted'}
         for checked in checks:
             run = reviews.read(memory, checked['run_id'])
-            metrics = run['metrics'] or {}
-            usage = metrics.get('provider_usage') or {}
-            usage = usage if isinstance(usage, list) else [usage]
-            tokens = sum(turn.get('input_tokens', 0) + turn.get('output_tokens', 0) for turn in usage)
-            duration = metrics.get('duration_ms', 0)
+            # A rerouted attempt also cost the run on the unavailable host, so that run counts in tokens, duration and hosts.
+            chain, current = [run], run['id']
+            while current in rerouted:
+                current = rerouted[current]
+                chain.append(reviews.read(memory, current))
+            tokens, duration = 0, 0
+            for part in chain:
+                metrics = part['metrics'] or {}
+                usage = metrics.get('provider_usage') or {}
+                usage = usage if isinstance(usage, list) else [usage]
+                tokens += sum((turn.get('input_tokens') or 0) + (turn.get('output_tokens') or 0) for turn in usage)
+                duration += metrics.get('duration_ms') or 0
+                totals['hosts'][part['host']] = totals['hosts'].get(part['host'], 0) + 1
             review = latest_review(memory, run['id'])
             verdict = review['state'] if review else None
             totals['attempts'] += 1
-            totals['hosts'][run['host']] = totals['hosts'].get(run['host'], 0) + 1
             status = 'passed' if checked['check_passed'] else 'failed' if checked['exit_code'] is not None or checked['timed_out'] else 'not_run'
             totals['checks'][status] += 1
             totals['tokens'] += tokens
@@ -626,6 +719,7 @@ def report(memory, *, episode_id=None):
                 totals['reviews'][verdict] = totals['reviews'].get(verdict, 0) + 1
             item['attempts'].append({field: checked[field] for field in ('attempt', 'run_id', 'host', 'check_passed', 'exit_code', 'changed_lines')}
                                    | {'check_duration_ms': checked['duration_ms'], 'run_duration_ms': duration,
-                                      'tokens': tokens, 'review_state': verdict})
+                                      'tokens': tokens, 'review_state': verdict,
+                                      'rerouted_from': [part['id'] for part in chain[1:]]})
         totals['items'].append(item)
     return totals

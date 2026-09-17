@@ -5,8 +5,8 @@ user source that states what the user saved. Each request key is stored with a
 signature, so a repeated request returns the original result and a reused key
 with different content raises Conflict.
 
-Agent run actions (delegate, merge, discard, review, cancel_run and
-request_work_review) run outside the action transaction, because they start
+Agent run actions (delegate, merge, discard, review, cancel_run,
+request_work_review, focus_check and focus_start) run outside the action transaction, because they start
 processes or run git. Their own request keys make them idempotent.
 """
 from . import codex_host
@@ -18,7 +18,7 @@ from .shared import prior_result, run_summary, store_result
 KEY_REUSED = 'This action key was already used for different changes.'
 RECORD_OPERATIONS = ('plan', 'sprint', 'comment', 'requirements', 'lesson_review', 'allow_paths', 'link', 'component',
                      'answer_kickoff', 'instructions', 'phase', 'reassess')
-RUN_OPERATIONS = ('delegate', 'merge', 'discard', 'review', 'cancel_run', 'request_work_review')
+RUN_OPERATIONS = ('delegate', 'merge', 'discard', 'review', 'cancel_run', 'request_work_review', 'focus_check', 'focus_start')
 # Promotion actions write to the machine memory, which is a second database, so they run outside the
 # action transaction of this project, as the agent run actions do.
 MACHINE_OPERATIONS = ('promotion', 'machine_rule')
@@ -42,6 +42,8 @@ FIELDS = {
     'review': ({'episode_id', 'role'}, {'max_seconds', 'retry'}),
     'cancel_run': ({'run_id'}, set()),
     'request_work_review': ({'run_id'}, {'max_seconds'}),
+    'focus_check': ({'episode_id', 'command', 'timeout_seconds'}, set()),
+    'focus_start': ({'episode_id'}, set()),
     'promotion': ({'promotion_id', 'status', 'reason'}, {'rule', 'basis'}),
     'machine_rule': ({'rule_id', 'status', 'reason'}, set()),
 }
@@ -62,6 +64,8 @@ MESSAGES = {
     'review': 'Select the work item and the check role.',
     'cancel_run': 'Select the agent run to cancel.',
     'request_work_review': 'Select the delegated work run to review again.',
+    'focus_check': 'Select the work item and write the check command as separate arguments, with its timeout in seconds.',
+    'focus_start': 'Select the work item whose focused problem should start.',
     'promotion': 'Select the proposed promotion, accept or decline it, and give the reason.',
     'machine_rule': 'Select the machine rule, set the status to retired and give the reason.',
 }
@@ -130,6 +134,9 @@ def _plan(memory, data, request_key, operation):
     kind = 'work_plan' if operation == 'plan' else 'sprint'
     old = latest(memory, episode_id, kind) if episode_id else None
     payload = data['payload']
+    if operation == 'plan' and old and old.get('focus') and 'focus' not in payload:
+        # The plan form does not edit the focused problem, so a saved plan keeps the focus block and its check.
+        payload = data['payload'] = {**payload, 'focus': old['focus']}
     if (operation == 'plan' and payload.get('owner', 'agent') == 'agent' and payload.get('state') == 'in_progress'
             and (not old or old.get('state') != 'in_progress' or payload.get('session_id') != old.get('session_id'))):
         raise InvalidRecord('Only an active agent session can claim work in progress. Select Ready to queue agent work.')
@@ -454,8 +461,25 @@ def review(memory, data, request_key, first):
 
 
 def cancel_run(memory, data, request_key, first):
-    from . import reviews
-    return run_summary(memory, reviews.cancel(memory, data['run_id']))
+    from . import focus, reviews
+    run = reviews.cancel(memory, data['run_id'])
+    if run['role'] == 'work' and (run['snapshot'] or {}).get('focus') and run['state'] == 'cancelled':
+        # A focused attempt cancelled while queued never runs, so its start is settled here.
+        focus.settle(memory, run['episode_id'])
+    return run_summary(memory, run)
+
+
+def focus_check(memory, data, request_key, first):
+    """Set the check of a focused problem. Only the user sets it, because the check runs a command on this computer."""
+    from . import focus
+    return focus.set_check(memory, data['episode_id'], command=data['command'], timeout_seconds=data['timeout_seconds'],
+                           request_key=request_key + ':focus-check', actor=USER)
+
+
+def focus_start(memory, data, request_key, first):
+    """Start the attempts of a focused problem."""
+    from . import focus
+    return focus.start(memory, data['episode_id'], request_key=request_key + ':focus-start', actor=USER)
 
 
 def request_work_review(memory, data, request_key, first):
@@ -497,4 +521,5 @@ def machine_rule(memory, data, request_key, first):
 
 
 RUN_HANDLERS = {'delegate': delegate, 'merge': merge, 'discard': discard, 'review': review, 'cancel_run': cancel_run,
-                'request_work_review': request_work_review, 'promotion': promotion, 'machine_rule': machine_rule}
+                'request_work_review': request_work_review, 'promotion': promotion, 'machine_rule': machine_rule,
+                'focus_check': focus_check, 'focus_start': focus_start}

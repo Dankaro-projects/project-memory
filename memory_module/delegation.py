@@ -338,6 +338,10 @@ def execute(memory, run_id, timeout=None):
     elif run['role'] == 'work':
         if _execute_work(memory, run, timeout):
             after_work(memory, run_id)
+        elif run['snapshot'].get('focus'):
+            # A focused attempt cancelled while queued never runs, so it is judged here to end or continue its start.
+            from .focus import settle
+            settle(memory, run['episode_id'])
     else:
         raise InvalidRecord('Only delegated work and work reviews run here.')
     start_missing_reviews(memory)
@@ -428,10 +432,18 @@ def _execute_work(memory, run, timeout):
                                 exit_message='The host work process exited unsuccessfully. Inspect its private event and stderr logs.')
         check_files = set((snapshot.get('focus') or {}).get('check_files', []))
         changed_check = [path for path in metrics['changed_files'] if path in check_files]
+        support = []
+        if snapshot.get('focus') and not changed_check:
+            from .focus import check_support
+            support = check_support(project, snapshot['base_commit'], metrics['changed_files'], check_files)
         if changed_check:
             from .focus import CHECK_FILE_REFUSED
             state, error = 'scope_violation', CHECK_FILE_REFUSED.format(files=', '.join(changed_check))
             metrics['check_files_changed'] = changed_check
+        elif support:
+            from .focus import CHECK_SUPPORT_REFUSED
+            state, error = 'scope_violation', CHECK_SUPPORT_REFUSED.format(files=', '.join(support[:20]))
+            metrics['check_support_changed'] = support[:100]
         elif found and found[0] == 'host_unavailable':
             state, error, metrics['termination_reason'] = found
         elif outside:
@@ -525,6 +537,8 @@ def start_missing_reviews(memory, *, limit=10):
     """
     if not reviews.exists(memory):
         return []
+    from .focus import settle
+    settle(memory)
     rows = memory.db.execute("""SELECT w.id FROM review_runs w WHERE w.role='work' AND w.state='completed'
         AND NOT EXISTS (SELECT 1 FROM review_runs r WHERE r.parent_run=w.id AND r.role='work_review')
         ORDER BY w.rowid LIMIT ?""", (limit,)).fetchall()
