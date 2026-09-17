@@ -11,10 +11,10 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
         python: ['3.11', '3.14']
-        # Every test runs. They are shared between two jobs because a Windows
-        # runner needs fifteen to twenty minutes for the whole suite, where this
-        # machine needs about one.
-        shard: [1, 2]
+        # Every test runs. They are shared between three jobs because a Windows
+        # runner needs thirty minutes or more for the whole suite, where this
+        # machine needs about three, and two shards reached the twenty minute limit.
+        shard: [1, 2, 3]
     runs-on: ${{ matrix.os }}
     env:
       PYTHONUTF8: '1'
@@ -26,7 +26,7 @@ jobs:
       - uses: astral-sh/setup-uv@v6
       - run: python scripts/check_publication.py
       - name: Run the tests of this shard
-        run: python -u -X faulthandler -m unittest -v $(python scripts/shard_tests.py --shard ${{ matrix.shard }} --of 2)
+        run: python -u -X faulthandler -m unittest -v $(python scripts/shard_tests.py --shard ${{ matrix.shard }} --of 3)
         shell: bash
         timeout-minutes: 20
         env:
