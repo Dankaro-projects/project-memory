@@ -128,6 +128,29 @@ async function views(page, kind, expected) {
   assert.match(page.url(), /state=blocked/);
   step(`${kind}: Work lists 16 items and the state filter keeps 2 blocked items`);
 
+  // Section 17.12: a board column shows ten cards at a time. For this step the board response carries 23 backlog cards.
+  await page.route(/\/api\/board/, async (route) => {
+    // The panel revalidates with an entity tag; asking without it returns the full body to widen.
+    const headers = { ...route.request().headers() };
+    delete headers["if-none-match"];
+    const response = await route.fetch({ headers }), value = await response.json(), base = value.cards[0];
+    value.cards = [...value.cards.filter((card) => card.state !== "backlog"),
+      ...Array.from({ length: 23 }, (_, index) => ({ ...base, id: base.id + "-copy-" + index, title: "Copied item " + index, state: "backlog", issues: [] }))];
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(value) });
+  });
+  await go(page, "#work");
+  await page.locator("#work-tab-board").click();
+  const backlog = '#main .board-column[data-tone="backlog"] li';
+  await page.waitForFunction((selector) => document.querySelectorAll(selector).length === 10, backlog);
+  assert.match(await text(page, '#main [data-key="work-more-backlog"]'), /Show 10 more of 13/);
+  await page.locator('#main [data-key="work-more-backlog"]').click();
+  await page.waitForFunction((selector) => document.querySelectorAll(selector).length === 20, backlog);
+  await page.locator('#main [data-key="work-more-backlog"]').click();
+  await page.waitForFunction((selector) => document.querySelectorAll(selector).length === 23, backlog);
+  assert.equal(await page.locator('#main [data-key="work-more-backlog"]').count(), 0);
+  await page.unroute(/\/api\/board/);
+  step(`${kind}: a board column of 23 cards shows 10, then 20, then all 23 with its Show more button`);
+
   await go(page, "#architecture");
   assert.equal(await text(page, "#main .view-head h2"), expected.architecture);
   assert.match(await text(page, "#main .sentence"), expected.items);
