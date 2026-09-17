@@ -9,13 +9,14 @@ with the least work so far, which keeps the halves close together.
 import argparse
 from pathlib import Path
 
-# Seconds measured on a Windows runner. A module that is not listed is assumed
-# to be light, which is true of every module below twenty seconds there.
+# Seconds measured on a Windows runner (Python 3.14, run 35197096579 of 17 September 2026), from the first to the last test line of each module. A module that is not listed is assumed
+# to be light, which is true of every module that measured fifteen seconds or less there.
 COST = {
-    'test_delegation': 237, 'test_api': 116, 'test_feedback': 91, 'test_guards': 88,
-    'test_codex': 85, 'test_instructions': 82, 'test_mcp_tables': 59, 'test_coverage': 59,
-    'test_scenarios': 45, 'test_review_diagnostics': 45, 'test_workflow': 40, 'test_workspace': 35,
-    'test_memory': 30, 'test_planning': 30, 'test_failure_recovery': 25, 'test_templates': 25,
+    'test_machine': 205, 'test_hive_workers': 171, 'test_hive': 118, 'test_focus': 101,
+    'test_delegation': 67, 'test_focus_review': 41, 'test_api': 38, 'test_workspace': 29,
+    'test_install_clients': 28, 'test_feedback': 23, 'test_codex': 21, 'test_workflow': 20,
+    'test_instructions': 19, 'test_memory': 19, 'test_planning': 19, 'test_review_diagnostics': 19,
+    'test_wave5_review_fixes': 18, 'test_guards': 16,
 }
 DEFAULT_COST = 15
 
