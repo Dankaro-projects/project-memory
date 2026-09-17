@@ -8,7 +8,7 @@ CARD_LIMIT = 5000
 FIELDS = {
     'work_plan': ({'state', 'next_action', 'scope', 'autonomy', 'reason'},
                   {'sprint_id', 'depends_on', 'owner', 'priority', 'session_id', 'paths',
-                   'item_type', 'acceptance', 'parent_id', 'focus'}),
+                   'item_type', 'acceptance', 'parent_id', 'focus', 'worktree'}),
     'sprint': ({'starts_on', 'ends_on', 'status', 'reason'}, set()),
 }
 # A revision of these plan fields changes what the work covers, so an earlier assessment no longer applies.
@@ -64,6 +64,12 @@ def validate_payload(kind, payload):
                 raise InvalidRecord(f'item_type must be one of {list(ITEM_TYPES)}.')
         elif kind == 'work_plan' and key == 'acceptance':
             validate_acceptance(value)
+        elif kind == 'work_plan' and key == 'worktree':
+            # The folder where the work is done, so agent checks read that worktree instead of the project folder.
+            from pathlib import PurePosixPath, PureWindowsPath
+            _text(value, 'worktree', 1000)
+            if not (PurePosixPath(value).is_absolute() or PureWindowsPath(value).is_absolute()):
+                raise InvalidRecord('worktree must be the absolute path of a git worktree of the project repository.')
         elif kind == 'work_plan' and key == 'parent_id':
             _text(value, 'parent_id', 200)
         elif kind == 'work_plan' and key == 'focus':

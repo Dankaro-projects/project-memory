@@ -23,7 +23,7 @@ import uuid
 from .core import Memory, InvalidRecord, Conflict, dumps, _digest, _text
 from . import codex_host, hosts
 from .reports import REPORT_MAX_CHARACTERS, REPORT_SCHEMA, report_schema, validate_lesson_proposals, validate_report
-from .shared import latest_source, project_paths, run_summary, tree_signature
+from .shared import git, latest_source, project_paths, run_summary, tree_signature
 
 ROLES = ('outcome', 'intent', 'recovery')
 ACTIVE = ('queued', 'running', 'cancelling')
@@ -273,6 +273,29 @@ def shared_tree(memory):
         del memory._review_tree
 
 
+def check_folder(config, plan):
+    """The folder an agent check reads: the recorded worktree of the work item, or the project folder.
+
+    A worktree must be a git worktree of the project repository, so a check never reads another repository and never
+    misses work committed on a branch that the project folder has not checked out.
+    """
+    worktree = plan.get('worktree')
+    if not worktree:
+        return config['project']
+    folder = Path(worktree)
+    if not folder.is_dir():
+        raise InvalidRecord('The recorded worktree ' + worktree + ' does not exist. Revise the plan with the folder where '
+                            'the work is, or remove worktree to check the project folder.')
+    def common(path):
+        found = git(path, 'rev-parse', '--path-format=absolute', '--git-common-dir', check=False, timeout=10)
+        return str(Path(found.stdout.strip()).resolve()) if found.returncode == 0 and found.stdout.strip() else None
+    own = common(folder)
+    if own is None or own != common(Path(config['project'])):
+        raise InvalidRecord('The recorded worktree ' + worktree + ' is not a git worktree of the project repository. '
+                            'Revise the plan with a worktree of this repository.')
+    return str(folder.resolve())
+
+
 def task_snapshot(memory, episode, role, *, project, scope, intent_key='intent'):
     """The fields every run snapshot shares: the task, the project requirements, the checklist and the constraints.
 
@@ -319,10 +342,21 @@ def snapshot(memory, episode_id, role):
                 record.pop(key, None)
     receipts = [codex_host.read_receipt(memory, r[0]) for r in memory.db.execute(
         "SELECT id FROM host_receipts WHERE episode_id=? AND event_name IN ('PreToolUse','PostToolUse','Interrupt','Reconciled') ORDER BY rowid", (episode_id,))]
-    value = {**task_snapshot(memory, ep, role, project=config['project'], scope=plan['scope']),
-             'records': records, 'sources': sources, 'receipts': receipts,
-             'tree_signature': getattr(memory,'_review_tree',None) or tree_signature(config['project'],cache=getattr(memory,'_review_tree_cache',None))}
+    folder = check_folder(config, plan)
+    # The shared and cached signatures belong to the project folder; a worktree is hashed on its own.
+    tree = (getattr(memory,'_review_tree',None) or tree_signature(folder,cache=getattr(memory,'_review_tree_cache',None))) \
+        if folder == config['project'] else tree_signature(folder)
+    value = {**task_snapshot(memory, ep, role, project=folder, scope=plan['scope']),
+             'records': records, 'sources': sources, 'receipts': receipts, 'tree_signature': tree}
     signature=hashlib.sha256(dumps(value).encode()).hexdigest()
+    # Named after the signature, so a check made before this field existed stays current.
+    try:
+        branch = git(folder, 'rev-parse', '--abbrev-ref', 'HEAD', check=False, timeout=10)
+        branch = branch.stdout.strip() if branch.returncode == 0 else None
+    except InvalidRecord:
+        branch = None
+    value['checked_folder'] = {'path': folder, 'branch': branch,
+                               'note': 'The check reads this folder. Work committed on another branch or worktree is not visible here.'}
     if exists(memory):
         history=memory.db.execute("SELECT id,role,state,report,error FROM review_runs WHERE episode_id=? AND role=? AND state NOT IN ('queued','running','cancelling') ORDER BY rowid DESC LIMIT 2",(episode_id,role)).fetchall()
         value['previous_checks']=[{**dict(r),'report':json.loads(r['report']) if r['report'] else None} for r in history]

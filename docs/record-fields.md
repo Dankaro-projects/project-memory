@@ -16,10 +16,12 @@ All event payloads reject unknown fields. Text must be nonempty; lists and costs
 | follow_up | review_after, owner, reason | None |
 | episode_status | status, reason | None |
 | note | text | kickoff_answers |
-| work_plan | state, next_action, scope, autonomy, reason | sprint_id, depends_on, owner, priority, session_id, paths, item_type, acceptance, parent_id |
+| work_plan | state, next_action, scope, autonomy, reason | sprint_id, depends_on, owner, priority, session_id, paths, item_type, acceptance, parent_id, focus, worktree |
 | sprint | starts_on, ends_on, status, reason | None |
 
 ## Paths, lesson triggers and guards
+
+A work plan `worktree` field is the absolute path of a git worktree of the project repository where the work is done. Outcome, intent and recovery checks of that work item read that worktree, and a change there makes a finished check stale. A check refuses to start when the folder is missing or belongs to another repository. Without it, a check reads the project folder and reports the branch that folder has checked out.
 
 A work plan `paths` field is a list of 1 to 100 unique patterns, each at most 500 characters. A pattern is a relative POSIX path without a `..` segment, or an absolute path. `*` matches characters within one path segment, `**` matches across segments and `?` matches one character. A pattern without glob characters matches that path and everything beneath it, and `.` matches the whole project. Relative patterns are compared with paths relative to the project root.
 
