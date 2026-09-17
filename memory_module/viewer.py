@@ -223,6 +223,10 @@ def export_html(memory, destination, *, episode_id=None, subject=None, since=Non
         for episode in found['episodes']:
             if memory.episode(episode)['task_type'] != 'sprint':
                 responses[response_key('work', {'id': episode})] = api.work(memory, {'id': episode})
+                # A work item with a focused problem shows its Focus section in the snapshot too, without the actions.
+                focused = api.focus(memory, {'id': episode})
+                if focused.get('focus'):
+                    responses[response_key('focus', {'id': episode})] = focused
                 for run in delegation.runs(memory, episode_id=episode, limit=100)['runs']:
                     responses[response_key('run', {'id': run['id']})] = api.run(memory, {'id': run['id']})
         record_ids = found['episodes'] + found['events'] + found['sources'] + found['receipts'] + found['directions']

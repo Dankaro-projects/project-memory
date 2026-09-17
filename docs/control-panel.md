@@ -131,7 +131,7 @@ Requirements lists the current requirement text with its version and the evidenc
 
 ## Refreshing and saving
 
-The panel polls the health endpoint every two seconds while the tab is visible and redraws only when the database revision changes. Filters, the selected view, an open drawer, the scroll position and keyboard focus survive a refresh, and an open form is never redrawn under you.
+The panel polls the health endpoint one second after the previous poll ends while the tab is visible, so a change shows within two seconds, and it redraws only when the database revision changes. Filters, the selected view, an open drawer, the scroll position and keyboard focus survive a refresh, and an open form is never redrawn under you.
 
 Every save carries the session token and a request key created when the form opened, so submitting the same form twice does not create a second record. A save also carries the version you read. When somebody else changed the record first, the panel keeps your draft and offers to reload the saved version. Server messages appear in the alert area of the form.
 

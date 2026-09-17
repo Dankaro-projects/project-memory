@@ -15,7 +15,7 @@ from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 import uuid
 
-from memory_module import Memory, InvalidRecord, api, architecture, codex_host, hosts, machine, planning, reviews
+from memory_module import Memory, InvalidRecord, api, architecture, codex_host, hive, hosts, live, machine, planning, reviews, workspace
 from memory_module.install import setup
 from memory_module.live import Viewer
 from memory_module.workspace import action
@@ -473,6 +473,181 @@ class ApiTests(unittest.TestCase):
             self.assertEqual(api.plan(reader, {})['total'], 7)
 
 
+    def test_focus_endpoint_adds_the_check_output_to_each_attempt_and_reports_totals_without_an_id(self):
+        from memory_module import focus
+        self.assertEqual(api.focus(self.m, {'id': self.ids['design']})['state'], 'none')
+        focus.propose(self.m, self.ids['parser'], problem='The parser loses the tagged characters.', actor='assistant',
+                      request_key='api-focus', hypotheses=[{'statement': 'The decoder ignores the tag.', 'approach': 'Read the tag first.'}])
+        [hypothesis] = api.focus(self.m, {'id': self.ids['parser']})['hypotheses']
+        base = {'episode_id': self.ids['parser'], 'start_key': 'api-start'}
+        check = {**base, 'attempt': 1, 'run_id': self.ids['run'], 'host': 'codex', 'hypothesis_id': hypothesis['id'], 'command': ['python3', 'check.py'],
+                 'check_passed': False, 'exit_code': 1, 'duration_ms': 900, 'output_tail': 'FAILED (failures=1)\n', 'timed_out': False,
+                 'changed_lines': 3, 'evidence_summary': 'The check failed with exit code 1. Last output line: FAILED (failures=1).'}
+        receipts = [('FocusStarted', {**base, 'mode': 'relay', 'attempts': 1, 'check': {}, 'hypothesis_ids': [hypothesis['id']]}),
+                    ('FocusAttemptRequested', {**base, 'attempt': 1, 'run_id': self.ids['run'], 'host': 'codex', 'hypothesis_id': hypothesis['id']}),
+                    ('FocusCheckRecorded', check)]
+        with self.m._write():
+            for name, payload in receipts:
+                codex_host.receipt(self.m, session_id='api-focus', event_name=name, episode_id=self.ids['parser'], key='api-focus:' + name, payload=payload)
+        value = api.focus(self.m, {'id': self.ids['parser']})
+        self.assertEqual((value['state'], value['eligible'], value['focus']['problem']), ('running', True, 'The parser loses the tagged characters.'))
+        [attempt] = value['attempts']
+        self.assertEqual((attempt['exit_code'], attempt['check_passed'], attempt['changed_lines']), (1, False, 3))
+        self.assertEqual((attempt['output_tail'], attempt['timed_out'], attempt['evidence_summary']),
+                         ('FAILED (failures=1)\n', False, check['evidence_summary']))
+        self.assertEqual(value['report']['checks'], {'passed': 0, 'failed': 1, 'not_run': 0})
+        totals = api.focus(self.m, {})
+        self.assertEqual((totals['problems'], totals['attempts']), (1, 1))
+        self.assertNotIn('state', totals)
+        with self.assertRaises(InvalidRecord):
+            api.focus(self.m, {'id': 'x' * 201})
+
+
+class HiveTests(unittest.TestCase):
+    """The Hive view of the control panel: its read endpoint, the actions of the user and the live revision."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
+        self.root = Path(self.temp.name).resolve()
+        os.environ[machine.DATABASE_VARIABLE] = str(self.root / 'machine' / 'machine.sqlite')
+        self.m, self.ids = build(self.root)
+        self.keys = 0
+
+    def tearDown(self):
+        self.m.close()
+        os.environ[machine.DATABASE_VARIABLE] = MACHINE['default']
+        shutil.rmtree(self.temp.name, ignore_errors=True)
+
+    def key(self):
+        self.keys += 1
+        return 'hive-key-' + str(self.keys)
+
+    def swarm(self):
+        """A blind swarm with a Codex agent in the open phase and a Claude agent still in the blind phase."""
+        with hive.Hive(hive.path_for(self.m)) as store:
+            swarm = hive.open_swarm(store, title='Parser fault', purpose='Find why the parser loses the tagged characters.',
+                                    kind='manual', request_key='hive-open', episode_id=self.ids['parser'])['id']
+            # A command basis is verified only for a check of the swarm, which a start that names the swarm links to its check.
+            with self.m._write():
+                start = {'episode_id': self.ids['parser'], 'start_key': 'hive-start'}
+                codex_host.receipt(self.m, session_id='hive-check', event_name='FocusStarted', episode_id=self.ids['parser'],
+                                   payload={**start, 'swarm_id': swarm}, key='hive-started')
+                receipt = codex_host.receipt(self.m, session_id='hive-check', event_name='FocusCheckRecorded', episode_id=self.ids['parser'],
+                                             payload={**start, 'exit_code': 0, 'check_passed': True}, key='hive-check')
+            for agent, host in (('codex-1', 'codex'), ('claude-1', 'claude')):
+                hive.join(store, swarm, agent_id=agent, role='worker', host=host, worktree=self.root)
+            log = lambda agent, move, **fields: hive.log(store, swarm, agent, move=move, request_key=self.key(), fields=fields, memory=self.m)['id']
+            ids = {'orient': log('codex-1', 'orient', claim='The goal is a parser that keeps every tagged character.',
+                                 bases=[{'kind': 'file', 'value': 'src/app.py:1'}])}
+            log('claude-1', 'orient', claim='The goal of this agent is a decoder that keeps the tag.', bases=[{'kind': 'file', 'value': 'src/util.py:1'}])
+            ids['hypothesis'] = log('codex-1', 'hypothesis', claim='The decoder drops the tag before it reads the text.',
+                                    detail='Run the fixture with a tagged file and compare the output.')
+            ids['observation'] = log('codex-1', 'observation', claim='The tagged fixture passes after the decoder reads the tag first.',
+                                     bases=[{'kind': 'command', 'value': receipt}])
+            ids['conclusion'] = log('codex-1', 'conclusion', claim='Reading the tag first keeps every tagged character.',
+                                    confidence='high', cites=[ids['observation']])
+            ids['question'] = log('claude-1', 'question', claim='Should the decoder accept files without a tag?', addressee='user')
+        return swarm, ids
+
+    def test_the_endpoint_lists_swarms_and_shows_one_swarm_as_a_timeline(self):
+        self.assertEqual(api.hive(self.m, {}), {'swarms': [], 'total': 0, 'max_seq': 0, 'exists': False})
+        self.assertFalse(hive.path_for(self.m).exists(), 'a read created the hive file')
+        swarm, ids = self.swarm()
+        listing = api.hive(self.m, {})
+        self.assertEqual((listing['total'], listing['max_seq'], listing['exists']), (1, 6, True))
+        [row] = listing['swarms']
+        self.assertEqual((row['title'], row['state'], row['kind'], row['entries']), ('Parser fault', 'open', 'manual', 6))
+        self.assertEqual([(agent['agent_id'], agent['host'], agent['revealed']) for agent in row['agents']],
+                         [('codex-1', 'codex', True), ('claude-1', 'claude', False)])
+        value = api.hive(self.m, {'id': swarm})
+        self.assertEqual((value['swarm']['id'], value['swarm']['blind'], value['total'], value['more']), (swarm, True, 6, False))
+        self.assertNotIn('request_key', value['swarm'])
+        self.assertEqual({agent['agent_id']: (agent['phase'], agent['entries']) for agent in value['agents']},
+                         {'codex-1': ('open', 4), 'claude-1': ('blind', 2)})
+        entries = {entry['id']: entry for entry in value['entries']}
+        observation = entries[ids['observation']]
+        self.assertEqual((observation['agent'], observation['host'], observation['move']), ('codex-1', 'codex', 'observation'))
+        self.assertEqual([(basis['kind'], basis['verified'], basis['exit_code']) for basis in observation['bases']], [('command', True, 0)])
+        self.assertEqual(observation['links_in'], [{'from': ids['conclusion'], 'relation': 'cites'}])
+        conclusion = entries[ids['conclusion']]
+        self.assertEqual((conclusion['confidence'], conclusion['links_out']), ('high', [{'to': ids['observation'], 'relation': 'cites'}]))
+        self.assertIn('exited with code 0', conclusion['confirmed'])
+        self.assertIsNone(conclusion['disputed'])
+        self.assertEqual(entries[ids['question']]['addressed_to'], 'user')
+        # The observer of the control panel sees the hypothesis that the blind agent does not see.
+        self.assertIn(ids['hypothesis'], entries)
+        with self.assertRaises(InvalidRecord) as caught:
+            api.hive(self.m, {'id': 'swarm_missing'})
+        self.assertIn('was not found in the hive', str(caught.exception))
+        with Memory(self.m.path, read_only=True) as reader:
+            self.assertEqual(api.hive(reader, {'id': swarm})['total'], 6)
+
+    def test_the_user_posts_answers_observes_closes_and_purges_as_workspace_user(self):
+        with self.assertRaises(InvalidRecord) as caught:
+            action(self.m, 'hive_post', {'swarm_id': 'swarm_missing', 'move': 'question', 'claim': 'Is there a swarm?', 'addressee': 'all'}, 'post-none')
+        self.assertEqual(str(caught.exception), workspace.HIVE_MISSING)
+        self.assertFalse(hive.path_for(self.m).exists())
+        swarm, ids = self.swarm()
+        answer = action(self.m, 'hive_post', {'swarm_id': swarm, 'move': 'answer', 'target': ids['question'],
+                                              'claim': 'The decoder refuses a file without a tag.'}, 'post-answer')
+        self.assertEqual((answer['move'], answer['agent_id'], answer['duplicate']), ('answer', 'workspace-user', False))
+        repeated = action(self.m, 'hive_post', {'swarm_id': swarm, 'move': 'answer', 'target': ids['question'],
+                                                'claim': 'The decoder refuses a file without a tag.'}, 'post-answer')
+        self.assertEqual((repeated['id'], repeated['duplicate']), (answer['id'], True))
+        question = action(self.m, 'hive_post', {'swarm_id': swarm, 'move': 'question', 'addressee': 'agent:codex-1',
+                                                'claim': 'Does the fix also cover the archive import?'}, 'post-question')
+        observation = action(self.m, 'hive_post', {'swarm_id': swarm, 'move': 'observation', 'claim': 'The utility module holds the only constant.',
+                                                   'bases': [{'kind': 'file', 'value': 'src/util.py:1'}], 'detail': ''}, 'post-observation')
+        value = api.hive(self.m, {'id': swarm})
+        entries = {entry['id']: entry for entry in value['entries']}
+        self.assertEqual(entries[answer['id']]['links_out'], [{'to': ids['question'], 'relation': 'answers'}])
+        self.assertEqual((entries[question['id']]['host'], entries[question['id']]['addressed_to']), ('workspace-user', 'agent:codex-1'))
+        self.assertEqual(entries[observation['id']]['bases'], [{'kind': 'file', 'value': 'src/util.py:1', 'verified': True, 'exit_code': None}])
+        user = next(agent for agent in value['agents'] if agent['agent_id'] == 'workspace-user')
+        self.assertEqual((user['host'], user['role'], user['phase']), ('workspace-user', 'user', 'open'))
+        # The user posts only question, answer and observation, and a refusal of the hive guides the correction.
+        with self.assertRaises(InvalidRecord) as caught:
+            action(self.m, 'hive_post', {'swarm_id': swarm, 'move': 'conclusion', 'claim': 'The fix is complete.'}, 'post-conclusion')
+        self.assertIn('question, an answer or an observation', str(caught.exception))
+        with self.assertRaises(hive.Refusal) as caught:
+            action(self.m, 'hive_post', {'swarm_id': swarm, 'move': 'observation', 'claim': 'no full stop here',
+                                         'bases': [{'kind': 'url', 'value': 'https://example.com'}]}, 'post-bad')
+        self.assertEqual(caught.exception.details['rule'], 'claim_sentence')
+        closed = action(self.m, 'hive_close', {'swarm_id': swarm, 'summary': 'The decoder reads the tag first.'}, 'close-swarm')
+        self.assertEqual((closed['main_memory'], list(closed['confirmed']), closed['duplicate']), ('recorded', [ids['conclusion']], False))
+        self.assertEqual(api.hive(self.m, {'id': swarm})['swarm']['state'], 'closed')
+        with self.assertRaises(InvalidRecord):
+            action(self.m, 'hive_post', {'swarm_id': swarm, 'move': 'question', 'claim': 'Is the swarm still open?', 'addressee': 'all'}, 'post-late')
+        with self.assertRaises(InvalidRecord):
+            action(self.m, 'hive_purge', {'closed_before_days': -1}, 'purge-negative')
+        purged = action(self.m, 'hive_purge', {'closed_before_days': 0}, 'purge-now')
+        self.assertEqual((purged['swarms'], purged['agents'], purged['entries']), (1, 3, 9))
+        self.assertEqual(api.hive(self.m, {})['total'], 0)
+        receipt = codex_host.read_receipt(self.m, purged['receipt_id'])
+        self.assertEqual((receipt['event_name'], receipt['payload']['entries']), ('HivePurged', 9))
+        self.assertEqual(live.user_authority_refusal(self.m, 'hive_purge', {'closed_before_days': 0}), live.HIVE_PURGE_STARTED_BY_ASSISTANT)
+        for operation in ('hive_post', 'hive_close'):
+            self.assertIsNone(live.user_authority_refusal(self.m, operation, {}))
+
+    def test_the_live_revision_follows_new_entries_joins_and_closes_of_the_hive(self):
+        with Viewer(self.m.path, 'hive-revision-token') as server:
+            empty = server.revision()
+            swarm, ids = self.swarm()
+            opened = server.revision()
+            self.assertNotEqual(opened, empty)
+            self.assertEqual(live.hive_state(self.m), [6, 1, 0, 2])
+            with hive.Hive(hive.path_for(self.m)) as store:
+                hive.log(store, swarm, 'claude-1', move='hypothesis', request_key='late', fields={
+                    'claim': 'The archive import uses another decoder.', 'detail': 'Import a tagged archive and compare it.'})
+            logged = server.revision()
+            self.assertNotEqual(logged, opened)
+            self.assertEqual(live.hive_state(self.m)[0], 7)
+            self.assertEqual(server.revision(), logged)
+            with hive.Hive(hive.path_for(self.m)) as store:
+                hive.close(store, swarm, summary='The swarm ends.', request_key='close')
+            self.assertNotEqual(server.revision(), logged)
+
+
 class ReadOnlyTests(unittest.TestCase):
     def test_every_endpoint_reads_a_database_without_optional_tables(self):
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as folder:
@@ -483,7 +658,7 @@ class ReadOnlyTests(unittest.TestCase):
                 episode = memory.start('Bare work', 'Check read paths.', 'action', 'Every read succeeds.')['id']
                 source = memory.source('bare', 'Bare source', 'A summary.', 'A body.', 'user')['id']
                 tables = memory.db.execute("SELECT name FROM sqlite_master ORDER BY name").fetchall()
-            params = {'work': {'id': episode}, 'lineage': {'id': episode}, 'record': {'id': source}}
+            params = {'work': {'id': episode}, 'lineage': {'id': episode}, 'record': {'id': source}, 'focus': {'id': episode}}
             with Memory(path, read_only=True) as reader:
                 for name, endpoint in api.ENDPOINTS.items():
                     with self.subTest(endpoint=name):
@@ -495,6 +670,7 @@ class ReadOnlyTests(unittest.TestCase):
                 self.assertEqual((api.agents(reader, {})['configured'], api.agents(reader, {})['hosts']), (False, []))
             with Memory(path, read_only=True) as reader:
                 self.assertEqual(reader.db.execute("SELECT name FROM sqlite_master ORDER BY name").fetchall(), tables)
+            self.assertFalse((path.parent / 'hive.sqlite').exists(), 'a read created the hive file')
 
 
 class LiveApiTests(unittest.TestCase):
@@ -534,7 +710,7 @@ class LiveApiTests(unittest.TestCase):
 
     def test_every_endpoint_is_served_with_a_revision_and_an_etag(self):
         params = {'work': '?id=' + self.ids['parser'], 'lineage': '?id=' + self.ids['old'], 'record': '?id=' + self.ids['source'],
-                  'run': '?id=' + self.ids['run']}
+                  'run': '?id=' + self.ids['run'], 'focus': '?id=' + self.ids['parser']}
         for name in api.ENDPOINTS:
             with self.subTest(endpoint=name):
                 status, etag, value = self.get('api/' + name + params.get(name, ''))

@@ -75,7 +75,7 @@ Opening `memory_module/viewer.html` directly shows an internal template with the
 
 | What you see | What it means |
 | --- | --- |
-| **Live** | The panel is connected and checks for saved changes every two seconds while the tab is visible. |
+| **Live** | The panel is connected and checks for saved changes every second while the tab is visible. |
 | **Update failed** | A refresh did not arrive. The panel keeps the last loaded content and retries automatically. |
 | **Updates are unavailable** | The local service has stopped. Run the opening command again. |
 | **Snapshot from a time** | You opened an offline export. It does not update and it cannot save changes. |

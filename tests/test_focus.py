@@ -164,15 +164,13 @@ class FocusFixture(unittest.TestCase):
                                subject='code', request_key='plan:' + title)
         return result['episode_id']
 
-    def fake_worker(self, host, worktree, folder, prompt):
-        given = json.loads((Path(folder) / 'input.json').read_text())
-        attempt = (given.get('focus') or {}).get('attempt')
-        self.prompts.append({'host': host, 'attempt': attempt, 'prompt': prompt})
-        if attempt in self.before:
-            self.before[attempt]()
-        spec = self.attempts.get((attempt, host)) or self.attempts.get(attempt) or self.workers.get(host) \
-            or change('VALUE = 2\n')
-        return [sys.executable, '-c', FOCUS_WORKER, json.dumps(spec), str(folder), host]
+    def fake_worker(self, host, worktree, folder, prompt, hive=None):
+        """Every attempt belongs to the swarm of its start (section 12.9), so the fake worker follows the hive protocol.
+
+        The worker is the one of tests/test_hive_workers.py. It is imported here because that module imports this one.
+        """
+        from tests.test_hive_workers import HiveFocusWorker
+        return HiveFocusWorker.fake_worker(self, host, worktree, folder, prompt, hive=hive)
 
     def fake_reviewer(self, host, project, folder, prompt):
         spec = {'review': True, **self.reviewers.get(host, {})}
@@ -984,6 +982,20 @@ class ParallelAndRankingTests(FocusFixture):
 
 
 class LearningTests(FocusFixture):
+    def test_the_read_only_snapshot_holds_the_focus_response_of_a_focused_work_item(self):
+        from memory_module import api, viewer
+        episode = self.prepared()
+        plain = self.m.start('A plain item', 'Keep the value.', 'code', 'The value stays.')['id']
+        self.attempts = {1: change('VALUE = 2\n')}
+        self.start(episode)
+        target = self.base / 'snapshot.html'
+        viewer.export_html(self.m, target, include_bodies=True)
+        text = target.read_text(encoding='utf-8').split('<script id="memory-data" type="application/json">')[1].split('</script>')[0]
+        responses = json.loads(text)['responses']
+        key = viewer.response_key('focus', {'id': episode})
+        self.assertEqual(responses[key], json.loads(json.dumps(api.focus(self.m, {'id': episode}))))
+        self.assertNotIn(viewer.response_key('focus', {'id': plain}), responses)
+
     def test_summary_proposes_one_lesson_from_the_passing_approach(self):
         episode = self.prepared()
         self.attempts = {1: change('VALUE = 3\n'), 2: change('VALUE = 2\n')}

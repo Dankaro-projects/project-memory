@@ -142,7 +142,7 @@ Both report the changed, missing and unreadable paths and whether more files rem
 
 The live service binds to `127.0.0.1`, uses a random capability in its address, validates the request host and origin, and retrieves through a read only connection. A separate write connection opens only for a validated action. The address and its credential stay in the private `.memory/viewer.json` file; do not share that address. No cloud service and no additional runtime package is involved.
 
-The page reads pages of records and loads source text on demand, and it checks for committed changes every two seconds while the tab is visible. An unchanged check receives an HTTP 304 response. The local process stops after ten minutes without a request; run `project-memory view` to resume it at the same address. Replacing the database file requires a restart, while ordinary writes do not. When an upgrade changes the version, setup opens the current panel at a new address and leaves the old one to exit on its own.
+The page reads pages of records and loads source text on demand, and it checks for committed changes every second while the tab is visible. An unchanged check receives an HTTP 304 response. The local process stops after ten minutes without a request; run `project-memory view` to resume it at the same address. Replacing the database file requires a restart, while ordinary writes do not. When an upgrade changes the version, setup opens the current panel at a new address and leaves the old one to exit on its own.
 
 ```sh
 project-memory view --output review.html --include-bodies --no-open

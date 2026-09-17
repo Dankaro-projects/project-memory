@@ -19,7 +19,8 @@
  *     header. Rejects with a Panel.Error with status, conflict (409) and details. Success triggers a poll.
  *     Panel.requestKey(prefix) is created when a form opens and reused for every submit of that draft.
  *   Panel.key(name, params), Panel.health(), Panel.snapshot, Panel.onRevision(fn(revision)).
- * Polling: live mode reads api/health every 2 seconds while visible. A new revision clears the response cache and
+ * Polling: live mode reads api/health one second after the previous read ends, while visible, so a change shows
+ *   within two seconds. A new revision clears the response cache and
  *   renders the current view and the open drawer again, keeping scroll position and focus (give interactive elements
  *   a stable id or data-key; keep filters in route params). Nothing renders while a form dialog is open. A failed
  *   update shows "Update failed" and an alert, and both clear on the next successful poll.
@@ -638,6 +639,9 @@ const Panel = (() => {
       setStatus("failed", error.message);
     } finally {
       state.polling = false;
+      // One timer at a time: the next read starts a second after this one ends, so a slow read never skips a change.
+      clearTimeout(state.pollTimer);
+      state.pollTimer = setTimeout(poll, 1000);
     }
   }
 
@@ -670,7 +674,6 @@ const Panel = (() => {
     setStatus("connecting");
     $("main").replaceChildren(empty("The control panel is connecting to the local server."));
     poll();
-    setInterval(poll, 2000);
   }
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot);
   else queueMicrotask(boot);

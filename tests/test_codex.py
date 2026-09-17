@@ -81,8 +81,8 @@ class CodexTests(unittest.TestCase):
         self.assertEqual(len(values),4);self.assertEqual(values[0]['error']['code'],-32700)
         self.assertTrue(values[2]['result']['isError']);self.assertEqual(len(values[3]['result']['tools']),3)
     def test_schema_rejection_names_missing_unexpected_and_nested_fields(self):
-        cases=[('memory_context',{'query':'test','session_id':'unsupported'},
-                {'arguments.subject':'missing','arguments.session_id':'unexpected'}),
+        cases=[('memory_context',{'query':'test','sprint_id':'unsupported'},
+                {'arguments.subject':'missing','arguments.sprint_id':'unexpected'}),
                ('memory_get',{'view':'records','ids':['source',3]}, {'arguments.ids[1]':'wrong_type'}),
                ('memory_write',{'operation':'source','request_key':'rejected','data':{
                    'source_key':'key','title':'Title','summary':'Summary','origin':'tool','unexpected':'value'}},

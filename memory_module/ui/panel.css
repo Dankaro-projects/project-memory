@@ -466,3 +466,5 @@ details > summary { cursor: pointer; font-weight: 700; }
   .graph { height: 320px; }
 }
 /* End of graphs.js rules. */
+.hive-thread { display: grid; gap: var(--dk-space-3); padding-left: var(--dk-space-3); border-left: 2px solid var(--dk-color-border); }
+.chip[data-tone] { color: var(--tone-text); background: var(--tone-bg); }

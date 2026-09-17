@@ -10,6 +10,9 @@ from unittest.mock import patch
 
 from memory_module import Memory, InvalidRecord, hosts, reviews
 
+WORK_SETTINGS = ('{"disableAllHooks":true,"sandbox":{"enabled":true,"failIfUnavailable":true,"autoAllowBashIfSandboxed":true,'
+                 '"allowUnsandboxedCommands":false}}')
+
 
 NOW = datetime(2026, 9, 15, 10, 0, tzinfo=timezone.utc)
 
@@ -111,11 +114,14 @@ class CommandTests(unittest.TestCase):
         with patch.dict(os.environ, {'PROJECT_MEMORY_CLAUDE_BIN': '/opt/fake/claude'}):
             args = hosts.work_command('claude', self.worktree, self.folder, 'Do the work.')
         expected = ['/opt/fake/claude', '-p', '--restricted', '--no-session-persistence', '--output-format', 'stream-json',
-                    '--verbose', '--permission-mode', 'dontAsk', '--setting-sources', '', '--settings', '{"disableAllHooks":true}',
+                    '--verbose', '--permission-mode', 'dontAsk', '--setting-sources', '', '--settings', WORK_SETTINGS,
                     '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}', '--disable-slash-commands',
                     '--tools', 'Read,Glob,Grep,Edit,Write,Bash', '--allowedTools', 'Read,Glob,Grep,Edit,Write,Bash',
                     '--json-schema', '{"type":"object"}', '--system-prompt', 'Do the work.']
         self.assertEqual(args, expected)
+        # Shell commands of a Claude worker run only inside the operating system sandbox, which limits writes to the worktree.
+        self.assertEqual(json.loads(WORK_SETTINGS), {'disableAllHooks': True, 'sandbox': {
+            'enabled': True, 'failIfUnavailable': True, 'autoAllowBashIfSandboxed': True, 'allowUnsandboxedCommands': False}})
         with patch.dict(os.environ, {'PROJECT_MEMORY_CODEX_BIN': '/opt/fake/codex'}):
             self.assertEqual(hosts.work_command('codex', self.worktree, self.folder, 'p')[0], '/opt/fake/codex')
 

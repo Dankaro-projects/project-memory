@@ -11,7 +11,9 @@ copies as sources, so the worker knows where the worktree is out of date.
 
 Boundaries: a worker may still write outside its worktree through absolute paths
 or shell commands, which is not detected here. Codex limits this with its
-workspace write sandbox; Claude Code has no such sandbox. Workers have no
+workspace write sandbox, and Claude Code runs shell commands of a worker only
+inside its operating system sandbox (hosts.WORK_SETTINGS). Neither sandbox stops
+a shell command from reading files outside the worktree. Workers have no
 network access. Work need not be source code: documents, workflow exports and
 any other files tracked in git are handled the same way.
 """
@@ -24,7 +26,7 @@ import subprocess
 import threading
 
 from .core import InvalidRecord, Conflict, Memory, USER_ACTOR, dumps, _text
-from . import codex_host, documents, hosts, planning, reviews
+from . import codex_host, documents, hive, hosts, planning, reviews
 from .reports import validate_work_report, work_schema
 from .shared import git, latest_review, latest_source, run_summary, settlement
 from .templates import COMMIT_IDENTITY
@@ -45,6 +47,19 @@ NETWORK_LIMITATION = ('The worker has no network access and no web search. Work 
                       'files and the included sources returns the result blocked or partial and names the missing information.')
 # Refusal shown when the project is in production and the caller is not the user. Delegated work and its
 # cross review still run in production; only the merge waits for the user.
+# A run of a swarm that did not name its own hive conclusion and checkpoint ends protocol_incomplete. Its diff is
+# kept and it can be reviewed and merged, but a focused problem never selects it and a relay never hands over from it.
+REVIEWABLE = ('completed', 'protocol_incomplete')
+HIVE_REPORT_FIELDS = ('hive_conclusion_id', 'hive_checkpoint_id')
+HIVE_BINDING_FIELDS = ('swarm_id', 'agent_id', 'role')
+HIVE_BINDING_REFUSED = ('The hive binding of a run needs swarm_id, agent_id and role as text, and accepts hypothesis with claim '
+                        'and detail, and handover as true or false.')
+PROTOCOL_INCOMPLETE = ('The worker did not complete the hive protocol. {problems} The changes are kept and can be reviewed, '
+                       'but a focused problem does not select this run.')
+HIVE_OPENED = ('Project Memory logged the orient entry {orient_id} and the hypothesis entry {hypothesis_id} of this agent, so '
+               'continue with observations.')
+HIVE_ORIENT_CLAIM = 'The goal of this agent is the objective and completion criterion of the delegated work item.'
+HANDOVER_LIMIT = 600
 PRODUCTION_MERGE_REFUSED = ('This project is in production, so bringing delegated work into the project is a user action. '
                             'Open the control panel and merge the run there. The work is prepared and waiting: its changes '
                             'and its work review are recorded, and the project files are unchanged.')
@@ -166,8 +181,13 @@ def work_sources(memory, plan_id, project, uncommitted):
     return result, captured
 
 
-def request_work(memory, episode_id, *, request_key, host=None, session_id='', max_seconds=1800, focus_attempt=None):
-    """Queue delegated work after checking the plan, the repository and the configured hosts."""
+def request_work(memory, episode_id, *, request_key, host=None, session_id='', max_seconds=1800, focus_attempt=None, hive=None):
+    """Queue delegated work after checking the plan, the repository and the configured hosts.
+
+    hive, when given, binds the run to an open swarm as {swarm_id, agent_id, role}, optionally with the
+    hypothesis {claim, detail} that Project Memory logs for the agent before it starts, and handover true
+    to give the agent the checkpoints of earlier agents of the swarm whose protocol completed.
+    """
     from .planning import latest
     from . import guards
     _text(request_key, 'request_key', 180)
@@ -180,6 +200,8 @@ def request_work(memory, episode_id, *, request_key, host=None, session_id='', m
         raise InvalidRecord('Run setup with --client codex or --client claude before delegating work.')
     if host is not None and host not in config['hosts']:
         raise InvalidRecord('Select a host that is configured for this project.', configured_hosts=config['hosts'])
+    if hive is not None:
+        hive = _hive_binding(memory, hive)
     _ensure_receipts(memory)
     reviews.ensure_run_columns(memory)
     prior = _prior(memory, request_key, episode_id, 'work')
@@ -248,6 +270,8 @@ def request_work(memory, episode_id, *, request_key, host=None, session_id='', m
             'limitations': limitations, 'execution_limit_seconds': max_seconds}
         if focus_attempt is not None:
             snapshot['focus'] = focus_attempt
+        if hive is not None:
+            snapshot['hive'] = hive
         _insert(memory, run_id=run_id, episode_id=episode_id, role='work', host=chosen, snapshot=snapshot,
                 request_key=request_key, session_id=session_id, workspace=WORKTREES + '/' + run_id, branch=branch,
                 event_name='DelegationRequested',
@@ -255,14 +279,166 @@ def request_work(memory, episode_id, *, request_key, host=None, session_id='', m
     return reviews.read(memory, run_id)
 
 
+def _hive_binding(memory, value):
+    """Check the hive binding of a run and that its swarm is open."""
+    allowed = set(HIVE_BINDING_FIELDS) | {'hypothesis', 'handover'}
+    if not isinstance(value, dict) or set(value) - allowed or any(not isinstance(value.get(name), str) for name in HIVE_BINDING_FIELDS):
+        raise InvalidRecord(HIVE_BINDING_REFUSED)
+    for name in HIVE_BINDING_FIELDS:
+        _text(value[name], name, 100)
+    opening = value.get('hypothesis')
+    if opening is not None and (not isinstance(opening, dict) or set(opening) != {'claim', 'detail'}
+                                or any(not isinstance(text, str) or not text.strip() for text in opening.values())):
+        raise InvalidRecord(HIVE_BINDING_REFUSED)
+    if type(value.get('handover', False)) is not bool:
+        raise InvalidRecord(HIVE_BINDING_REFUSED)
+    with hive.Hive(hive.path_for(memory), read_only=True) as store:
+        row = store.db.execute('SELECT state FROM swarms WHERE id=?', (value['swarm_id'],)).fetchone() if store.db else None
+    if row is None:
+        raise InvalidRecord(hive.SWARM_NOT_FOUND.format(swarm=value['swarm_id']))
+    if row['state'] != 'open':
+        raise InvalidRecord(f'The swarm {value["swarm_id"]} is closed, so a new run cannot join it. Open a new swarm for new work.')
+    return dict(value)
+
+
+def run_schema(snapshot):
+    """The work report schema of one run. A run of a swarm must also name its hive conclusion and checkpoint."""
+    schema = work_schema()
+    if snapshot.get('hive'):
+        for name in HIVE_REPORT_FIELDS:
+            schema['properties'][name] = {'type': 'string', 'maxLength': 40}
+            schema['required'].append(name)
+        schema['description'] += (' Name your own hive conclusion entry in hive_conclusion_id and your own hive checkpoint '
+                                  'entry in hive_checkpoint_id.')
+    return schema
+
+
+def run_report_validator(snapshot):
+    """The report validation of one run.
+
+    The hive fields of a run of a swarm are checked against the hive after the run, so a report that
+    lacks them is still read, and the run ends protocol_incomplete instead of failed.
+    """
+    if not snapshot.get('hive'):
+        return validate_work_report
+
+    def validate(report):
+        if not isinstance(report, dict):
+            return validate_work_report(report)
+        for name in HIVE_REPORT_FIELDS:
+            if name in report and (not isinstance(report[name], str) or len(report[name]) > 200):
+                raise InvalidRecord(f'{name} must be the identifier of a hive entry.')
+        validate_work_report({key: value for key, value in report.items() if key not in HIVE_REPORT_FIELDS})
+        return report
+    return validate
+
+
+def _cut(text, limit):
+    text = ' '.join(text.split())
+    return text if len(text) <= limit else text[:limit - 3] + '...'
+
+
+def _hive_opening(memory, store, run):
+    """Log the orient and hypothesis entries of the agent of a run. Return their identifiers, or the reason they are missing."""
+    snapshot = run['snapshot']
+    binding = snapshot['hive']
+    swarm_id, agent_id = binding['swarm_id'], binding['agent_id']
+    bases = [{'kind': 'source', 'value': entry['id']} for entry in (snapshot.get('sources') or [])[:3]]
+    if not bases:
+        return {'error': 'The work item has no source that an orient entry can cite.'}
+    try:
+        orient = hive.log(store, swarm_id, agent_id, move='orient', request_key=run['id'] + ':orient',
+                          fields={'claim': HIVE_ORIENT_CLAIM, 'bases': bases}, memory=memory)
+        stated = binding['hypothesis']
+        fields = {'claim': stated['claim'].strip(), 'detail': _cut(stated['detail'], hive.DETAIL_LIMIT)}
+        try:
+            entry = hive.log(store, swarm_id, agent_id, move='hypothesis', request_key=run['id'] + ':hypothesis', fields=fields)
+        except hive.Refusal as refusal:
+            if refusal.rule not in ('claim_length', 'claim_sentence', 'near_duplicate'):
+                raise
+            # A statement that is not one short sentence moves into the detail, under a claim that names the agent.
+            fields = {'claim': f'The agent {agent_id} tests the hypothesis that its work item records for this run.',
+                      'detail': _cut(stated['claim'] + ' ' + stated['detail'], hive.DETAIL_LIMIT)}
+            entry = hive.log(store, swarm_id, agent_id, move='hypothesis', request_key=run['id'] + ':hypothesis', fields=fields)
+    except (InvalidRecord, Conflict) as exc:
+        return {'error': str(exc)[:500]}
+    return {'orient_id': orient['id'], 'hypothesis_id': entry['id']}
+
+
+def _handover(memory, store, run):
+    """The latest checkpoints and open challenges of earlier agents of the swarm whose protocol completed, within 600 characters."""
+    binding = run['snapshot']['hive']
+    rows = store.db.execute('SELECT agent_id,run_id FROM agents WHERE swarm_id=? AND role=? AND agent_id!=? AND run_id IS NOT NULL '
+                            'ORDER BY joined_at, agent_id', (binding['swarm_id'], binding['role'], binding['agent_id'])).fetchall()
+    parts = []
+    for row in rows:
+        try:
+            earlier = reviews.read(memory, row['run_id'])
+        except InvalidRecord:
+            continue
+        if earlier['state'] != 'completed':
+            continue
+        resumed = hive.resume(store, binding['swarm_id'], row['agent_id'])
+        checkpoint = resumed['checkpoint']
+        text = f'Handover from {row["agent_id"]}:'
+        if checkpoint:
+            text += (f' checkpoint {checkpoint["id"]}, done: {checkpoint["done"]} Belief: {checkpoint["belief"]} '
+                     f'Open questions: {checkpoint["open_questions"]} Next step: {checkpoint["next_step"]}')
+        for challenge in resumed['challenges']:
+            text += f' Challenge {challenge["id"]} by {challenge["agent"]}: {challenge["claim"]}'
+        parts.append(text)
+    return _cut(' '.join(parts), HANDOVER_LIMIT) if parts else ''
+
+
+def hive_context(memory, run, worktree, metrics):
+    """Join the agent of a run to its swarm and return the hive section of its prompt.
+
+    The section holds the worker protocol, the entries Project Memory logged for the agent, the
+    composed hive context and, for a relay, the handover. The characters are recorded in the
+    metrics of the run and in the hive.
+    """
+    binding = run['snapshot']['hive']
+    swarm_id, agent_id = binding['swarm_id'], binding['agent_id']
+    with hive.Hive(hive.path_for(memory)) as store:
+        hive.join(store, swarm_id, agent_id=agent_id, role=binding['role'], host=run['host'], run_id=run['id'], worktree=worktree)
+        lines = [hive.WORKER_PROTOCOL]
+        opening = _hive_opening(memory, store, run) if binding.get('hypothesis') else None
+        if opening and 'hypothesis_id' in opening:
+            lines.append(HIVE_OPENED.format(**opening))
+        composed = hive.composition(store, swarm_id, agent_id, memory=memory)
+        lines.append(composed['text'])
+        handover = _handover(memory, store, run) if binding.get('handover') else ''
+        if handover:
+            lines.append(handover)
+        hive.record_composition(store, swarm_id, agent_id, composed['characters'] + len(handover), run_id=run['id'])
+    metrics['hive'] = {'swarm_id': swarm_id, 'agent_id': agent_id, 'opening': opening,
+                       'composed_characters': composed['characters'], 'handover_characters': len(handover),
+                       'omitted': composed['omitted']}
+    return '\n'.join(lines) + '\n'
+
+
+def protocol_problems(memory, binding, report):
+    """The sentences that say why a run of a swarm did not complete the hive protocol, or an empty list."""
+    missing = [name for name in HIVE_REPORT_FIELDS if not (report or {}).get(name)]
+    if missing:
+        return ['The work report does not name ' + ' and '.join(missing) + '.']
+    try:
+        with hive.Hive(hive.path_for(memory), read_only=True) as store:
+            result = hive.check_completion(store, binding['swarm_id'], binding['agent_id'],
+                                           conclusion_id=report['hive_conclusion_id'], checkpoint_id=report['hive_checkpoint_id'])
+    except (InvalidRecord, sqlite3.Error) as exc:
+        return ['Project Memory could not read the hive: ' + str(exc)[:300]]
+    return result['problems']
+
+
 def launch(memory, run):
     """Start the background worker for a queued run."""
     reviews.launch(memory, run)
 
 
-def work_command(host, worktree, folder, prompt):
+def work_command(host, worktree, folder, prompt, hive=None):
     """Build the host command line for delegated work. Tests replace this function."""
-    return hosts.work_command(host, worktree, folder, prompt)
+    return hosts.work_command(host, worktree, folder, prompt, hive=hive)
 
 
 def worker_snapshot(snapshot, rule_ids):
@@ -281,7 +457,7 @@ def worker_snapshot(snapshot, rule_ids):
             'rules_in_instructions': carried}
 
 
-def worker_prompt(snapshot, deadline, timeout, instructions=None):
+def worker_prompt(snapshot, deadline, timeout, instructions=None, hive_context=None):
     """The instructions the worker receives with its snapshot.
 
     `instructions` is the composed text of the worker role: the base text in
@@ -295,7 +471,7 @@ def worker_prompt(snapshot, deadline, timeout, instructions=None):
                'Allowed paths, relative to the working directory: ' + ', '.join(snapshot['paths']) + '. '
                'Complete every checklist item and respect every constraint. '
                'Return only JSON that matches the schema. ')
-    prompt += work_schema()['description'] + '\n'
+    prompt += run_schema(snapshot)['description'] + '\n'
     prompt += f'The worktree holds the base commit {snapshot["base_commit"]}. '
     outside = snapshot.get('uncommitted_outside_paths') or []
     if outside:
@@ -319,6 +495,8 @@ def worker_prompt(snapshot, deadline, timeout, instructions=None):
         for line, limit in lines:
             line = ' '.join(line.splitlines())
             prompt += (line if len(line) <= limit else line[:limit - 3] + '...') + '\n'
+    if hive_context:
+        prompt += hive_context
     prompt += (f'The hard deadline is {deadline.isoformat()} ({timeout} seconds total). '
                f'Reserve the final {min(60, timeout / 4):g} seconds to return the report with result partial when work remains.\n')
     return prompt
@@ -405,31 +583,43 @@ def _execute_work(memory, run, timeout):
             workspace.parent.mkdir(parents=True, exist_ok=True)
             git(project, 'worktree', 'add', '-q', '-b', run['branch'], str(workspace), snapshot['base_commit'])
             created = True
-            (folder / 'schema.json').write_text(dumps(work_schema()), encoding='utf-8')
+            (folder / 'schema.json').write_text(dumps(run_schema(snapshot)), encoding='utf-8')
             instructions = reviews.compose_instructions(memory, run, metrics)
             given = worker_snapshot(snapshot, instructions['rule_ids'])
-            prompt = worker_prompt(given, deadline, timeout, instructions=instructions['text'])
+            cwd = workspace / snapshot.get('repository_prefix', '')
+            binding = snapshot.get('hive')
+            context = hive_context(memory, run, str(cwd), metrics) if binding else None
+            prompt = worker_prompt(given, deadline, timeout, instructions=instructions['text'], hive_context=context)
             packet = prompt + dumps(given)
             (folder / 'input.json').write_text(dumps(given), encoding='utf-8')
             (folder / 'prompt.txt').write_text(packet if run['host'] == 'codex' else dumps(given), encoding='utf-8')
             metrics['input_characters'] = len(packet)
-            cwd = workspace / snapshot.get('repository_prefix', '')
-            args = work_command(run['host'], str(cwd), folder, prompt)
+            if binding:
+                server = {'hive': str(hive.path_for(memory)), 'db': str(memory.path),
+                          **{name: binding[name] for name in HIVE_BINDING_FIELDS}}
+                args = work_command(run['host'], str(cwd), folder, prompt, hive=server)
+            else:
+                args = work_command(run['host'], str(cwd), folder, prompt)
         stopped, message = supervisor.run(args, cwd=str(cwd), folder=folder)
         if stopped:
             state, error = stopped, message
-    except (OSError, ValueError, InvalidRecord, subprocess.SubprocessError) as exc:
+    except (OSError, ValueError, InvalidRecord, Conflict, sqlite3.Error, subprocess.SubprocessError) as exc:
         error = str(exc)
         metrics['termination_reason'] = 'worker_error'
     finally:
         supervisor.stop()
         outside = []
         with heartbeat(memory, run_id):
-            report = reviews.read_report(run, folder, log, supervisor, metrics, validate_work_report)
+            report = reviews.read_report(run, folder, log, supervisor, metrics, run_report_validator(snapshot))
             if created:
                 outside = _store_changes(memory, run, folder, metrics)
         found = hosts.run_state(run['host'], metrics, report, missing_report='The worker did not return a report.',
                                 exit_message='The host work process exited unsuccessfully. Inspect its private event and stderr logs.')
+        if snapshot.get('hive') and found and found[0] == 'completed':
+            problems = protocol_problems(memory, snapshot['hive'], report)
+            metrics['hive_protocol'] = {'complete': not problems, 'problems': problems}
+            if problems:
+                found = ('protocol_incomplete', PROTOCOL_INCOMPLETE.format(problems=' '.join(problems)), None)
         check_files = set((snapshot.get('focus') or {}).get('check_files', []))
         changed_check = [path for path in metrics['changed_files'] if path in check_files]
         support = []
@@ -499,7 +689,7 @@ def after_work(memory, run_id):
         if run['state'] == 'host_unavailable':
             cleanup(project, project / run['workspace'], run['branch'])
             follow = reroute(memory, run)
-        elif run['state'] == 'completed' and metrics.get('changed_files'):
+        elif run['state'] in REVIEWABLE and metrics.get('changed_files'):
             follow = request_review(memory, run_id, request_key=run_id + ':work-review')
         elif run['state'] == 'completed':
             _receipt(memory, run, 'DelegationCleanedUp',
@@ -539,7 +729,7 @@ def start_missing_reviews(memory, *, limit=10):
         return []
     from .focus import settle
     settle(memory)
-    rows = memory.db.execute("""SELECT w.id FROM review_runs w WHERE w.role='work' AND w.state='completed'
+    rows = memory.db.execute("""SELECT w.id FROM review_runs w WHERE w.role='work' AND w.state IN ('completed','protocol_incomplete')
         AND NOT EXISTS (SELECT 1 FROM review_runs r WHERE r.parent_run=w.id AND r.role='work_review')
         ORDER BY w.rowid LIMIT ?""", (limit,)).fetchall()
     started = []
@@ -561,6 +751,14 @@ def start_missing_reviews(memory, *, limit=10):
     return started
 
 
+def _rerouted_snapshot(run, branch, host):
+    """The snapshot of a rerouted run. An agent of a swarm joins once with one host, so the new run joins under a new name."""
+    snapshot = {**run['snapshot'], 'branch': branch, 'rerouted_from': run['id']}
+    if snapshot.get('hive'):
+        snapshot['hive'] = {**snapshot['hive'], 'agent_id': (snapshot['hive']['agent_id'] + '-' + host)[:100]}
+    return snapshot
+
+
 def reroute(memory, run):
     """Create one new work run on another available host for a run whose host was unavailable."""
     if run['parent_run'] or run['role'] != 'work':
@@ -580,7 +778,7 @@ def reroute(memory, run):
         run_id = reviews.new_run_id()
         branch = branch_name(run['episode_id'], run_id)
         _insert(memory, run_id=run_id, episode_id=run['episode_id'], role='work', host=host,
-                snapshot={**run['snapshot'], 'branch': branch, 'rerouted_from': run['id']},
+                snapshot=_rerouted_snapshot(run, branch, host),
                 request_key=run['id'] + ':reroute', session_id=run['session_id'], parent_run=run['id'],
                 workspace=WORKTREES + '/' + run_id, branch=branch, event_name='DelegationRerouted',
                 details={'from_host': run['host'], 'to_host': host, 'reason': (run['metrics'] or {}).get('host_unavailable')})
@@ -599,7 +797,7 @@ def request_review(memory, work_run_id, *, request_key, max_seconds=900):
     if type(max_seconds) is not int or not 30 <= max_seconds <= 900:
         raise InvalidRecord('Review time must be between 30 and 900 seconds.')
     work = reviews.read(memory, work_run_id)
-    if work['role'] != 'work' or work['state'] != 'completed':
+    if work['role'] != 'work' or work['state'] not in REVIEWABLE:
         raise InvalidRecord('A work review needs a completed delegated work run.')
     config = reviews.configured(memory)
     if not config:
@@ -724,7 +922,7 @@ def retry_review(memory, run_id, *, request_key, max_seconds=900):
         if run['role'] != 'work_review' or run.get('parent_run') != run_id:
             raise Conflict('The review request key belongs to different work.')
         return run
-    if work['state'] != 'completed':
+    if work['state'] not in REVIEWABLE:
         raise InvalidRecord('Only a completed delegated run can be reviewed. This run is ' + work['state'].replace('_', ' ') + '.')
     if settlement(memory, run_id):
         raise InvalidRecord('This delegated run was already merged or discarded, so it needs no new review.')
@@ -807,7 +1005,7 @@ def merge(memory, run_id, *, request_key, actor, override_reason=None):
         return {**prior['payload'], 'merged': True, 'duplicate': True}
     merge_authority(memory, actor)
     run = _work_run(memory, run_id)
-    if run['state'] != 'completed':
+    if run['state'] not in REVIEWABLE:
         raise InvalidRecord('Only a completed delegated run can be merged. This run is ' + run['state'].replace('_', ' ') + '.')
     if not (run['metrics'] or {}).get('changed_files'):
         raise InvalidRecord('This delegated run changed no files, so there is nothing to merge.')

@@ -45,6 +45,9 @@ STARTED_BY_ASSISTANT = ('This control panel was started from inside an assistant
 FOCUS_STARTED_BY_ASSISTANT = ('This control panel was started from inside an assistant session, so it does not set the check of a '
                               'focused problem or start its attempts, because the check runs a command on this computer. Start '
                               'the control panel from your own terminal with project-memory view and record the action there.')
+HIVE_PURGE_STARTED_BY_ASSISTANT = ('This control panel was started from inside an assistant session, so it does not purge swarms '
+                                   'of the hive, because a purge removes their entries for good. Start the control panel from '
+                                   'your own terminal with project-memory view and purge the swarms there.')
 URL_WITHHELD = ('The control panel address is not printed inside an assistant session, because the address carries the '
                 'access key of the panel. The browser was asked to open it. Run project-memory view in your own terminal '
                 'to print the address.')
@@ -71,6 +74,8 @@ def user_authority_refusal(memory, operation, data):
         return STARTED_BY_ASSISTANT
     if operation in ('focus_check', 'focus_start'):
         return FOCUS_STARTED_BY_ASSISTANT
+    if operation == 'hive_purge':
+        return HIVE_PURGE_STARTED_BY_ASSISTANT
     return None
 
 
@@ -80,6 +85,28 @@ def html():
     data = {'live': True, 'project': 'Project Memory', 'exported_at': '', 'requirements': [], 'records': [], 'pending': [],
             'scope': {}, 'source_bodies_included': False, 'responses': {}}
     return render(html_template(), data, live=True).encode()
+
+
+def hive_state(memory):
+    """The state of the hive beside the project database that the revision of the panel follows.
+
+    The hive is a second database, so a new entry does not change the data version of the project
+    database. The state holds the highest entry sequence, which grows with every entry, and the
+    counts of swarms, closed swarms and agents, which change when a swarm opens, closes or is purged
+    or when an agent joins. It is None while the hive file does not exist.
+    """
+    from .hive import Hive, max_seq, path_for
+    path = path_for(memory)
+    if not path.exists():
+        return None
+    try:
+        with Hive(path, read_only=True) as hive:
+            swarms, closed = hive.db.execute("SELECT count(*),count(CASE WHEN state!='open' THEN 1 END) FROM swarms").fetchone()
+            agents = hive.db.execute('SELECT count(*) FROM agents').fetchone()[0]
+            return [max_seq(hive), swarms, closed, agents]
+    except sqlite3.Error as exc:
+        # A hive that cannot be read yet is retried on the next request, and the reason becomes part of the state.
+        return ['hive_unavailable', str(exc)]
 
 
 def file_fingerprint(root):
@@ -180,6 +207,7 @@ class Viewer(ThreadingHTTPServer):
             except OSError:
                 stats.append((str(path), None))
         stats.append(('project', self.project_state()))
+        stats.append(('hive', hive_state(self.memory)))
         from .reviews import exists
         # Unavailability expires with time, without a database write.
         stats.append(('hosts', [item['available'] for item in api.host_overview(self.memory)['hosts']]))

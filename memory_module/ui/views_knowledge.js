@@ -5,6 +5,8 @@
  * {promotion_id, status}, machine_rule {rule_id}, and reassess {decision_id, outcome_id} next to each counted recurrence.
  * A snapshot holds records {view, limit: 100} for each view, so the Records view filters and pages those in the
  * browser. A snapshot carries no machine response, because the machine memory stays on the computer that holds it.
+ * The Hive view lists the swarms and shows one swarm as a timeline; it opens hive_post {swarm_id, move, target},
+ * hive_close {swarm_id} and hive_purge {}.
  */
 (() => {
   "use strict";
@@ -540,4 +542,143 @@
         h("p", { class: "muted" }, "The registry stays on this computer. It is not part of an export and no agent reads it.")));
       if (decided.length) put(container, section("Decided proposals", counted(decided.length, "proposal"), grid(decided, (item) => promotionCard(item, ctx))));
   } });
+  // Hive: the shared working record of agents that work together. The list shows every swarm, and a swarm opens as a
+  // conversation timeline in which replies and answers sit under the entry they reply to. Challenges, supports and
+  // citations are labelled links to their entry. The move and agent filters live in the route, so a new revision keeps them.
+  const HIVE_MOVES = ["orient", "hypothesis", "observation", "challenge", "support", "question", "answer", "conclusion", "pattern", "checkpoint"];
+  const HOSTS = { codex: ["in_progress", "Codex"], claude: ["review", "Claude"], "workspace-user": ["guarded", "User"], session: ["neutral", "Session"] };
+  const NESTED = ["replies_to", "answers"];
+  const LINKS_OUT = { replies_to: "Replies to", answers: "Answers", challenges: "Challenges", supports: "Supports", cites: "Cites" };
+  const LINKS_IN = { challenges: "Challenged by", supports: "Supported by", cites: "Cited by" };
+  // Beyond this depth a reply follows its target at the same depth, so a long exchange stays readable on a phone.
+  const THREAD_DEPTH = 2;
+  const hostTone = (host) => (HOSTS[host] || ["neutral"])[0];
+  const hostBadge = (host) => h("span", { class: "badge", dataset: { tone: hostTone(host), state: "host-" + host } }, (HOSTS[host] || [null, P.words(host)])[1]);
+  const swarmBadge = (swarm) => P.badge(swarm.state === "open" ? "active" : "done", P.words(swarm.state));
+  function addressee(value) {
+    if (value === "user") return "Addressed to the user";
+    if (value === "all") return "Addressed to every agent";
+    const [kind, name] = value.split(/:(.*)/s);
+    return kind === "role" ? "Addressed to the " + name + " role" : "Addressed to agent " + name;
+  }
+  function basisChip(basis) {
+    if (basis.kind !== "command") return h("span", { class: "chip mono" }, P.words(basis.kind) + " " + basis.value);
+    if (!basis.verified) return h("span", { class: "chip mono", dataset: { tone: "review", state: "unverified-command" } }, "Unverified command " + basis.value);
+    return h("span", { class: "chip mono", dataset: { tone: basis.exit_code === 0 ? "ready" : "blocked", state: "verified-command" } },
+      "Verified command " + basis.value + ", exit code " + basis.exit_code);
+  }
+  // A link moves the reader to its entry. An entry hidden by a filter is named in a message instead.
+  function entryLink(label, id, byId, owner) {
+    const other = byId.get(id);
+    return button(label + " " + id + (other ? " by " + other.agent : ""), "hive-link-" + owner.id + "-" + label + "-" + id, () => {
+      const node = document.getElementById("hive-" + id);
+      if (!node) return P.toast("The entry " + id + " is hidden by the filters.");
+      node.scrollIntoView({ block: "center" });
+      node.focus({ preventScroll: true });
+    }, "small quiet");
+  }
+  function hiveEntry(entry, view, children) {
+    const { byId, swarm, ctx, revealing } = view, data = entry.data || {};
+    const outgoing = entry.links_out.filter((link) => LINKS_OUT[link.relation]), incoming = entry.links_in.filter((link) => LINKS_IN[link.relation]);
+    const answered = entry.links_in.some((link) => link.relation === "answers");
+    const canAnswer = entry.move === "question" && !answered && ctx.canEdit && swarm.state === "open" && entry.host !== "workspace-user";
+    return h("article", { class: "card", id: "hive-" + entry.id, tabindex: "-1", dataset: { key: "hive-entry-" + entry.id, move: entry.move, host: entry.host || "unknown" },
+      style: { borderLeft: "3px solid " + P.colors[hostTone(entry.host)] } },
+    h("div", { class: "row" }, hostBadge(entry.host), h("strong", null, entry.agent), P.chip(P.words(entry.move)),
+      entry.confidence ? P.chip(P.words(entry.confidence) + " confidence") : null,
+      entry.confirmed ? P.badge("confirmed", "Confirmed") : null, entry.disputed ? P.badge("blocked", "Disputed") : null,
+      entry.move === "question" ? P.badge(answered ? "ready" : "review", answered ? "Answered" : "Open question") : null,
+      revealing.has(entry.id) ? P.chip("Ends the blind phase of " + entry.agent) : null,
+      h("span", { class: "muted" }, entry.id + ", " + P.date(entry.created_at))),
+    entry.move === "checkpoint" ? kv([["Done", data.done], ["Belief", data.belief], ["Open questions", data.open_questions], ["Next step", data.next_step]])
+      : h("p", null, entry.claim),
+    entry.detail ? P.markdown(entry.detail) : null,
+    entry.addressed_to ? h("p", { class: "muted" }, addressee(entry.addressed_to) + ".") : null,
+    entry.bases.length ? h("div", { class: "row" }, entry.bases.map(basisChip)) : null,
+    outgoing.length || incoming.length ? h("div", { class: "row" }, outgoing.map((link) => entryLink(LINKS_OUT[link.relation], link.to, byId, entry)),
+      incoming.map((link) => entryLink(LINKS_IN[link.relation], link.from, byId, entry))) : null,
+    entry.confirmed ? h("p", { class: "muted" }, "Confirmed: " + entry.confirmed) : null,
+    entry.disputed ? h("p", { class: "muted" }, "Disputed: " + entry.disputed) : null,
+    canAnswer ? h("div", { class: "row" }, P.formButton("Answer", "hive_post", { swarm_id: swarm.id, move: "answer", target: entry.id }, { class: "small" })) : null,
+    children.length ? h("div", { class: "hive-thread" }, children) : null);
+  }
+  function timeline(entries, view) {
+    const shown = new Set(entries.map((entry) => entry.id)), replies = new Map(), roots = [];
+    for (const entry of entries) {
+      const parent = entry.links_out.find((link) => NESTED.includes(link.relation) && shown.has(link.to));
+      if (!parent) { roots.push(entry); continue; }
+      if (!replies.has(parent.to)) replies.set(parent.to, []);
+      replies.get(parent.to).push(entry);
+    }
+    const thread = (entry, depth) => {
+      const below = replies.get(entry.id) || [];
+      if (depth < THREAD_DEPTH) return [hiveEntry(entry, view, below.flatMap((reply) => thread(reply, depth + 1)))];
+      return [hiveEntry(entry, view, []), ...below.flatMap((reply) => thread(reply, depth))];
+    };
+    return h("div", { class: "stack", dataset: { key: "hive-timeline" } }, roots.flatMap((entry) => thread(entry, 0)));
+  }
+  function agentRow(agent, swarm) {
+    const blind = agent.phase === "blind";
+    const note = !swarm.blind ? "This swarm has no blind phase." : agent.host === "workspace-user" ? "The user sees every entry."
+      : blind ? "It has not posted its hypothesis, so the hypotheses, conclusions and patterns of other agents stay hidden from it."
+        : "Its view opened on " + P.date(agent.revealed_at) + ", when it posted its hypothesis.";
+    return h("div", { class: "stack", dataset: { key: "hive-agent-" + agent.agent_id, phase: agent.phase } },
+      h("div", { class: "row" }, hostBadge(agent.host), h("strong", null, agent.agent_id), P.chip(P.words(agent.role) + " role"),
+        h("span", { class: "badge", dataset: { tone: blind ? "review" : "ready", state: agent.phase } }, blind ? "Blind phase" : "Open phase"),
+        h("span", { class: "muted" }, P.count(agent.entries, "entry", "entries"))),
+      h("p", { class: "muted" }, note));
+  }
+  async function hiveSwarm(container, params, ctx) {
+    const data = await P.get("hive", { id: params.swarm });
+    const { swarm, agents } = data, open = swarm.state === "open";
+    const byId = new Map(data.entries.map((entry) => [entry.id, entry]));
+    const entries = data.entries.filter((entry) => (!params.move || entry.move === params.move) && (!params.agent || entry.agent === params.agent));
+    const revealing = new Set();
+    if (swarm.blind) {
+      const seen = new Set();
+      for (const entry of data.entries) if (entry.move === "hypothesis" && !seen.has(entry.agent)) { seen.add(entry.agent); revealing.add(entry.id); }
+    }
+    const filter = (name) => (value) => P.go("hive", { ...params, [name]: value });
+    const context = { swarm_id: swarm.id };
+    put(container, h("div", { class: "row" }, button("All swarms", "hive-back", () => P.go("hive"), "small")),
+      sentence(`${swarm.title} is ${open ? "open" : "closed"} with ${P.count(data.total, "entry", "entries")} from ${P.count(agents.length, "agent")}.`),
+      h("p", null, swarm.purpose),
+      h("div", { class: "row" }, swarmBadge(swarm), P.chip(P.words(swarm.kind) + " swarm"), P.chip("Opened " + P.date(swarm.opened_at)),
+        swarm.closed_at ? P.chip("Closed " + P.date(swarm.closed_at)) : null,
+        swarm.episode_id ? button("Open the work item", "hive-work", (trigger) => P.openWork(swarm.episode_id, trigger), "small quiet") : null),
+      swarm.summary ? h("p", { class: "muted" }, "Summary: " + swarm.summary) : null,
+      ctx.canEdit && open ? h("div", { class: "row", dataset: { key: "hive-actions" } },
+        P.formButton("Ask a question", "hive_post", { ...context, move: "question" }, { class: "small" }),
+        P.formButton("Post an observation", "hive_post", { ...context, move: "observation" }, { class: "small" }),
+        P.formButton("Close the swarm", "hive_close", context, { class: "small" })) : null,
+      section("Agents", counted(agents.length, "agent"), listOf(agents, (agent) => agentRow(agent, swarm), "No agent has joined this swarm yet.")),
+      section("Timeline", h("span", { class: "muted" }, P.count(entries.length, "entry", "entries")),
+        h("div", { class: "toolbar" },
+          P.filterField("select", "hive-move", "Move", params.move || "", filter("move"), [["", "All moves"], ...HIVE_MOVES.map((move) => [move, P.words(move)])]),
+          P.filterField("select", "hive-agent", "Agent", params.agent || "", filter("agent"), [["", "All agents"], ...agents.map((agent) => [agent.agent_id, agent.agent_id])])),
+        entries.length ? timeline(entries, { byId, swarm, ctx, revealing })
+          : P.empty(data.total ? "No entry matches the filters." : "No entry is recorded in this swarm yet."),
+        data.more ? h("p", { class: "muted" }, `The first ${P.count(data.entries.length, "entry", "entries")} of ${data.total} are shown.`) : null));
+  }
+  async function hiveList(container, ctx) {
+    const data = await P.get("hive", { limit: "50" });
+    const swarms = data.swarms || [], opened = swarms.filter((swarm) => swarm.state === "open").length;
+    put(container, sentence(data.total ? `${P.count(data.total, "swarm")} ${isAre(data.total)} recorded, and ${opened} ${isAre(opened)} open.`
+      : "No swarm is recorded yet. A swarm opens when agents start to work together on one problem."));
+    if (ctx.canEdit && swarms.some((swarm) => swarm.state !== "open")) {
+      put(container, (P.health() || {}).assistant_started
+        ? h("div", { class: "notice", dataset: { key: "hive-purge-refused" } }, h("p", null, "This control panel was started from inside an assistant session, so it does not purge swarms. Start the control panel from your own terminal with project-memory view to purge closed swarms."))
+        : h("div", { class: "row" }, P.formButton("Purge closed swarms", "hive_purge", {}, { class: "small danger" })));
+    }
+    put(container, swarms.length ? grid(swarms, (swarm) => h("article", { class: "card", dataset: { key: "hive-swarm-" + swarm.id } },
+      h("h3", null, h("span", null, swarm.title), swarmBadge(swarm)),
+      h("p", { class: "muted" }, swarm.purpose),
+      h("div", { class: "row" }, P.chip(P.words(swarm.kind) + " swarm"), P.chip(P.count(swarm.entries, "entry", "entries")), swarm.blind ? P.chip("Blind phase first") : null),
+      h("div", { class: "row" }, swarm.agents.map((agent) => h("span", { class: "row" }, hostBadge(agent.host), agent.agent_id))),
+      Object.keys(swarm.moves).length ? h("p", { class: "muted" }, "Entries by move: " + Object.entries(swarm.moves).map(([move, n]) => P.lower(P.words(move)) + " " + n).join(", ") + ".") : null,
+      h("div", { class: "row" }, button("Open the timeline", "hive-open-" + swarm.id, () => P.go("hive", { swarm: swarm.id }), "small primary")))) : null,
+    data.total > swarms.length ? h("p", { class: "muted" }, `The ${swarms.length} newest swarms are shown.`) : null);
+  }
+  P.registerView("hive", { title: "Hive", section: "Oversight",
+    render: (container, params, ctx) => (params.swarm ? hiveSwarm(container, params, ctx) : hiveList(container, ctx)) });
 })();

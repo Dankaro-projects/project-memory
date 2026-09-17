@@ -26,6 +26,7 @@ The script prints JSON with the project, the database path, the record ids and,
 with --serve, the URL of the live control panel.
 """
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -36,7 +37,7 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from memory_module import Memory, architecture, codex_host, graph, hosts, machine, reviews, templates  # noqa: E402
+from memory_module import Memory, architecture, codex_host, focus, graph, hive, hosts, machine, reviews, templates  # noqa: E402
 from memory_module.planning import latest, save  # noqa: E402
 from memory_module.workspace import action  # noqa: E402
 
@@ -193,6 +194,16 @@ ENRICH_LEAD = workflow('Enrich lead', 'enrich-lead', [
     n8n_node('2', 'Update HubSpot contact', 'n8n-nodes-base.hubspot', 240, {'resource': 'contact', 'operation': 'upsert'},
              {'hubspotApi': {'id': 'cred-hubspot', 'name': 'HubSpot private app'}}),
 ], chain('When called by another workflow', 'Update HubSpot contact'))
+
+# The focused problem of the --focus option. The check file is written into the fixture project.
+FOCUS_PROBLEM = 'The export drops the time zone of every date, so the sales team reads the wrong delivery day.'
+FOCUS_HYPOTHESES = [
+    ('The date formatter ignores the time zone of the parsed value.', 'Format every date with its own offset.'),
+    ('The parser converts every date to local time before the export reads it.', 'Keep the offset when the parser reads a date.'),
+    ('The export template truncates the date to its first ten characters.', 'Write the full date string in the template.'),
+]
+FOCUS_CHECK_TEXT = ('import unittest\n\n\nclass ExportFormatTests(unittest.TestCase):\n'
+                    '    def test_dates_keep_the_time_zone(self):\n        self.assertTrue(True)\n')
 
 KINDS = {
     'product': {
@@ -477,10 +488,10 @@ class Builder:
                                                   'host': 'codex'})
         self.ids['scope_block'] = receipt['id'] if isinstance(receipt, dict) else receipt
 
-    def run_row(self, role, host, state, *, parent=None, report, metrics, snapshot_extra=None, run_id=None):
+    def run_row(self, role, host, state, *, parent=None, report, metrics, snapshot_extra=None, run_id=None, episode_id=None):
         """Insert one finished run. Finished rows are immutable, so every value is final at insert."""
         run_id = run_id or 'check_' + uuid.uuid4().hex
-        story = self.ids['story']
+        story = episode_id or self.ids['story']
         snapshot = {'role': role, 'project': str(self.root), 'paths': self.spec['story']['paths'],
                     'independence': 'other_host', **(snapshot_extra or {})}
         now = self.m.now()
@@ -525,6 +536,130 @@ class Builder:
         hosts.mark_unavailable(self.m, 'claude', 'The fixture records a usage limit for this host.')
         self.ids.update(work_run=work, work_review=review_id, diff_source=source['id'])
 
+    def focused_problem(self):
+        """A focused problem whose relay start failed its check in attempt 1 and passed in attempt 2.
+
+        The check is written as the user would set it in the panel. Check results, hypothesis results and
+        receipts are written under the reserved actor, as focus.judge writes them after it runs the check.
+        """
+        episode = self.ids['chain_0']
+        check_path = 'tests/test_export_format.py'
+        (self.root / 'tests').mkdir(exist_ok=True)
+        (self.root / check_path).write_text(FOCUS_CHECK_TEXT, encoding='utf-8')
+        proposed = focus.propose(self.m, episode, problem=FOCUS_PROBLEM, actor=AGENT, request_key='fixture:focus:propose',
+                                 hypotheses=[dict(statement=statement, approach=approach) for statement, approach in FOCUS_HYPOTHESES])
+        plan = self.m.read(latest(self.m, episode, 'work_plan')['id'])
+        check = {'command': ['python3', '-m', 'unittest', 'tests.test_export_format'], 'timeout_seconds': 120,
+                 'files': [{'path': check_path, 'sha256': hashlib.sha256(FOCUS_CHECK_TEXT.encode()).hexdigest()}],
+                 'set_at': self.m.now()}
+        save(self.m, 'work_plan', episode_id=episode, expected_version=self.m.episode(episode)['version'],
+             payload={**plan['payload'], 'focus': {**proposed['focus'], 'check': check}}, actor=USER,
+             evidence=[{'source_id': item['source_id'], 'reason': item['reason']} for item in plan['evidence']],
+             links=plan['links'], request_key='fixture:focus:check')
+        first, second, third = proposed['hypothesis_ids']
+        runs = {}
+        for attempt, host, hypothesis_id, lines in ((1, 'codex', first, 14), (2, 'claude', second, 6)):
+            usage = [{'input_tokens': 1800, 'output_tokens': 420}] if host == 'codex' else {'input_tokens': 2100, 'output_tokens': 380}
+            report = {'summary': f'Attempt {attempt} changed the export format.', 'result': 'complete',
+                      'changed_files': ['src/app/export.py'], 'checks_run': [], 'notes': '', 'lesson_proposals': []}
+            runs[attempt] = self.run_row('work', host, 'completed', episode_id=episode, report=report,
+                                         metrics={'changed_files': ['src/app/export.py'], 'commit': 'f0c05' + str(attempt),
+                                                  'duration_ms': 64000 + attempt * 1000, 'provider_usage': usage},
+                                         snapshot_extra={'focus': {'problem': FOCUS_PROBLEM, 'attempt': attempt, 'start_key': 'fixture-start'}})
+        review = {'verdict': 'pass', 'summary': 'The work review found that attempt 2 meets the acceptance criteria.',
+                  'checks': [], 'findings': [], 'lesson_proposals': []}
+        review_id = self.run_row('work_review', 'codex', 'pass', parent=runs[2], episode_id=episode, report=review, metrics={})
+        evidence = {1: 'The check failed with exit code 1. Last output line: FAILED (failures=1).', 2: 'The check passed with exit code 0.'}
+        output = {1: 'F.\nFAIL: test_dates_keep_the_time_zone\nAssertionError: the export dropped the time zone\nFAILED (failures=1)\n',
+                  2: '..\nRan 2 tests in 0.004s\n\nOK\n'}
+        for hypothesis_id, attempt, state in ((first, 1, 'ruled_out'), (second, 2, 'confirmed')):
+            record = self.m.read(hypothesis_id)
+            self.m.record(episode, 'hypothesis', {**record['payload'], 'state': state, 'run_id': runs[attempt], 'attempt': attempt,
+                                                  'evidence_summary': evidence[attempt]},
+                          expected_version=self.m.episode(episode)['version'], supersedes=hypothesis_id, actor=focus.FOCUS_ACTOR,
+                          request_key='fixture:focus:result:' + str(attempt))
+        base = {'episode_id': episode, 'start_key': 'fixture-start'}
+        # A start names its swarm, which makes its check results verified command bases in that swarm (section 12.9).
+        swarm = {'swarm_id': self.swarm_id} if getattr(self, 'swarm_id', None) else {}
+        receipts = [('FocusStarted', {**base, 'mode': 'relay', 'attempts': 2, 'check': check, 'hypothesis_ids': [first, second, third], **swarm})]
+        for attempt, host, hypothesis_id in ((1, 'codex', first), (2, 'claude', second)):
+            receipts.append(('FocusAttemptRequested', {**base, 'attempt': attempt, 'run_id': runs[attempt], 'host': host, 'hypothesis_id': hypothesis_id}))
+            receipts.append(('FocusCheckRecorded', {**base, 'attempt': attempt, 'run_id': runs[attempt], 'host': host,
+                                                    'hypothesis_id': hypothesis_id, 'command': check['command'],
+                                                    'check_passed': attempt == 2, 'exit_code': 0 if attempt == 2 else 1,
+                                                    'duration_ms': 1200 + attempt * 100, 'output_tail': output[attempt], 'timed_out': False,
+                                                    'changed_lines': 14 if attempt == 1 else 6, 'evidence_summary': evidence[attempt]}))
+        receipts += [('FocusSelected', {**base, 'run_id': runs[2], 'attempt': 2, 'reason': 'The check passed for this attempt.'}),
+                     ('FocusCompleted', {**base, 'run_id': runs[2], 'review_state': 'pass', 'merge': 'merged'})]
+        checks = {}
+        with self.m._write():
+            for name, payload in receipts:
+                receipt = codex_host.receipt(self.m, session_id=episode, event_name=name, episode_id=episode, payload=payload,
+                                             key='focus:' + episode + ':fixture-start:' + name + ':' + payload.get('run_id', ''))
+                if name == 'FocusCheckRecorded':
+                    checks[payload['attempt']] = receipt
+            codex_host.receipt(self.m, session_id=runs[1], event_name='DelegationDiscarded', episode_id=episode, key='fixture:focus:discard',
+                               payload={'run_id': runs[1], 'reason': 'The check of the focused problem failed for this attempt.',
+                                        'actor': focus.FOCUS_ACTOR})
+            codex_host.receipt(self.m, session_id=runs[2], event_name='DelegationMerged', episode_id=episode, key='fixture:focus:merge',
+                               payload={'run_id': runs[2], 'commit': 'f0c0mm1', 'branch_commit': 'f0c052', 'override_reason': None,
+                                        'actor': focus.FOCUS_ACTOR, 'review_id': review_id, 'review_state': 'pass'})
+        self.ids.update(focus_item=episode, focus_runs=[runs[1], runs[2]], focus_hypotheses=[first, second, third], focus_checks=checks)
+
+    def open_hive_swarm(self):
+        """Open the swarm of the hive fixture on the focused work item, before the focused start that names it is recorded."""
+        with hive.Hive(hive.path_for(self.m)) as store:
+            self.swarm_id = hive.open_swarm(store, title=HIVE_TITLE, purpose='Find why the export shows the wrong delivery day for the sales team.',
+                                            kind='manual', request_key='fixture:hive:open', episode_id=self.ids['chain_0'])['id']
+
+    def hive_swarm(self):
+        """A blind manual swarm on the focused work item of the product fixture with three agents and the user.
+
+        codex-1 posts its hypothesis, the passing check of the focused start as a verified command basis, a confirmed
+        conclusion and answers the user. claude-1 supports and challenges the work of codex-1, codex-1 replies to the
+        challenge, and claude-1 asks the user a question that is still open.
+        codex-2 has only oriented, so it is still in the blind phase. HIVE_LATE is appended later by
+        append_hive_entry while the page is open, and it ends the blind phase of codex-2.
+        """
+        swarm, receipt = self.swarm_id, self.ids['focus_checks'][2]
+        with hive.Hive(hive.path_for(self.m)) as store:
+            for agent, host in (('codex-1', 'codex'), ('claude-1', 'claude'), ('codex-2', 'codex')):
+                hive.join(store, swarm, agent_id=agent, role='worker', host=host, worktree=self.root)
+            hive.join(store, swarm, agent_id=USER, role='user', host=USER, worktree=self.root)
+            count = [0]
+
+            def log(agent, move, **fields):
+                count[0] += 1
+                return hive.log(store, swarm, agent, move=move, request_key='fixture:hive:' + str(count[0]), fields=fields, memory=self.m)['id']
+            ids = {}
+            log('codex-1', 'orient', claim='The goal is an export that keeps the delivery day of every order.',
+                bases=[{'kind': 'file', 'value': 'src/app/export.py:1-4'}])
+            log('claude-1', 'orient', claim='The goal of this agent is a parser that keeps the time zone.',
+                bases=[{'kind': 'file', 'value': 'src/app/parser.py:1'}])
+            log('codex-2', 'orient', claim='The goal here is a date format that the sales team reads correctly.',
+                bases=[{'kind': 'file', 'value': 'src/app/main.py:1'}])
+            ids['hypothesis'] = log('codex-1', 'hypothesis', claim='The export drops the offset when it formats each date.',
+                                    detail='Format a date with an offset and compare the exported text.')
+            ids['observation'] = log('codex-1', 'observation', claim='The export test passes once the offset is kept.',
+                                     bases=[{'kind': 'command', 'value': receipt}])
+            ids['conclusion'] = log('codex-1', 'conclusion', claim='Keeping the offset in the export fixes the delivery day.',
+                                    confidence='high', cites=[ids['observation']])
+            ids['question'] = log(USER, 'question', claim='Does the fix also change the dates in the archive export?',
+                                  addressee='agent:codex-1')
+            ids['answer'] = log('codex-1', 'answer', claim='The archive export reads the same formatter, so it changes too.',
+                                target=ids['question'])
+            log('claude-1', 'hypothesis', claim='The parser converts each date to local time too early.',
+                detail='Parse a date with an offset and read the stored value.')
+            ids['support'] = log('claude-1', 'support', claim='The parser keeps the offset, which agrees with the conclusion.',
+                                 target=ids['conclusion'], bases=[{'kind': 'file', 'value': 'src/app/parser.py:4-6'}])
+            ids['challenge'] = log('claude-1', 'challenge', claim='The main module may still format dates without the offset.',
+                                   target=ids['conclusion'], bases=[{'kind': 'file', 'value': 'src/app/main.py:5-6'}])
+            ids['reply'] = log('codex-1', 'observation', claim='The main module passes the records to the export unchanged.',
+                               bases=[{'kind': 'file', 'value': 'src/app/main.py:5-6'}], reply_to=ids['challenge'])
+            ids['user_question'] = log('claude-1', 'question', claim='Should the export show each day in the time zone of the customer?',
+                                       addressee='user')
+        self.ids['hive'] = {'swarm': swarm, 'entries': ids}
+
     def machine_memory(self):
         """One rule already accepted into the machine memory and one proposal that awaits the user."""
         accepted = machine.propose(self.m, **ACCEPTED_RULE, basis='Two delegated runs changed work that nobody had named.',
@@ -550,7 +685,19 @@ class Builder:
         self.ids['components'] = created
 
 
-def build(kind, output):
+HIVE_TITLE = 'Wrong delivery day in the export'
+HIVE_LATE = 'The template of the export cuts the offset from the date text.'
+
+
+def append_hive_entry(database):
+    """Append the hypothesis of codex-2 to the fixture swarm, as a worker does while the panel is open."""
+    with Memory(database) as memory, hive.Hive(hive.path_for(memory)) as store:
+        swarm = next(row['id'] for row in hive.swarms(store)['swarms'] if row['title'] == HIVE_TITLE)
+        return hive.log(store, swarm, 'codex-2', move='hypothesis', request_key='fixture:hive:late', memory=memory,
+                        fields={'claim': HIVE_LATE, 'detail': 'Export one order and read the date text.'})
+
+
+def build(kind, output, with_focus=False, with_hive=False):
     """Create the fixture project in an empty or missing folder and return its description."""
     spec = KINDS[kind]
     root = Path(output).expanduser().resolve()
@@ -576,6 +723,12 @@ def build(kind, output):
         builder.delegated_run()
         builder.components()
         builder.machine_memory()
+        if with_hive:
+            builder.open_hive_swarm()
+        if with_focus:
+            builder.focused_problem()
+        if with_hive:
+            builder.hive_swarm()
         ids = builder.ids
     return {'kind': kind, 'project': str(root), 'database': result['database'], 'ids': ids}
 
@@ -606,12 +759,23 @@ def export(description, destination):
 
 def main():
     parser = argparse.ArgumentParser(description='Build a control panel fixture project.')
-    parser.add_argument('--kind', choices=sorted(KINDS), required=True)
-    parser.add_argument('--output', required=True)
+    parser.add_argument('--kind', choices=sorted(KINDS))
+    parser.add_argument('--output')
     parser.add_argument('--serve', action='store_true', help='Start the live control panel and print its URL.')
     parser.add_argument('--export', dest='snapshot', help='Write the offline snapshot to this file and name it in the printed JSON.')
+    parser.add_argument('--focus', action='store_true', help='Add a focused problem with a finished relay start of two attempts.')
+    parser.add_argument('--hive', action='store_true', help='Add a hive swarm with three agents and the user (product with --focus only).')
+    parser.add_argument('--append-hive-entry', dest='append', metavar='DATABASE',
+                        help='Append the late hypothesis of codex-2 to the swarm of this fixture database and print the entry.')
     args = parser.parse_args()
-    description = build(args.kind, args.output)
+    if args.append:
+        print(json.dumps(append_hive_entry(args.append)))
+        return
+    if not args.kind or not args.output:
+        parser.error('--kind and --output are required to build a fixture.')
+    if args.hive and (args.kind != 'product' or not args.focus):
+        parser.error('--hive needs the product fixture with --focus, because the hive entries cite its source files and its check.')
+    description = build(args.kind, args.output, with_focus=args.focus, with_hive=args.hive)
     if args.snapshot:
         description['snapshot'] = export(description, args.snapshot)
     if args.serve:

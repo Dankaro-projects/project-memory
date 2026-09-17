@@ -8,10 +8,11 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { execFileSync } = require("node:child_process");
+const { pathToFileURL } = require("node:url");
 
 const ROOT = path.resolve(__dirname, "../..");
 const PYTHON = process.env.MEMORY_PYTHON || "python";
-const RAIL = ["Now", "Plan", "Work", "Architecture", "Dependencies", "Decisions", "Learning", "Agents", "Machine", "Records", "Requirements"];
+const RAIL = ["Now", "Plan", "Work", "Architecture", "Dependencies", "Decisions", "Learning", "Agents", "Machine", "Hive", "Records", "Requirements"];
 // nodes is the number of items the architecture graph shows before any filter or toggle is changed.
 const KINDS = {
   product: { template: "Software product template", architecture: "Components and packages", items: /2 code components/, nodes: 3 },
@@ -22,9 +23,9 @@ const results = [];
 const step = (name) => { results.push(name); console.log("ok  " + name); };
 const states = [];
 
-function serve(kind, directory) {
-  const output = path.join(directory, kind);
-  const printed = execFileSync(PYTHON, [path.join(ROOT, "tests/browser/fixture.py"), "--kind", kind, "--output", output, "--serve"],
+function serve(kind, directory, extra = [], name = kind) {
+  const output = path.join(directory, name);
+  const printed = execFileSync(PYTHON, [path.join(ROOT, "tests/browser/fixture.py"), "--kind", kind, "--output", output, ...extra, "--serve"],
     { cwd: ROOT, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
   const info = JSON.parse(printed);
   states.push(path.join(info.project, ".memory", "viewer.json"));
@@ -297,7 +298,7 @@ async function views(page, kind, expected) {
   step(`${kind}: Records and Requirements render their current state`);
 
   for (const width of [1440, 768, 390, 320]) {
-    for (const hash of ["#now", "#plan", "#work", "#architecture", "#decisions", "#learning", "#machine"]) {
+    for (const hash of ["#now", "#plan", "#work", "#architecture", "#decisions", "#learning", "#machine", "#hive"]) {
       await go(page, hash);
       await noOverflow(page, width, `${kind} ${hash}`);
     }
@@ -518,6 +519,301 @@ async function editing(page, ids, posts) {
   step("an update failure is reported and clears when the updates return");
 }
 
+// The Focus section runs on a separate product fixture with a finished focused problem, so the counts that the other
+// checks assert stay unchanged. Attempt 1 failed its check on Codex and attempt 2 passed it on Claude and was merged.
+const FOCUS = {
+  problem: "The export drops the time zone of every date, so the sales team reads the wrong delivery day.",
+  first: "The date formatter ignores the time zone of the parsed value.",
+  second: "The parser converts every date to local time before the export reads it.",
+  third: "The export template truncates the date to its first ten characters.",
+};
+// The dialog closes first and the panel releases the form in its close event, so a check waits for both.
+async function closeForm(page) {
+  await page.keyboard.press("Escape");
+  await page.waitForFunction(() => !document.getElementById("form-dialog").open && !document.getElementById("form-fields").children.length);
+}
+async function openFocus(page, id) {
+  await closeDrawer(page);
+  await page.evaluate((value) => Panel.openWork(value), id);
+  await page.waitForFunction(() => document.getElementById("drawer-title").textContent === "Design the export format");
+  await settle(page);
+  await page.waitForSelector('[data-key="work-focus"] [data-key="focus-report"]');
+}
+const boxes = (page) => page.evaluate(() => [...document.querySelectorAll('[data-key^="focus-attempt-"]')].map((node) => {
+  const box = node.getBoundingClientRect();
+  return { x: box.x, y: box.y, right: box.right };
+}));
+async function focusContent(page, label) {
+  const section = await text(page, '[data-key="work-focus"]');
+  for (const part of [FOCUS.problem, "Relay mode", "2 attempts allowed", "python3 -m unittest tests.test_export_format", "120 seconds",
+    "tests/test_export_format.py", "An earlier delegated run failed its review or its focused check."]) {
+    assert.ok(section.includes(part), `${label}: the Focus section lacks ${part}`);
+  }
+  assert.equal(await page.locator('[data-key^="focus-attempt-"]').count(), 2, `${label}: the Focus section does not show both attempts`);
+  const first = await text(page, '[data-key="focus-attempt-1"]');
+  for (const pattern of [/Codex/, new RegExp(FOCUS.first), /The check failed with exit code 1\./, /14/, /No work review is recorded\./, /Discarded/]) {
+    assert.match(first, pattern, `${label}: attempt 1 lacks ${pattern}`);
+  }
+  const second = await text(page, '[data-key="focus-attempt-2"]');
+  for (const pattern of [/Selected/, /Claude/, new RegExp(FOCUS.second), /The check passed with exit code 0\./, /Pass/, /Merged/]) {
+    assert.match(second, pattern, `${label}: attempt 2 lacks ${pattern}`);
+  }
+  await page.locator('[data-key="focus-attempt-1"] details').evaluate((node) => { node.open = true; });
+  assert.match(await text(page, '[data-key="focus-attempt-1"] details pre'), /AssertionError: the export dropped the time zone\nFAILED \(failures=1\)/);
+  const ruledOut = await page.locator('[data-key="work-focus"] section.stack').filter({ hasText: "Ruled out hypotheses" }).last().innerText();
+  assert.ok(ruledOut.includes(FOCUS.first) && ruledOut.includes("Last output line: FAILED (failures=1)."), `${label}: the ruled out hypothesis is missing`);
+  assert.ok(!ruledOut.includes(FOCUS.second) && !ruledOut.includes(FOCUS.third), `${label}: a hypothesis that was not ruled out is listed as ruled out`);
+  const report = await text(page, '[data-key="focus-report"]');
+  assert.match(report, /1 start recorded 2 attempts\. 1 passed the check, 1 failed it and 0 did not run it\./);
+  assert.match(report, /1 start ended with a passing review, 0 ended blocked and 0 are still running\./);
+  for (const pattern of [/Codex: 1/, /Claude: 1/, /4,700/, /131 seconds/, /2\.7 seconds/, /Pass: 1/, /0 of 1 start/, /never from the report of an agent/]) {
+    assert.match(report, pattern, `${label}: the report lacks ${pattern}`);
+  }
+}
+
+async function focused(browser, directory) {
+  const snapshotFile = path.join(directory, "focus.html");
+  const fixture = serve("product", directory, ["--focus", "--hive", "--export", snapshotFile], "focus");
+  const id = fixture.ids.focus_item;
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+  const problems = watch(page);
+  await page.goto(fixture.url);
+  await page.waitForFunction(() => document.getElementById("live-status").textContent === "Live", null, { timeout: 20000 });
+  await openFocus(page, id);
+  await focusContent(page, "desktop");
+  const wide = await boxes(page);
+  assert.ok(Math.abs(wide[0].y - wide[1].y) < 2 && wide[1].x > wide[0].right, `the attempts are not side by side at 1440 pixels: ${JSON.stringify(wide)}`);
+  step("focus: the work drawer shows the problem, the check, both attempts side by side, the ruled out hypothesis and the report");
+
+  // A panel started by an assistant does not carry the actions of the user, so it names the reason instead of the buttons.
+  const assistant = await page.evaluate(() => Boolean((Panel.health() || {}).assistant_started));
+  const buttons = page.locator('[data-key="work-focus"] [data-key^="form:focus_"]');
+  if (assistant) {
+    assert.equal(await buttons.count(), 0, "a panel started by an assistant offers the focus actions");
+    assert.match(await text(page, '[data-key="work-focus"]'), /started from inside an assistant session, so it does not set the check or start the attempts/);
+  } else {
+    assert.deepEqual(await buttons.allInnerTexts(), ["Set the check", "Start the attempts"]);
+  }
+  // openForm resolves only when the form closes, so the check does not wait for it.
+  await page.evaluate((value) => { Panel.openForm("focus_check", { episode_id: value }); }, id);
+  await page.waitForSelector('#form-dialog[open] textarea[name="command"]');
+  assert.equal(await field(page, "command").inputValue(), "python3\n-m\nunittest\ntests.test_export_format");
+  assert.equal(await field(page, "timeout_seconds").inputValue(), "120");
+  await field(page, "timeout_seconds").fill("300");
+  await page.locator("#form-save").click();
+  // The fixture is not a git repository, so even a panel started by the user is refused before anything is recorded.
+  await page.waitForFunction(() => document.getElementById("form-error").textContent.length > 0, null, { timeout: 15000 });
+  assert.match(await page.locator("#form-error").textContent(), assistant ? /started from inside an assistant session/ : /is not committed with its current content: tests\/test_export_format\.py\./);
+  await closeForm(page);
+  // openForm resolves only when the form closes, so the check does not wait for it.
+  await page.evaluate((value) => { Panel.openForm("focus_start", { episode_id: value }); }, id);
+  await page.waitForSelector("#form-dialog[open] #form-save");
+  await page.waitForFunction((statement) => document.getElementById("form-fields").textContent.includes(statement), FOCUS.third);
+  assert.ok(!(await text(page, "#form-fields")).includes(FOCUS.first), "the start form lists a ruled out hypothesis as open");
+  await closeForm(page);
+  const plan = await page.evaluate(async (value) => (await Panel.get("focus", { id: value })).focus.check.timeout_seconds, id);
+  assert.equal(plan, 120, "a refused Set the check changed the recorded check");
+  step("focus: the Set the check and Start the attempts forms open with the recorded check and the open hypothesis, and a refused check changes nothing");
+
+  await page.setViewportSize({ width: 390, height: 900 });
+  await page.waitForTimeout(250);
+  const narrow = await boxes(page);
+  assert.ok(narrow[1].y > narrow[0].y, `the attempts do not stack on a 390 pixel screen: ${JSON.stringify(narrow)}`);
+  assert.ok(narrow.every((box) => box.x >= 0 && box.right <= 390), `an attempt sits off a 390 pixel screen: ${JSON.stringify(narrow)}`);
+  await focusContent(page, "phone");
+  await noOverflow(page, 390, "focus drawer");
+  step("focus: the attempts stack and stay on a 390 pixel screen");
+  assert.deepEqual(problems, [], "the Focus checks logged console or page errors");
+  await page.close();
+
+  // The read only snapshot shows the same Focus section without any action.
+  const offline = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+  const offlineProblems = watch(offline);
+  await offline.goto(pathToFileURL(fixture.snapshot).href);
+  await offline.waitForFunction(() => /^Snapshot from /.test(document.getElementById("live-status").textContent), null, { timeout: 20000 });
+  for (const width of [1440, 390]) {
+    await offline.setViewportSize({ width, height: 900 });
+    await openFocus(offline, id);
+    await focusContent(offline, "snapshot at " + width + " pixels");
+    assert.equal(await offline.locator('[data-key="work-focus"] [data-key^="form:focus_"]').count(), 0, `the snapshot offers a focus action at ${width} pixels`);
+    assert.equal(await offline.locator('[data-key="work-focus"] button').filter({ hasText: /Set the check|Start the attempts/ }).count(), 0);
+    assert.ok(!(await text(offline, '[data-key="work-focus"]')).includes("assistant session"), "the snapshot explains an action it does not offer");
+    await noOverflow(offline, width, "focus snapshot");
+  }
+  assert.deepEqual(offlineProblems, [], "the Focus snapshot logged console or page errors");
+  step("focus: the read only snapshot shows the Focus section without Set the check or Start the attempts at 1440 and 390 pixels");
+
+  // The snapshot does not carry the hive, so the Hive view says so instead of failing.
+  await go(offline, "#hive");
+  assert.match(await text(offline, "#main"), /not included in this snapshot/);
+  assert.deepEqual(offlineProblems, [], "the Hive view of the snapshot logged console or page errors");
+  step("hive: the read only snapshot names the hive as not included");
+  await offline.close();
+  return fixture;
+}
+
+// The Hive view runs on the focus fixture, which also holds a swarm of three agents and the user (fixture.py hive_swarm).
+const HIVE_LATE = "The template of the export cuts the offset from the date text.";
+const cards = (page) => page.locator('[data-key="hive-timeline"] article');
+const inView = (page, selector, width) => page.locator(selector).evaluate((node, limit) => {
+  const box = node.getBoundingClientRect();
+  return box.left >= 0 && box.right <= limit;
+}, width);
+async function hived(browser, fixture) {
+  const { swarm, entries: e } = fixture.ids.hive;
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+  const problems = watch(page);
+  await page.goto(fixture.url);
+  await page.waitForFunction(() => document.getElementById("live-status").textContent === "Live", null, { timeout: 20000 });
+  await go(page, "#hive");
+  assert.equal(await text(page, "#main .sentence"), "1 swarm is recorded, and 1 is open.");
+  const listed = await text(page, `[data-key="hive-swarm-${swarm}"]`);
+  for (const part of ["Wrong delivery day in the export", "Manual swarm", "13 entries", "Blind phase first", "codex-1", "claude-1", "codex-2"]) {
+    assert.ok(listed.includes(part), "the swarm card lacks " + part);
+  }
+  await page.locator(`[data-key="hive-open-${swarm}"]`).click();
+  await page.waitForSelector('[data-key="hive-timeline"]');
+  await settle(page);
+  assert.match(page.url(), new RegExp("#hive/swarm=" + swarm));
+  assert.equal(await text(page, "#main .sentence"), "Wrong delivery day in the export is open with 13 entries from 4 agents.");
+  assert.equal(await cards(page).count(), 13);
+  step("hive: the list shows the swarm with its kind, agents and counts, and the swarm opens as a timeline of 13 entries");
+
+  // Hosts are named in words as well as colours, and a verified command is marked with its exit code.
+  assert.equal(await text(page, `#hive-${e.hypothesis} [data-state="host-codex"]`), "Codex");
+  assert.equal(await text(page, `#hive-${e.support} [data-state="host-claude"]`), "Claude");
+  assert.equal(await text(page, `#hive-${e.question} [data-state="host-workspace-user"]`), "User");
+  assert.notEqual(await page.locator(`#hive-${e.hypothesis}`).evaluate((node) => node.style.borderLeftColor),
+    await page.locator(`#hive-${e.support}`).evaluate((node) => node.style.borderLeftColor), "Codex and Claude entries share one colour");
+  assert.match(await text(page, `#hive-${e.observation} [data-state="verified-command"]`), /^Verified command host_\w+, exit code 0$/);
+  const conclusion = await text(page, `#hive-${e.conclusion}`);
+  for (const pattern of [/Conclusion/, /High confidence/, /Confirmed/, /Keeping the offset in the export fixes the delivery day\./, /Cites e5 by codex-1/,
+    new RegExp(`Supported by ${e.support} by claude-1`), new RegExp(`Challenged by ${e.challenge} by claude-1`)]) {
+    assert.match(conclusion, pattern, "the conclusion lacks " + pattern);
+  }
+  assert.match(await text(page, `#hive-${e.question}`), /Addressed to agent codex-1\./);
+  step("hive: each entry names its host, move and confidence, marks the verified command and the confirmed conclusion, and labels its links");
+
+  // Answers and replies sit under their target; a challenge and a support stay in the timeline as labelled links.
+  assert.equal(await page.locator(`#hive-${e.question} > .hive-thread > #hive-${e.answer}`).count(), 1, "the answer is not nested under its question");
+  assert.equal(await page.locator(`#hive-${e.challenge} > .hive-thread > #hive-${e.reply}`).count(), 1, "the reply is not nested under the challenge");
+  assert.equal(await page.locator(`[data-key="hive-timeline"] > #hive-${e.challenge}`).count(), 1, "the challenge is nested instead of shown in the timeline");
+  assert.match(await text(page, `#hive-${e.challenge}`), new RegExp(`Challenges ${e.conclusion} by codex-1`));
+  await page.locator(`[data-key="hive-link-${e.challenge}-Challenges-${e.conclusion}"]`).click();
+  await page.waitForFunction((id) => document.activeElement && document.activeElement.id === "hive-" + id, e.conclusion);
+  step("hive: answers and replies are nested under their target, and a challenge link moves focus to the challenged conclusion");
+
+  // The blind phase is shown per agent.
+  assert.equal(await page.locator('[data-key="hive-agent-codex-2"]').getAttribute("data-phase"), "blind");
+  assert.match(await text(page, '[data-key="hive-agent-codex-2"]'), /Blind phase[\s\S]*has not posted its hypothesis/);
+  assert.equal(await page.locator('[data-key="hive-agent-codex-1"]').getAttribute("data-phase"), "open");
+  assert.match(await text(page, `#hive-${e.hypothesis}`), /Ends the blind phase of codex-1/);
+  step("hive: codex-2 is marked as still in the blind phase, and the hypothesis that ended the phase of codex-1 says so");
+
+  // Filters by move and agent are kept in the route.
+  await page.locator("#hive-move").selectOption("conclusion");
+  await page.waitForFunction(() => /move=conclusion/.test(location.hash) && document.querySelectorAll('#main .view:not(.pending) [data-key="hive-timeline"] article').length === 1);
+  await settle(page);
+  await page.locator("#hive-move").selectOption("");
+  await page.waitForFunction(() => !/move=/.test(location.hash) && document.querySelectorAll('#main .view:not(.pending) [data-key="hive-timeline"] article').length === 13);
+  await settle(page);
+  await page.locator("#hive-agent").selectOption("claude-1");
+  await page.waitForFunction(() => /agent=claude-1/.test(location.hash) && document.querySelectorAll('#main .view:not(.pending) [data-key="hive-timeline"] article').length === 5);
+  await settle(page);
+  assert.deepEqual(await page.locator('[data-key="hive-timeline"] article [data-state^="host-"]').allInnerTexts(), ["Claude", "Claude", "Claude", "Claude", "Claude"]);
+  await page.locator("#hive-agent").selectOption("");
+  await page.waitForFunction(() => document.querySelectorAll('#main .view:not(.pending) [data-key="hive-timeline"] article').length === 13);
+  await settle(page);
+  step("hive: the move filter keeps the one conclusion and the agent filter keeps the 5 entries of claude-1");
+
+  // A worker writes an entry while the page is open, and the change polling shows it.
+  const written = Date.now();
+  const appended = JSON.parse(execFileSync(PYTHON, [path.join(ROOT, "tests/browser/fixture.py"), "--append-hive-entry", fixture.database], { cwd: ROOT, encoding: "utf8" }));
+  const stored = Date.now();
+  await page.waitForSelector("#hive-" + appended.id, { timeout: 6000 });
+  const shown = Date.now();
+  assert.match(await text(page, "#hive-" + appended.id), new RegExp(HIVE_LATE.replace(/\./g, "\\.")));
+  assert.ok(shown - stored <= 2000, `the new entry appeared ${shown - stored} milliseconds after it was stored`);
+  await page.waitForFunction(() => document.querySelector('[data-key="hive-agent-codex-2"]').dataset.phase === "open");
+  assert.equal(await text(page, "#main .sentence"), "Wrong delivery day in the export is open with 14 entries from 4 agents.");
+  step(`hive: an entry written while the page is open appears ${shown - stored} milliseconds after it is stored (${stored - written} to store it), and codex-2 leaves the blind phase`);
+
+  for (const width of [390, 320]) {
+    await noOverflow(page, width, "hive timeline");
+    for (const id of [e.conclusion, e.answer, e.reply, appended.id]) assert.ok(await inView(page, "#hive-" + id, width), `the entry ${id} sits off a ${width} pixel screen`);
+  }
+  const phone = await page.evaluate((ids) => ids.map((id) => document.getElementById("hive-" + id).getBoundingClientRect().width), [e.answer, e.reply]);
+  // A nested entry keeps at least 70 percent of a 320 pixel screen, so the indentation of a thread never squeezes its text.
+  assert.ok(phone.every((value) => value >= 224), `a nested entry is too narrow to read at 320 pixels: ${phone}`);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  step("hive: the timeline with its nested replies stays readable at 390 and 320 pixels");
+
+  // The user posts as workspace-user: an answer to the open question and a question to one agent.
+  await page.locator(`[data-key="form:hive_post:${swarm}:answer:${e.user_question}"]`).click();
+  await page.waitForSelector("#form-dialog[open] textarea[name=claim]");
+  assert.match(await text(page, "#form-fields"), /time zone of the customer/);
+  await field(page, "claim").fill("The export shows each day in the time zone of the warehouse");
+  await page.locator("#form-save").click();
+  await page.waitForFunction(() => /rule claim_sentence/.test(document.getElementById("form-error").textContent), null, { timeout: 15000 });
+  await field(page, "claim").fill("The export shows each day in the time zone of the warehouse.");
+  await page.locator("#form-save").click();
+  await savedToast(page, /The answer e\d+ is posted\./);
+  await page.waitForFunction((id) => document.querySelector(`#hive-${id} > .hive-thread [data-state="host-workspace-user"]`), e.user_question, { timeout: 15000 });
+  await settle(page);
+  await page.locator(`[data-key="form:hive_post:${swarm}:question"]`).click();
+  await page.waitForSelector("#form-dialog[open] select[name=addressee]");
+  await field(page, "claim").fill("Which file formats the date for the warehouse report?");
+  await field(page, "addressee").selectOption("agent:codex-2");
+  await page.locator("#form-save").click();
+  await savedToast(page, /The question e\d+ is posted\./);
+  await page.waitForFunction(() => /Addressed to agent codex-2\./.test(document.querySelector('#main .view:not(.pending) [data-key="hive-timeline"]').textContent), null, { timeout: 15000 });
+  await page.locator(`[data-key="form:hive_post:${swarm}:observation"]`).click();
+  await page.waitForSelector("#form-dialog[open] textarea[name=bases]");
+  await field(page, "claim").fill("The warehouse report reads the export module.");
+  await field(page, "bases").fill("src/app/export.py:1");
+  await page.locator("#form-save").click();
+  await page.waitForFunction(() => /no known kind/.test(document.getElementById("form-error").textContent));
+  await field(page, "bases").fill("file: src/app/export.py:1");
+  await page.locator("#form-save").click();
+  await savedToast(page, /The observation e\d+ is posted\./);
+  await page.waitForFunction(() => document.querySelectorAll('#main .view:not(.pending) [data-key="hive-timeline"] article').length === 17, null, { timeout: 15000 });
+  step("hive: the user answers the open question, asks codex-2 a question and posts an observation, and a refused claim names its rule");
+
+  await page.locator(`[data-key="form:hive_close:${swarm}"]`).click();
+  await page.waitForSelector("#form-dialog[open] textarea[name=summary]");
+  assert.match(await text(page, "#form-fields"), /Confirmed conclusions\s*1 of 1/);
+  await field(page, "summary").fill("Keeping the offset fixes the delivery day in both exports.");
+  await page.locator("#form-save").click();
+  await savedToast(page, /The swarm is closed\. Confirmed conclusions: 1 of 1\. Proposed lessons: 0\./);
+  await page.waitForFunction(() => /is closed with 17 entries/.test(document.querySelector("#main .view:not(.pending) .sentence").textContent), null, { timeout: 15000 });
+  await settle(page);
+  assert.equal(await page.locator('[data-key="hive-actions"]').count(), 0, "a closed swarm still offers actions");
+  assert.equal(await page.locator('[data-key^="form:hive_post:"]').count(), 0, "a closed swarm still offers an answer");
+  step("hive: the user closes the swarm with a summary, and the closed swarm offers no further posts");
+
+  // Purge is a user action, so a panel started by an assistant refuses it and names the reason.
+  await go(page, "#hive");
+  const assistant = await page.evaluate(() => Boolean((Panel.health() || {}).assistant_started));
+  if (assistant) {
+    assert.equal(await page.locator('[data-key="form:hive_purge"]').count(), 0, "a panel started by an assistant offers the purge");
+    assert.match(await text(page, '[data-key="hive-purge-refused"]'), /does not purge swarms/);
+    const refusal = await page.evaluate(() => Panel.action("hive_purge", { closed_before_days: 0 }, Panel.requestKey("hive-purge")).then(() => "", (error) => error.message));
+    assert.match(refusal, /does not purge swarms of the hive/);
+    assert.equal(await text(page, "#main .sentence"), "1 swarm is recorded, and 0 are open.");
+    step("hive: a panel started by an assistant offers no purge and the server refuses one");
+  } else {
+    await page.locator('[data-key="form:hive_purge"]').click();
+    await page.waitForSelector("#form-dialog[open] input[name=closed_before_days]");
+    await field(page, "closed_before_days").fill("0");
+    await page.locator("#form-save").click();
+    await savedToast(page, /1 swarm with 17 entries was purged\./);
+    await page.waitForFunction(() => /No swarm is recorded yet/.test(document.querySelector("#main .view:not(.pending) .sentence").textContent), null, { timeout: 15000 });
+    step("hive: the user purges the closed swarm and the list is empty");
+  }
+  assert.deepEqual(problems, [], "the Hive checks logged console or page errors");
+  await page.close();
+}
+
 (async () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "panel-browser-"));
   const browser = await chromium.launch({ headless: true, args: ["--no-sandbox"] });
@@ -540,6 +836,7 @@ async function editing(page, ids, posts) {
       step(`${kind}: no console or page errors in live mode`);
       await page.close();
     }
+    await hived(browser, await focused(browser, directory));
     console.log(`\n${results.length} checks passed.`);
   } finally {
     await browser.close();

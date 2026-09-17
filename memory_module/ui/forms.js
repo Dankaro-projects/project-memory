@@ -9,7 +9,10 @@
  *   {component_id}, or {kind, path} to add one; confirm_component {component_id}; answer_kickoff {question_ids};
  *   delegate {episode_id}; review {episode_id, role}; merge, discard, request_work_review and cancel_run {run_id};
  *   instructions {role}; phase {phase}; promotion {promotion_id, status}; machine_rule {rule_id}; reassess
- *   {decision_id, outcome_id} records the judgement of the user on the latest outcome of a decision.
+ *   {decision_id, outcome_id} records the judgement of the user on the latest outcome of a decision; focus_check and
+ *   focus_start {episode_id} set the check of a focused problem and start its attempts.
+ *   hive_post {swarm_id, move, target} posts a question, answer or observation as the user; hive_close {swarm_id};
+ *   hive_purge {} removes closed swarms.
  * A form that cannot act on the current data explains why in the form alert and disables Save.
  */
 (() => {
@@ -465,6 +468,40 @@
     done: () => "The run is asked to stop.",
   });
 
+  // A focused problem: only the user sets its check and starts its attempts, because the check runs a command on this computer.
+  // The server checks the timeout, the eligibility, a running start and the open hypotheses, and the form shows its refusal.
+  async function focusFacts(context, fields) {
+    const value = await P.get("focus", { id: context.episode_id }), check = (value.focus || {}).check;
+    if (!value.focus) stop("This work item has no focused problem. An agent proposes the problem and its hypotheses first.");
+    fields.append(P.kv([["Problem", value.focus.problem], ["State", P.badge(value.state)], ["Check", check ? check.command.join(" ") : "No check is set."],
+      ["Protected files", check ? chips(check.files.map((file) => file.path)) : null]]));
+    return value;
+  }
+  P.registerForm("focus_check", { title: "Set the check of the focused problem", submitLabel: "Set the check",
+    async render(fields, context) {
+      const value = await focusFacts(context, fields), check = value.focus.check || {};
+      fields.append(P.field("Command", list("command", check.command, "4"), "Write one argument per line. No shell runs the command, so quotes, pipes and variables stay as written."),
+        P.field("Time limit in seconds", P.input("timeout_seconds", String(check.timeout_seconds || 120), { type: "number", min: "10", max: "1800", step: "1", dataset: { number: "" } })),
+        hint("Every project file that the check names must be committed with its current content, because each attempt starts from the last commit. An attempt that changes one of these files is refused."));
+    },
+    submit(values, context) {
+      need(values.command, "Write the command of the check, with one argument per line.");
+      return { operation: "focus_check", data: { episode_id: context.episode_id, command: values.command, timeout_seconds: values.timeout_seconds } };
+    },
+    done: (result) => `The check is set. It protects ${P.count(((result.check || {}).files || []).length, "file")}.`,
+  });
+  P.registerForm("focus_start", { title: "Start the focused problem", submitLabel: "Start the attempts",
+    async render(fields, context) {
+      const value = await focusFacts(context, fields), block = value.focus, open = value.hypotheses.filter((item) => item.state === "open");
+      fields.append(P.kv([["Mode", P.words(block.mode)], ["Attempts", String(Math.min(block.max_attempts, open.length))],
+        ["Open hypotheses", open.length ? h("ol", null, open.map((item) => h("li", null, item.statement))) : null]]),
+      hint("Each attempt is a delegated run in its own worktree from the same commit, and the hosts alternate. Project Memory runs the check after each attempt, and the passing attempt goes to the work review of the other host."));
+      requireHosts();
+    },
+    submit: (values, context) => ({ operation: "focus_start", data: { episode_id: context.episode_id } }),
+    done: (result) => `The focused problem is started. Its state is ${P.words(result.state).toLowerCase()}.`,
+  });
+
   // The lifecycle stage of the project (stored as its phase), which decides who merges delegated work. Only the user
   // records it. The panel calls it a lifecycle stage, so it is not confused with the phases of the plan.
   P.registerForm("phase", { title: "Change the lifecycle stage of the project", submitLabel: "Record the stage",
@@ -564,5 +601,73 @@
       return { operation: "machine_rule", data: { rule_id: context.rule_id, status: "retired", reason: values.reason } };
     },
     done: () => "The rule is retired. It reaches no further agent prompt.",
+  });
+  // Hive: the user takes part in a swarm as workspace-user, closes a swarm and purges closed swarms. The hive checks every
+  // entry, and its refusal names the rule and the correction in the form alert.
+  const HIVE_TITLES = { question: "Ask the agents a question", answer: "Answer the question", observation: "Post an observation" };
+  function hiveBases(lines) {
+    return lines.map((line) => {
+      const found = line.match(/^(file|command|entry|source|url)\s*:\s*(.+)$/i);
+      if (!found) throw new P.FormError("Write each basis as its kind, a colon and its value, such as file: src/app.py:12. This line has no known kind: " + line);
+      return { kind: found[1].toLowerCase(), value: found[2].trim() };
+    });
+  }
+  const openSwarm = async (context) => {
+    const value = await P.get("hive", { id: context.swarm_id });
+    if (value.swarm.state !== "open") stop("The swarm is closed, so it accepts no change.");
+    return value;
+  };
+  P.registerForm("hive_post", { title: (context) => HIVE_TITLES[context.move], submitLabel: "Post the entry",
+    async render(fields, context) {
+      const value = await openSwarm(context), agents = value.agents.filter((agent) => agent.host !== "workspace-user");
+      const target = context.target && value.entries.find((entry) => entry.id === context.target);
+      if (target) fields.append(P.kv([["Question", target.claim], ["Asked by", target.agent]]));
+      fields.append(P.field("Claim", area("claim", "", "2"), "One complete sentence of at most 280 characters that ends with a full stop or a question mark."));
+      if (context.move === "question") {
+        const roles = [...new Set(agents.map((agent) => agent.role))];
+        fields.append(P.field("Addressed to", P.select("addressee", [["all", "Every agent"], ...agents.map((agent) => ["agent:" + agent.agent_id, "Agent " + agent.agent_id]),
+          ...roles.map((role) => ["role:" + role, "The " + role + " role"])], "all")));
+      }
+      if (context.move === "observation") fields.append(P.field("Bases", list("bases", [], "3"), "One basis per line: its kind, a colon and its value. The kinds are file (path:line), entry, source, command and url."));
+      fields.append(P.field("Detail", area("detail", "", "3"), "Optional, at most 1,200 characters."),
+        hint("The entry is recorded as workspace-user. Agents receive it in their hive context."));
+    },
+    submit(values, context) {
+      need(values.claim, "Write the claim.");
+      const data = { swarm_id: context.swarm_id, move: context.move, claim: values.claim };
+      if (values.detail) data.detail = values.detail;
+      if (context.move === "question") data.addressee = values.addressee;
+      if (context.move === "answer") data.target = context.target;
+      if (context.move === "observation") data.bases = hiveBases(need(values.bases, "Add at least one basis for the observation."));
+      return { operation: "hive_post", data };
+    },
+    done: (result) => `The ${result.move} ${result.id} is posted.`,
+  });
+  P.registerForm("hive_close", { title: "Close the swarm", submitLabel: "Close the swarm",
+    async render(fields, context) {
+      const value = await openSwarm(context), conclusions = value.entries.filter((entry) => entry.move === "conclusion");
+      fields.append(P.kv([["Swarm", value.swarm.title], ["Entries", String(value.total)],
+        ["Confirmed conclusions", conclusions.filter((entry) => entry.confirmed).length + " of " + conclusions.length]]),
+      P.field("Summary", area("summary", "", "3")),
+      hint("Closing distills the swarm. Confirmed and disputed conclusions are marked, a lesson is proposed for each pattern that cites a confirmed conclusion, and a summary note is recorded in the work item. No entry can be added afterwards."));
+    },
+    submit(values, context) {
+      need(values.summary, "Write the summary of the swarm.");
+      return { operation: "hive_close", data: { swarm_id: context.swarm_id, summary: values.summary } };
+    },
+    done: (result) => `The swarm is closed. Confirmed conclusions: ${Object.keys(result.confirmed).length} of ${result.conclusions}. Proposed lessons: ${result.proposals.length}.`,
+  });
+  P.registerForm("hive_purge", { title: "Purge closed swarms", submitLabel: "Purge",
+    render(fields) {
+      fields.append(P.field("Closed at least this many days ago", P.input("closed_before_days", "30", { type: "number", min: "0", step: "1", dataset: { number: "" } }),
+        "Write 0 to purge every closed swarm."),
+      hint("A purge removes each closed swarm with its agents, entries and links for good. The project memory keeps a receipt with the counts only. Open swarms are never purged."));
+    },
+    submit(values) {
+      const days = values.closed_before_days;
+      if (!Number.isInteger(days) || days < 0) throw new P.FormError("Write the number of days as a whole number of 0 or more.");
+      return { operation: "hive_purge", data: { closed_before_days: days } };
+    },
+    done: (result) => `${P.count(result.swarms, "swarm")} with ${P.count(result.entries, "entry", "entries")} ${result.swarms === 1 ? "was" : "were"} purged.`,
   });
 })();

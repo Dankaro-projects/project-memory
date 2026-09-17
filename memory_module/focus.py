@@ -1,17 +1,24 @@
-"""Independent attempts on a recorded problem, decided by a user-owned check."""
+"""Independent attempts on a recorded problem, decided by a user-owned check.
+
+Every start opens a hive swarm of kind focus (section 12.9). Project Memory joins the swarm as the agent
+focus-orchestrator, each attempt joins as an agent with its host, the hypothesis of an attempt is its hive
+hypothesis entry, and the check result of each attempt is logged as a command basis that every agent can see.
+"""
 import hashlib
 import json
 import os
 from pathlib import Path
 import posixpath
 import re
+import sqlite3
 import subprocess
 import sys
 import time
 import unicodedata
+import uuid
 
 from .core import Conflict, InvalidRecord, USER_ACTOR, _text, dumps
-from . import codex_host, delegation, guards, planning, reviews
+from . import codex_host, delegation, guards, hive, planning, reviews
 from .shared import git, latest_review, settlement
 from .worktree import cleanup, remains
 
@@ -57,6 +64,13 @@ HYPOTHESIS_RESULT_ONLY = 'Only Project Memory records the result of a hypothesis
 HYPOTHESIS_STARTS_OPEN = 'A new hypothesis starts in the open state.'
 FOCUS_ACTOR_RESERVED = ('The actor name focus-orchestrator is reserved for the checks that Project Memory runs. Use your own '
                         'actor name.')
+HIVE_ROLE = 'attempt'
+HIVE_SUPERVISOR_ROLE = 'supervisor'
+HIVE_ORIENT = 'The goal of this swarm is to solve the focused problem of the work item with a check that the user set.'
+HIVE_BELIEF = 'The check that the user set decides each attempt of this focused problem.'
+HIVE_BELIEF_DETAIL = ('Project Memory runs the check on every finished attempt and records its exit code as a command basis, '
+                      'so no agent decides the result by its own report.')
+HIVE_ABANDONED = 'The focused start could not request its attempts, so this swarm closed without work.'
 REPORT_BASIS = ('Every number comes from receipts, checks and reviews recorded by Project Memory, never from the report of '
                 'an agent.')
 
@@ -88,9 +102,10 @@ def validate_block(value):
 
 def validate_hypothesis(payload):
     required = {'statement', 'approach', 'state'}
-    optional = {'run_id', 'attempt', 'evidence_summary'}
+    optional = {'run_id', 'attempt', 'evidence_summary', 'hive_entry_id'}
     if not isinstance(payload, dict) or required - payload.keys() or payload.keys() - required - optional:
-        raise InvalidRecord('A hypothesis requires statement, approach and state; optional: run_id, attempt and evidence_summary.')
+        raise InvalidRecord('A hypothesis requires statement, approach and state; optional: run_id, attempt, evidence_summary '
+                            'and hive_entry_id.')
     _text(payload['statement'], 'statement', 1000)
     _text(payload['approach'], 'approach', 2000)
     if payload['state'] not in ('open', 'confirmed', 'ruled_out'):
@@ -99,6 +114,8 @@ def validate_hypothesis(payload):
         raise InvalidRecord('The hypothesis attempt must be an integer from 1 to 3.')
     if 'run_id' in payload:
         _text(payload['run_id'], 'run_id', 200)
+    if 'hive_entry_id' in payload:
+        _text(payload['hive_entry_id'], 'hive_entry_id', 40)
     if 'evidence_summary' in payload:
         value = payload['evidence_summary']
         if not isinstance(value, str) or len(value) > 2000:
@@ -357,8 +374,86 @@ def _request_attempt(memory, started, number, *, problem):
                              for item in _ruled_out(memory, episode_id)],
                'check': {field: started['check'][field] for field in ('command', 'timeout_seconds')},
                'check_files': [item['path'] for item in started['check'].get('files', [])]}
+    binding = None
+    if started.get('swarm_id'):
+        binding = {'swarm_id': started['swarm_id'], 'agent_id': f'attempt-{number}', 'role': HIVE_ROLE,
+                   'hypothesis': {'claim': entry['statement'], 'detail': 'Approach: ' + entry['approach']},
+                   'handover': started['mode'] == 'relay'}
     return delegation.request_work(memory, episode_id, request_key=f'focus:{_scoped(episode_id, key)}:attempt:{number}',
-                                   host=work if number % 2 else other, focus_attempt=attempt)
+                                   host=work if number % 2 else other, focus_attempt=attempt, hive=binding)
+
+
+def _open_swarm(memory, episode_id, problem, project):
+    """Open the swarm of one start and join Project Memory as its supervisor, whose view is open from the start."""
+    episode = memory.episode(episode_id)
+    plan = planning.latest(memory, episode_id, 'work_plan')
+    bases = [{'kind': 'source', 'value': item['source_id']} for item in memory.read(plan['id'])['evidence'][:3]]
+    with hive.Hive(hive.path_for(memory)) as store:
+        swarm = hive.open_swarm(store, title=('Focused problem: ' + episode['title'])[:200], purpose=problem[:2000], kind='focus',
+                                request_key='focus-swarm:' + uuid.uuid4().hex, episode_id=episode_id, project=project)
+        hive.join(store, swarm['id'], agent_id=FOCUS_ACTOR, role=HIVE_SUPERVISOR_ROLE, host='session', worktree=project)
+        hive.log(store, swarm['id'], FOCUS_ACTOR, move='orient', request_key='orient', fields={'claim': HIVE_ORIENT, 'bases': bases},
+                 memory=memory)
+        hive.log(store, swarm['id'], FOCUS_ACTOR, move='hypothesis', request_key='hypothesis',
+                 fields={'claim': HIVE_BELIEF, 'detail': HIVE_BELIEF_DETAIL})
+    return swarm['id']
+
+
+def _close_swarm(memory, started, summary, *, main_memory=True):
+    """Close the swarm of a start and distill it into the main memory. A failure is kept as a receipt, never raised."""
+    swarm_id = started.get('swarm_id')
+    if not swarm_id:
+        return None
+    try:
+        with hive.Hive(hive.path_for(memory)) as store:
+            return hive.close(store, swarm_id, summary=summary, request_key='focus-close:' + started['start_key'],
+                              memory=memory if main_memory else None)
+    except (InvalidRecord, Conflict, sqlite3.Error) as exc:
+        try:
+            _receipt(memory, 'FocusHiveNotClosed', {'episode_id': started['episode_id'], 'start_key': started['start_key'],
+                                                    'swarm_id': swarm_id, 'error': str(exc)[:500]})
+        except Conflict:
+            # The first failure to close this swarm is already recorded.
+            pass
+        return None
+
+
+def _hive_result(memory, run, result, receipt_id):
+    """Log the check result of an attempt in its swarm as a verified command basis that every agent can see.
+
+    A passing check supports the hypothesis entry of the attempt and a failing check challenges it. An
+    attempt without such an entry, for example one cancelled before it ran, receives an observation.
+    """
+    attempt = run['snapshot']['focus']
+    binding = run['snapshot'].get('hive')
+    started = next((item for item in _receipts(memory, run['episode_id'], start_key=attempt['start_key'], name='FocusStarted')), {})
+    if not binding or not started.get('swarm_id'):
+        return None
+    passed = result['check_passed']
+    target = (((run['metrics'] or {}).get('hive') or {}).get('opening') or {}).get('hypothesis_id')
+    agent = binding['agent_id']
+    bases = [{'kind': 'command', 'value': receipt_id}]
+    detail = result['evidence_summary'][:hive.DETAIL_LIMIT]
+    if target:
+        move = 'support' if passed else 'challenge'
+        verdict = 'passed' if passed else 'failed'
+        outcome = 'confirmed' if passed else 'ruled out'
+        fields = {'claim': f'The check {verdict} for {agent}, so its hypothesis {target} is {outcome}.', 'target': target,
+                  'detail': detail, 'bases': bases}
+    else:
+        move = 'observation'
+        verdict = 'passed' if passed else 'did not pass'
+        fields = {'claim': f'The check {verdict} for {agent} in attempt {attempt["attempt"]}.', 'detail': detail, 'bases': bases}
+    payload = {'episode_id': run['episode_id'], 'start_key': attempt['start_key'], 'run_id': run['id'], 'swarm_id': started['swarm_id']}
+    try:
+        with hive.Hive(hive.path_for(memory)) as store:
+            entry = hive.log(store, started['swarm_id'], FOCUS_ACTOR, move=move, request_key='check:' + run['id'], fields=fields,
+                             memory=memory)
+        payload['entry_id'] = entry['id']
+    except (InvalidRecord, Conflict, sqlite3.Error) as exc:
+        payload['error'] = str(exc)[:500]
+    _receipt(memory, 'FocusHiveRecorded', payload)
+    return payload
 
 
 def _requested(memory, run):
@@ -372,10 +467,26 @@ def start(memory, episode_id, *, request_key, actor):
         raise InvalidRecord(START_USER_ONLY)
     _text(request_key, 'request_key', 180)
     settle(memory, episode_id)
+    opened = {}
+    try:
+        runs = _start(memory, episode_id, request_key, opened)
+    except (InvalidRecord, Conflict):
+        if opened.get('swarm_id'):
+            _close_swarm(memory, {'episode_id': episode_id, 'start_key': request_key, **opened}, HIVE_ABANDONED, main_memory=False)
+        raise
+    if runs is None:
+        return view(memory, episode_id)
+    for run in runs:
+        delegation.launch(memory, run)
+    return view(memory, episode_id)
+
+
+def _start(memory, episode_id, request_key, opened):
+    """Check and request the attempts of a start in one transaction. Return None for a repeated request key."""
     with memory._write():
         receipts = _receipts(memory, episode_id)
         if any(item['name'] == 'FocusStarted' and item['start_key'] == request_key for item in receipts):
-            return view(memory, episode_id)
+            return None
         block = (planning.latest(memory, episode_id, 'work_plan') or {}).get('focus')
         if not block:
             raise InvalidRecord('Record the focused problem before starting it.')
@@ -385,8 +496,8 @@ def start(memory, episode_id, *, request_key, actor):
             raise InvalidRecord(NOT_ELIGIBLE)
         if _running(receipts):
             raise Conflict(ALREADY_RUNNING)
-        opened = [item for item in _hypotheses(memory, episode_id) if item['state'] == 'open']
-        if not opened:
+        hypotheses = [item for item in _hypotheses(memory, episode_id) if item['state'] == 'open']
+        if not hypotheses:
             raise InvalidRecord(HYPOTHESIS_MISSING)
         config = reviews.configured(memory)
         if not config:
@@ -397,17 +508,17 @@ def start(memory, episode_id, *, request_key, actor):
             if (not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest() != item['sha256']
                     or not _committed(project, item['path'])):
                 raise InvalidRecord(CHECK_FILE_CHANGED.format(path=item['path']))
-        count = min(block.get('max_attempts', DEFAULT_ATTEMPTS), len(opened))
+        count = min(block.get('max_attempts', DEFAULT_ATTEMPTS), len(hypotheses))
+        opened['swarm_id'] = _open_swarm(memory, episode_id, block['problem'], str(project))
         started = {'episode_id': episode_id, 'start_key': request_key, 'mode': block.get('mode', 'relay'), 'attempts': count,
-                   'check': block['check'], 'hypothesis_ids': [item['id'] for item in opened[:count]]}
+                   'check': block['check'], 'hypothesis_ids': [item['id'] for item in hypotheses[:count]],
+                   'swarm_id': opened['swarm_id']}
         runs = [_request_attempt(memory, started, number, problem=block['problem'])
                 for number in range(1, (count if started['mode'] == 'parallel' else 1) + 1)]
         _receipt(memory, 'FocusStarted', started)
         for run in runs:
             _requested(memory, run)
-    for run in runs:
-        delegation.launch(memory, run)
-    return view(memory, episode_id)
+    return runs
 
 
 def rank(attempts):
@@ -482,6 +593,9 @@ def _block(memory, started, next_action=BLOCKED_NEXT_ACTION, reason=''):
                                      'reason': (reason + ' ' + next_action + ' ' + detail).strip()[:2000]},
                  request_key='focus-block:' + _scoped(episode_id, key), actor=FOCUS_ACTOR)
         _receipt(memory, 'FocusBlocked', {'episode_id': episode_id, 'start_key': key, 'hypotheses': hypotheses})
+    started = next(iter(_receipts(memory, episode_id, start_key=key, name='FocusStarted')), None)
+    if started:
+        _close_swarm(memory, started, (reason + ' ' + next_action).strip()[:2000])
 
 
 def _review(memory, run_id):
@@ -514,12 +628,16 @@ def judge(memory, run_id):
         if prior:
             return {field: value for field, value in prior.items() if field != 'name'}
         entry = next(item for item in _hypotheses(memory, episode_id) if item['id'] == result['hypothesis_id'])
-        memory.record(episode_id, 'hypothesis', {'statement': entry['statement'], 'approach': entry['approach'],
-                      'state': 'confirmed' if result['check_passed'] else 'ruled_out', 'run_id': run_id,
-                      'attempt': attempt['attempt'], 'evidence_summary': result['evidence_summary']},
-                      expected_version=memory.episode(episode_id)['version'], request_key='focus-result:' + run_id,
-                      actor=FOCUS_ACTOR, supersedes=entry['record_id'])
-        _receipt(memory, 'FocusCheckRecorded', result)
+        payload = {'statement': entry['statement'], 'approach': entry['approach'],
+                   'state': 'confirmed' if result['check_passed'] else 'ruled_out', 'run_id': run_id,
+                   'attempt': attempt['attempt'], 'evidence_summary': result['evidence_summary']}
+        hive_entry = (((run['metrics'] or {}).get('hive') or {}).get('opening') or {}).get('hypothesis_id')
+        if hive_entry:
+            payload['hive_entry_id'] = hive_entry
+        memory.record(episode_id, 'hypothesis', payload, expected_version=memory.episode(episode_id)['version'],
+                      request_key='focus-result:' + run_id, actor=FOCUS_ACTOR, supersedes=entry['record_id'])
+        receipt_id = _receipt(memory, 'FocusCheckRecorded', result)
+    _hive_result(memory, run, result, receipt_id)
     _advance(memory, run)
     return result
 
@@ -598,6 +716,9 @@ def after_review(memory, review_run_id):
             _block(memory, {'episode_id': episode_id, 'start_key': key}, REVIEW_FAILED_NEXT_ACTION)
         else:
             summary(memory, episode_id)
+            started = next(iter(_receipts(memory, episode_id, start_key=key, name='FocusStarted')), None)
+            if started:
+                _close_swarm(memory, started, f'The selected attempt passed its check and its work review. Merge state: {merged}.')
     return result
 
 

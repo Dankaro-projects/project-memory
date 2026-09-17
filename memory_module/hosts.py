@@ -24,6 +24,17 @@ ENVIRONMENT = {'codex': 'PROJECT_MEMORY_CODEX_BIN', 'claude': 'PROJECT_MEMORY_CL
 UNAVAILABLE_WITHOUT_UNTIL = timedelta(minutes=60)
 STDERR_TAIL_BYTES = 16 * 1024
 WORK_TOOLS = 'Read,Glob,Grep,Edit,Write,Bash'
+# The settings of a Claude worker: hooks disabled, and shell commands confined to the operating system sandbox, which
+# limits writes to the worktree. A run fails at startup when the sandbox cannot start, and no command runs outside it,
+# so a shell command cannot write to the hive or start a hive server that logs as another agent.
+WORK_SETTINGS = json.dumps({'disableAllHooks': True, 'sandbox': {'enabled': True, 'failIfUnavailable': True,
+                                                                 'autoAllowBashIfSandboxed': True, 'allowUnsandboxedCommands': False}},
+                           separators=(',', ':'))
+# The one MCP server a delegated worker of a swarm receives, and the tools Claude may call on it.
+HIVE_SERVER = 'hive'
+HIVE_TOOLS = ('hive_log', 'hive_query', 'hive_resume')
+HIVE_NAME_TAKEN = ('The Codex configuration defines an MCP server named hive, which the hive server of a delegated worker '
+                   'needs. Rename that server in the Codex configuration, then delegate the work again.')
 
 # Ordered from the most specific wording to the most general.
 UNAVAILABLE_PATTERNS = (
@@ -111,22 +122,59 @@ def _review_arguments(host, project, folder, prompt):
             '--json-schema', (folder / 'schema.json').read_text(), '--system-prompt', prompt]
 
 
-def work_command(host, worktree, folder, prompt):
-    """Build the command line for delegated work that may edit files inside the worktree."""
+def toml_value(value):
+    """A TOML value for a Codex override. Characters outside ASCII stay literal, because TOML rejects the surrogate
+    pairs that JSON uses for characters outside the Basic Multilingual Plane."""
+    return json.dumps(value, ensure_ascii=False)
+
+
+def hive_server(binding):
+    """The command and arguments of the restricted hive server for one worker.
+
+    binding holds hive (the hive file), db (the project database), swarm_id, agent_id and role.
+    The server offers only hive_log, hive_query and hive_resume, bound to that swarm and agent.
+    """
+    from .install import python_args
+    launch = python_args('memory_module.cli')
+    # Each value is joined to its option with =, so a value that begins with a dash stays the value of its option.
+    arguments = ['hive-serve', '--hive=' + str(binding['hive']), '--swarm=' + binding['swarm_id'], '--agent=' + binding['agent_id'],
+                 '--role=' + binding['role'], '--db=' + str(binding['db'])]
+    return {'command': launch[0], 'args': launch[1:] + arguments}
+
+
+def work_command(host, worktree, folder, prompt, hive=None):
+    """Build the command line for delegated work that may edit files inside the worktree.
+
+    Hooks and every configured MCP server stay disabled. A run that belongs to a swarm passes
+    hive, the binding of hive_server, and receives exactly one MCP server: the hive server.
+    """
     _host(host)
     folder = Path(folder)
+    server = hive_server(hive) if hive else None
     if host == 'codex':
         _, servers = _codex_config_overrides(worktree)
+        hive_overrides = []
+        if server:
+            if 'mcp_servers.' + HIVE_SERVER + '.enabled=false' in servers:
+                raise InvalidRecord(HIVE_NAME_TAKEN)
+            hive_overrides = ['-c', 'mcp_servers.' + HIVE_SERVER + '.command=' + toml_value(server['command']),
+                              '-c', 'mcp_servers.' + HIVE_SERVER + '.args=' + toml_value(server['args'])]
         args = ['codex', 'exec', '--ephemeral', '--skip-git-repo-check', '--sandbox', 'workspace-write',
                 '-C', str(worktree), '-c', 'approval_policy="never"', '-c', 'features.hooks=false', '-c', 'features.plugins=false',
                 '-c', 'features.apps=false', '-c', 'features.multi_agent=false',
                 '-c', 'memories.use_memories=false', '-c', 'memories.generate_memories=false',
-                '-c', 'web_search="disabled"', *servers,
+                '-c', 'web_search="disabled"', *servers, *hive_overrides,
                 '--output-schema', str(folder / 'schema.json'), '--output-last-message', str(folder / 'answer.json'), '--json', '-']
     else:
+        configured = {'mcpServers': {}}
+        allowed = WORK_TOOLS
+        if server:
+            configured['mcpServers'][HIVE_SERVER] = {'type': 'stdio', 'command': server['command'], 'args': server['args']}
+            allowed += ',' + ','.join('mcp__' + HIVE_SERVER + '__' + name for name in HIVE_TOOLS)
         args = ['claude', '-p', '--restricted', '--no-session-persistence', '--output-format', 'stream-json', '--verbose', '--permission-mode', 'dontAsk',
-                '--setting-sources', '', '--settings', '{"disableAllHooks":true}', '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}',
-                '--disable-slash-commands', '--tools', WORK_TOOLS, '--allowedTools', WORK_TOOLS,
+                '--setting-sources', '', '--settings', WORK_SETTINGS, '--strict-mcp-config',
+                '--mcp-config', json.dumps(configured, separators=(',', ':')),
+                '--disable-slash-commands', '--tools', WORK_TOOLS, '--allowedTools', allowed,
                 '--json-schema', (folder / 'schema.json').read_text(), '--system-prompt', prompt]
     program = executable(host)
     if program:

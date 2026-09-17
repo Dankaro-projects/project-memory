@@ -2,7 +2,9 @@
  * Project Memory control panel: views_work.js registers the Now, Plan, Work and Decisions views and the "work" and
  * "decision" drawers. Buttons open the forms of forms.js: plan {episode_id} or {parent_id, item_type}, comment,
  * allow_paths {episode_id, paths}, delegate, review {episode_id, role} and answer_kickoff {question_ids}. The drawers
- * draw the lineage with Panel.lineageGraph of graphs.js, and runs open the "run" drawer of views_knowledge.js.
+ * draw the lineage with Panel.lineageGraph of graphs.js, and runs open the "run" drawer of views_knowledge.js. A work item
+ * with a focused problem shows its check, its attempts side by side and its report, with the focus_check and
+ * focus_start forms {episode_id}.
  */
 (() => {
   "use strict";
@@ -361,6 +363,67 @@
         (run.report.findings || []).length ? section("Findings", textList(run.report.findings.map((finding) => finding.summary || finding.finding || finding))) : null,
         (run.report.checks_run || []).length ? section("Checks run by the agent", h("ul", null, run.report.checks_run.map((check) => h("li", null, `${check.command}: ${check.outcome}`)))) : null)));
   }
+  // Focused problem: independent attempts on one problem, decided by a check that only the user sets.
+  const FOCUS_BUSY = ["running", "reviewing"];
+  const seconds = (ms) => (typeof ms === "number" ? P.count(Math.round(ms / 100) / 10, "second") : null);
+  const commandText = (command) => command.map((part) => (/\s/.test(part) ? JSON.stringify(part) : part)).join(" ");
+  function checkResult(attempt) {
+    if (attempt.check_passed === true) return ["passed", "The check passed with exit code 0."];
+    if (attempt.timed_out) return ["failed", "The check did not finish within its time limit."];
+    if (typeof attempt.exit_code === "number") return ["failed", `The check failed with exit code ${attempt.exit_code}.`];
+    return attempt.check_passed === false ? ["not_started", "The check did not run for this attempt."] : ["queued", "The check has not run yet."];
+  }
+  function focusAttempt(attempt, hypotheses) {
+    const hypothesis = hypotheses.get(attempt.hypothesis_id) || {}, [tone, result] = checkResult(attempt), review = attempt.review_state;
+    return h("section", { class: "card", dataset: { key: "focus-attempt-" + attempt.attempt } },
+      h("h3", null, "Attempt " + attempt.attempt, attempt.selected ? chip("Selected") : null),
+      h("div", { class: "row" }, chip(P.words(attempt.host)), P.badge(attempt.run_state)),
+      kv([["Hypothesis", hypothesis.statement], ["Approach", hypothesis.approach], ["Check result", P.badge(tone, result)],
+        ["Check duration", seconds(attempt.duration_ms)], ["Changed lines", typeof attempt.changed_lines === "number" ? String(attempt.changed_lines) : null],
+        ["Review verdict", review ? P.badge(review, P.words(review)) : "No work review is recorded."],
+        ["Merge", attempt.merge_state ? P.words(attempt.merge_state) : null], ["Rerouted from", attempt.rerouted_from]]),
+      attempt.output_tail ? h("details", null, h("summary", null, "Last output of the check"), h("pre", { class: "source-text" }, attempt.output_tail)) : null,
+      button("Open the run", "focus-run-" + attempt.attempt, (t) => openRun({ id: attempt.run_id }, t), "small"));
+  }
+  function focusReport(report) {
+    const checks = report.checks, starts = P.count(report.problems, "start");
+    const listed = (counts) => Object.entries(counts).map(([name, n]) => P.words(name) + ": " + n).join(", ") || null;
+    return h("section", { class: "stack", dataset: { key: "focus-report" } }, h("h3", null, "Report"),
+      h("p", null, `${starts} recorded ${P.count(report.attempts, "attempt")}. ${checks.passed} passed the check, ${checks.failed} failed it and ` +
+        `${checks.not_run} did not run it. ${report.solved} ${verb(report.solved, "start", "starts")} ended with a passing review, ` +
+        `${report.blocked} ended blocked and ${report.running} ${verb(report.running, "is", "are")} still running.`),
+      kv([["Attempts per host", listed(report.hosts)], ["Tokens", report.tokens.toLocaleString("en")], ["Agent time", seconds(report.run_duration_ms)],
+        ["Check time", seconds(report.check_duration_ms)], ["Review verdicts", listed(report.reviews)],
+        ["First attempt sufficient", `${report.first_attempt_sufficient} of ${starts}`]]),
+      h("p", { class: "muted" }, report.basis));
+  }
+  async function focusSection(host, card, ctx) {
+    const focus = await P.get("focus", { id: card.id }).catch((error) => ({ error }));
+    if (focus.error) return focus.error.notIncluded ? null : put(host, section("Focused problem", P.errorState(focus.error)));
+    if (!focus.focus) return null;
+    const block = focus.focus, check = block.check, context = { episode_id: card.id };
+    const hypotheses = new Map(focus.hypotheses.map((item) => [item.id, item]));
+    // The server refuses both actions in a panel that an assistant started, so the panel says so instead of offering them.
+    const actions = !ctx.canEdit || FOCUS_BUSY.includes(focus.state) ? null : (P.health() || {}).assistant_started
+      ? h("p", { class: "notice" }, "This control panel was started from inside an assistant session, so it does not set the check or start the attempts. Start the control panel from your own terminal to record them.")
+      : h("div", { class: "row" }, P.formButton("Set the check", "focus_check", context, { class: "small" }),
+        focus.eligible && check ? P.formButton("Start the attempts", "focus_start", context, { class: "small primary" }) : null);
+    put(host, section("Focused problem",
+      h("div", { class: "row" }, P.badge(focus.state), chip(P.words(block.mode) + " mode"), chip(P.count(block.max_attempts, "attempt") + " allowed")),
+      h("p", null, block.problem),
+      check ? kv([["Check command", h("code", null, commandText(check.command))], ["Time limit", P.count(check.timeout_seconds, "second")],
+        ["Protected files", check.files.length ? h("div", { class: "row" }, check.files.map((file) => chip(file.path, { class: "chip mono" }))) : "The check names no file of the project."],
+        ["Set", P.date(check.set_at)]])
+        : h("p", { class: "notice", dataset: { tone: "review" } }, "No check is set. The user sets the check before any attempt starts, because the check runs a command on this computer."),
+      h("p", { class: "muted" }, focus.eligible ? focus.reasons.map((item) => item.reason).join(" ")
+        : "Attempts start only when the work item is blocked, when an earlier delegated run failed its review or its check, or when an outcome repeats a guarded failure."),
+      actions,
+      focus.attempts.length ? h("div", { class: "compare", dataset: { key: "focus-attempts" } }, focus.attempts.map((attempt) => focusAttempt(attempt, hypotheses)))
+        : h("p", { class: "muted" }, "No attempt has started yet."),
+      section("Ruled out hypotheses", listOf(focus.hypotheses.filter((item) => item.state === "ruled_out"),
+        (item) => h("div", { class: "stack" }, h("strong", null, item.statement), h("span", { class: "muted" }, item.evidence_summary)), "No hypothesis is ruled out yet.")),
+      focusReport(focus.report)));
+  }
   P.registerDrawer("work", { async render(body, params, ctx) {
       const offset = remembered.history.get(params.id) || 0;
       const work = await P.get("work", { id: params.id });
@@ -371,7 +434,7 @@
       const reviews = work.reviews || {}, runs = (work.runs || {}).runs || [], step = work.next || {};
       const dependencyIssues = new Set((card.issues || []).filter((issue) => issue.type === "dependency").map((issue) => issue.episode_id));
       const titles = new Map(((work.lineage || {}).nodes || []).map((node) => [node.id, node.title]));
-      const lineageHost = h("div", { class: "stack" });
+      const lineageHost = h("div", { class: "stack" }), focusHost = h("div", { class: "stack", dataset: { key: "work-focus" } });
       put(body,
         h("div", { class: "row" }, P.badge(card.state), card.recorded_state && card.recorded_state !== card.state ? chip("Recorded as " + lower(P.words(card.recorded_state))) : null,
           chip(P.words(card.subject)), plan && plan.priority && plan.priority !== "normal" ? chip(P.words(plan.priority) + " priority") : null,
@@ -402,7 +465,7 @@
           h("p", { class: "muted" }, reviews.configured === false ? "No agent host is configured, so agent checks and delegation cannot run."
             : reviews.current ? `The current ${P.words(reviews.current.role).toLowerCase()} check is ${P.words(reviews.current.state).toLowerCase()}.` : "No outcome check is required yet."),
           listOf(runs, (run) => runButton(run, "work-run-"), "No agent run is recorded."), checkReports(reviews)),
-        lineageHost,
+        focusHost, lineageHost,
         section("History", history.error ? P.errorState(history.error) : [
           h("p", { class: "muted" }, history.total ? `Records ${history.offset + 1} to ${history.offset + history.records.length} of ${history.total} are shown, oldest first.` : "No history is recorded."),
           listOf(history.records, (record) => openItem("work-history-" + record.id, (t) => openNode(record, t),
@@ -411,7 +474,7 @@
             history.offset > 0 ? button("Earlier records", "work-history-previous", () => { remembered.history.set(card.id, Math.max(0, history.offset - history.limit)); P.refresh(); }, "small") : null,
             history.more ? (P.live ? button("Later records", "work-history-next", () => { remembered.history.set(card.id, history.offset + history.limit); P.refresh(); }, "small")
               : h("p", { class: "muted" }, "This snapshot includes the first page of history only.")) : null)]));
-      await lineageBlock(lineageHost, card.id, work.lineage);
+      await Promise.all([lineageBlock(lineageHost, card.id, work.lineage), focusSection(focusHost, card, ctx)]);
   } });
 
   // Decisions.

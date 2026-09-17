@@ -7,7 +7,8 @@ with different content raises Conflict.
 
 Agent run actions (delegate, merge, discard, review, cancel_run,
 request_work_review, focus_check and focus_start) run outside the action transaction, because they start
-processes or run git. Their own request keys make them idempotent.
+processes or run git. Their own request keys make them idempotent. The hive actions (hive_post,
+hive_close and hive_purge) also run outside it, because the hive is a second database beside the project.
 """
 from . import codex_host
 from .core import InvalidRecord, Conflict, USER_ACTOR as USER, dumps, _text, _digest
@@ -18,7 +19,8 @@ from .shared import prior_result, run_summary, store_result
 KEY_REUSED = 'This action key was already used for different changes.'
 RECORD_OPERATIONS = ('plan', 'sprint', 'comment', 'requirements', 'lesson_review', 'allow_paths', 'link', 'component',
                      'answer_kickoff', 'instructions', 'phase', 'reassess')
-RUN_OPERATIONS = ('delegate', 'merge', 'discard', 'review', 'cancel_run', 'request_work_review', 'focus_check', 'focus_start')
+RUN_OPERATIONS = ('delegate', 'merge', 'discard', 'review', 'cancel_run', 'request_work_review', 'focus_check', 'focus_start',
+                  'hive_post', 'hive_close', 'hive_purge')
 # Promotion actions write to the machine memory, which is a second database, so they run outside the
 # action transaction of this project, as the agent run actions do.
 MACHINE_OPERATIONS = ('promotion', 'machine_rule')
@@ -44,6 +46,9 @@ FIELDS = {
     'request_work_review': ({'run_id'}, {'max_seconds'}),
     'focus_check': ({'episode_id', 'command', 'timeout_seconds'}, set()),
     'focus_start': ({'episode_id'}, set()),
+    'hive_post': ({'swarm_id', 'move', 'claim'}, {'detail', 'target', 'addressee', 'bases', 'reply_to'}),
+    'hive_close': ({'swarm_id', 'summary'}, set()),
+    'hive_purge': ({'closed_before_days'}, set()),
     'promotion': ({'promotion_id', 'status', 'reason'}, {'rule', 'basis'}),
     'machine_rule': ({'rule_id', 'status', 'reason'}, set()),
 }
@@ -66,6 +71,10 @@ MESSAGES = {
     'request_work_review': 'Select the delegated work run to review again.',
     'focus_check': 'Select the work item and write the check command as separate arguments, with its timeout in seconds.',
     'focus_start': 'Select the work item whose focused problem should start.',
+    'hive_post': 'Select the swarm and the move, and write the claim. A question needs its addressee, an answer its target '
+                 'question and an observation at least one basis.',
+    'hive_close': 'Select the swarm to close and write its summary.',
+    'hive_purge': 'Give the number of days since a swarm closed. Older closed swarms are removed.',
     'promotion': 'Select the proposed promotion, accept or decline it, and give the reason.',
     'machine_rule': 'Select the machine rule, set the status to retired and give the reason.',
 }
@@ -482,6 +491,50 @@ def focus_start(memory, data, request_key, first):
     return focus.start(memory, data['episode_id'], request_key=request_key + ':focus-start', actor=USER)
 
 
+# Hive actions. The user takes part in a swarm as workspace-user and decides when a swarm closes or is removed.
+
+HIVE_MISSING = 'This project has no hive yet, so there is no swarm to change. A swarm opens when agents start to work together.'
+
+
+def _hive(memory):
+    from . import hive
+    path = hive.path_for(memory)
+    if not path.exists():
+        raise InvalidRecord(HIVE_MISSING)
+    return hive.Hive(path)
+
+
+def hive_post(memory, data, request_key, first):
+    """Post a question, an answer or an observation to a swarm as the user. Agents receive it in their hive context."""
+    from . import hive
+    from .guards import project_root
+    if data['move'] not in hive.USER_MOVES:
+        raise InvalidRecord('The user posts a question, an answer or an observation in a swarm.', moves=list(hive.USER_MOVES))
+    fields = {name: data[name] for name in ('claim', 'detail', 'target', 'addressee', 'bases', 'reply_to')
+              if data.get(name) not in (None, '', [])}
+    with _hive(memory) as store:
+        # The user joins once per swarm. A file basis is checked against the files of this project.
+        hive.join(store, data['swarm_id'], agent_id=USER, role='user', host=USER, worktree=project_root(memory))
+        result = hive.log(store, data['swarm_id'], USER, move=data['move'], request_key=request_key + ':hive-post',
+                          fields=fields, memory=memory)
+    return {**result, 'swarm_id': data['swarm_id'], 'agent_id': USER}
+
+
+def hive_close(memory, data, request_key, first):
+    """Close a swarm and distill it: conclusions are marked, lessons are proposed and a summary note is recorded."""
+    from . import hive
+    with _hive(memory) as store:
+        return hive.close(store, data['swarm_id'], summary=data['summary'], request_key=request_key + ':hive-close', memory=memory)
+
+
+def hive_purge(memory, data, request_key, first):
+    """Remove whole swarms that closed at least the given number of days ago. The main memory keeps a receipt with counts."""
+    from . import hive
+    path = hive.path_for(memory)
+    with hive.Hive(path, read_only=not path.exists()) as store:
+        return hive.purge(store, memory, closed_before_days=data['closed_before_days'], actor=USER)
+
+
 def request_work_review(memory, data, request_key, first):
     """Request a new work review for a completed delegated run whose review failed, stopped or never started."""
     from . import delegation
@@ -522,4 +575,5 @@ def machine_rule(memory, data, request_key, first):
 
 RUN_HANDLERS = {'delegate': delegate, 'merge': merge, 'discard': discard, 'review': review, 'cancel_run': cancel_run,
                 'request_work_review': request_work_review, 'promotion': promotion, 'machine_rule': machine_rule,
-                'focus_check': focus_check, 'focus_start': focus_start}
+                'focus_check': focus_check, 'focus_start': focus_start, 'hive_post': hive_post, 'hive_close': hive_close,
+                'hive_purge': hive_purge}

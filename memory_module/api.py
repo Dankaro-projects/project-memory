@@ -702,9 +702,74 @@ def machine(memory, params):
     return value
 
 
+def focus(memory, params):
+    """The focused problem of one work item with the output of each check, or the totals of every focused problem.
+
+    With an id the answer is focus.view, and each attempt also carries the output tail, the timeout flag and the
+    evidence summary of its recorded check. Without an id the answer is focus.report for the whole project.
+    """
+    from . import focus as focused
+    episode_id = _text(params, 'id', limit=200)
+    if not episode_id:
+        return focused.report(memory)
+    value = focused.view(memory, episode_id)
+    checks = {}
+    if codex_host.exists(memory):
+        rows = memory.db.execute("SELECT payload FROM host_receipts WHERE episode_id=? AND event_name='FocusCheckRecorded' "
+                                 "ORDER BY rowid", (episode_id,)).fetchall()
+        for item in rows:
+            payload = json.loads(item[0])
+            checks[payload.get('run_id')] = payload
+    for attempt in value['attempts']:
+        recorded = checks.get(attempt['run_id'], {})
+        attempt.update({key: recorded.get(key) for key in ('output_tail', 'timed_out', 'evidence_summary')})
+    return value
+
+
+HIVE_ENTRY_LIMIT = 500
+HIVE_ENTRY_FIELDS = ('id', 'seq', 'move', 'claim', 'detail', 'confidence', 'addressed_to', 'created_at', 'bases')
+
+
+def hive(memory, params):
+    """The swarms of the hive of this project, or one swarm as the timeline of the control panel.
+
+    Without an id the answer is hive.swarms, a page of swarms with state, kind, agents and counts.
+    With an id the answer holds the swarm, its agents with the phase of each one, and every entry
+    as the observer of the control panel sees it: agent and host, move, claim, confidence, bases
+    with their verification, links in both directions and the confirmation or dispute of a
+    conclusion. The hive file is opened read only and is never created here.
+    """
+    from . import hive as store
+    swarm_id = _text(params, 'id', limit=200)
+    with store.Hive(store.path_for(memory), read_only=True) as opened:
+        if not swarm_id:
+            value = store.swarms(opened, limit=_int(params, 'limit', 50, 1, 100), offset=_int(params, 'offset', 0, 0, 10**9))
+            return {**value, 'exists': opened.db is not None}
+        bundle = store._bundle(opened, swarm_id)
+        swarm = store._swarm_row(bundle['swarm'])
+        counts = {}
+        for entry in bundle['entries']:
+            counts[entry['agent_id']] = counts.get(entry['agent_id'], 0) + 1
+        agents = []
+        for agent in bundle['agents'].values():
+            phase = 'open' if store._revealed(bundle, agent) else 'blind'
+            agents.append({key: agent[key] for key in ('agent_id', 'host', 'role', 'run_id', 'joined_at', 'revealed_at')}
+                          | {'phase': phase, 'entries': counts.get(agent['agent_id'], 0)})
+        entries = []
+        for entry in bundle['entries'][:HIVE_ENTRY_LIMIT]:
+            author = bundle['agents'].get(entry['agent_id']) or {}
+            entries.append({key: entry[key] for key in HIVE_ENTRY_FIELDS}
+                           | {'agent': entry['agent_id'], 'host': author.get('host'), 'data': entry['data'],
+                              'links_out': [{'to': link['to'], 'relation': link['relation']} for link in entry['links_out']],
+                              'links_in': [{'from': link['from'], 'relation': link['relation']} for link in entry['links_in']],
+                              'confirmed': store._confirmation(bundle, entry, memory), 'disputed': store._dispute(bundle, entry)})
+        return {'swarm': swarm, 'agents': agents, 'entries': entries, 'total': len(bundle['entries']),
+                'more': len(bundle['entries']) > HIVE_ENTRY_LIMIT, 'max_seq': store.max_seq(opened)}
+
+
 ENDPOINTS = {
     'health': health, 'now': now, 'board': board, 'sprints': sprints, 'work': work, 'records': page, 'record': record, 'run': run,
     'lineage': lineage, 'work_graph': work_graph, 'architecture': architecture, 'learning': learning,
     'agents': agents, 'requirements': requirements, 'coverage': coverage, 'kickoff': kickoff, 'plan': plan,
-    'components': components, 'machine': machine,
+    'components': components, 'machine': machine, 'focus': focus, 'hive': hive,
 }

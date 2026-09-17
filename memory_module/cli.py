@@ -169,6 +169,17 @@ def main(argv=None):
     mach.add_argument('--db',help='The project database that init records in the registry.')
     mach.add_argument('--role',choices=['assistant','worker','reviewer'],help='Read the rules composed into the prompt of this role.')
     mach.add_argument('--limit',type=int,default=50)
+    hive_server=sub.add_parser('hive-serve',help='The restricted MCP server of a delegated worker: hive_log, hive_query and hive_resume for one swarm and agent.')
+    hive_server.add_argument('--hive',required=True,help='The hive file, .memory/hive.sqlite beside the project database.')
+    hive_server.add_argument('--swarm',required=True)
+    hive_server.add_argument('--agent',required=True)
+    hive_server.add_argument('--role',required=True)
+    hive_server.add_argument('--db',help='The project database, used read only to verify command and source bases. Defaults to project.sqlite beside the hive.')
+    hive_parser=sub.add_parser('hive',help='The shared record of agents that work together.')
+    hive_parser.add_argument('action',choices=['purge'],help='purge removes whole swarms that closed before the given number of days.')
+    hive_parser.add_argument('--closed-before',type=int,required=True,metavar='DAYS')
+    hive_parser.add_argument('--project',default=os.environ.get('PROJECT_MEMORY_PROJECT',os.getcwd()))
+    hive_parser.add_argument('--db')
     hook=sub.add_parser('hook');hook.add_argument('--db');hook.add_argument('--host',choices=sorted(codex_host.HOSTS),default='codex')
     hook.add_argument('--if-unmanaged',action='store_true')
     hook.add_argument('--project',default=os.environ.get('PROJECT_MEMORY_PROJECT',os.getcwd()))
@@ -189,6 +200,20 @@ def main(argv=None):
                 result['viewer']=open_viewer(start(result['database']))
         elif args.command=='uninstall':result=uninstall(args.project,args.client)
         elif args.command=='machine':result=machine_command(args)
+        elif args.command=='hive-serve':
+            from .mcp import serve_hive
+            path=Path(args.hive).resolve()
+            db=Path(args.db).resolve() if args.db else path.parent/'project.sqlite'
+            serve_hive(path,args.swarm,args.agent,args.role,sys.stdin,sys.stdout,db=db if db.exists() else None)
+            return 0
+        elif args.command=='hive':
+            from .hive import Hive, path_for, purge
+            from .core import USER_ACTOR
+            with Memory(require_database(args)) as memory:
+                path=path_for(memory)
+                with Hive(path,read_only=not path.exists()) as store:
+                    # A purge from the terminal is an action of the user.
+                    result=purge(store,memory,closed_before_days=args.closed_before,actor=USER_ACTOR)
         elif args.command=='hook':
             if args.if_unmanaged and install_state(args).get('clients',{}).get(args.host,{}).get('hook_command'):
                 print('{}');return 0
