@@ -1,6 +1,18 @@
 # Changelog
 
-## 0.6.0b1 (16 September 2026)
+## 0.6.0b1 (17 September 2026)
+
+Agents improve between runs. Accepted rules can target a role, and the instructions for the assistant, the worker and the reviewer are composed from a base text the user edits in the control panel plus the matching rules, within a fixed budget per role, with every omission reported. The panel shows how often each rule was used and whether its failure recurred. A failure stays counted until the user reassesses it, because an agent cannot clear its own failure by recording a later outcome.
+
+A project is in development or in production. In development the orchestrator merges delegated work after a passing review; in production the merge belongs to the user in the control panel, and a panel started from inside an assistant session refuses it. A machine memory above the project memories keeps a registry of projects and rules that apply across them; a project may propose a rule and only the user accepts it, after mechanical checks refuse project names, paths, identifiers, addresses and host names.
+
+A focused problem lets several attempts work on one problem, one after another or in parallel. Each attempt declares its own hypothesis, attempts alternate between hosts, and a check that only the user sets decides the result in a clean checkout of the attempt's commit. The first passing attempt goes to cross review and the usual merge rules. The check for this feature was written before its implementation, which Codex then wrote in a delegated run.
+
+The hive is a separate database where agents that work together record typed entries such as hypotheses, observations, challenges, conclusions and patterns. Entries are validated mechanically, near duplicates and unsupported claims are refused with a correction, agents can be kept blind to others' positions until they state their own, and confirmed patterns become lesson proposals. Delegated workers receive only the hive server. The panel shows each swarm as a live timeline where the user can post.
+
+Codex, Claude, Grok and OpenCode are described by host profiles. Grok and OpenCode may review; Grok may work only after a probe for its installed version, and OpenCode not before a container runner exists. A usage ledger in the machine memory counts tokens, cost and Codex limit windows from delegated runs and from local session logs, storing counts only. Host choice prefers the host with the most headroom. `project-memory usage` and `project-memory host probe` are new, and the panel gains Usage, Focus and Hive views.
+
+Known limits in this release: the operating system sandboxes of the hosts limit writes but not reads, so a worker can read files outside its worktree; Grok still reads AGENTS.md and its own user skills; the MCP tool list has almost no room left under its size limit.
 
 The same project model now serves a software product, a consulting engagement and a workflow automation. `project-memory init` creates a project from one of three templates, with starter documents, phase work items and kickoff questions. `memory_get kickoff` reports the open questions, the research still needed and the documents that are not yet filled, and `answer_kickoff` records the answers the user gives. Work items carry a type, acceptance criteria and a parent, so phases, epics, stories, research items, deliverables and workflows form one hierarchy. Interface text describes work items, deliverables and components rather than assuming that work is code.
 
