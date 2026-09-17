@@ -28,9 +28,15 @@ FOCUS_ALLOWANCE = {'views': 5_300, 'forms.js': 2_700}
 # The stylesheet budget is unchanged: the two hive rules fit inside it.
 HIVE_ALLOWANCE = {'views': 10_200, 'forms.js': 4_400}
 HIVE_LIMIT = 20_000
-TOTAL_SCRIPT_CHARACTERS = 196_000 + sum(FOCUS_ALLOWANCE.values()) + sum(HIVE_ALLOWANCE.values())
+# Allowance for the Usage view (section 16.5): at most 8,000 code characters of JavaScript. Measured on 17 September 2026:
+# the joined scripts held 216,571 code characters before the view and 220,895 after it, a growth of 4,324, all in
+# views_knowledge.js with the host cards and the table of routing decisions. The view has no form, so forms.js, core.js
+# and the stylesheet are unchanged, and the allowance is 4,400 for the view files.
+USAGE_ALLOWANCE = {'views': 4_400}
+USAGE_LIMIT = 8_000
+TOTAL_SCRIPT_CHARACTERS = 196_000 + sum(FOCUS_ALLOWANCE.values()) + sum(HIVE_ALLOWANCE.values()) + sum(USAGE_ALLOWANCE.values())
 FILE_BUDGETS = {'core.js': 36_000, 'forms.js': 37_000 + FOCUS_ALLOWANCE['forms.js'] + HIVE_ALLOWANCE['forms.js'], 'graphs.js': 41_000}
-VIEW_CHARACTERS = 82_000 + FOCUS_ALLOWANCE['views'] + HIVE_ALLOWANCE['views']
+VIEW_CHARACTERS = 82_000 + FOCUS_ALLOWANCE['views'] + HIVE_ALLOWANCE['views'] + USAGE_ALLOWANCE['views']
 STYLE_CHARACTERS = 27_000
 SHELL_CHARACTERS = 6_600
 
@@ -89,6 +95,14 @@ class InterfaceBudgetTests(unittest.TestCase):
         self.assertIn('P.registerView("hive"', views)
         self.assertIn('P.formButton("Purge closed swarms", "hive_purge"', views)
         self.assertIn('P.formButton("Close the swarm", "hive_close"', views)
+
+    def test_the_budget_is_measured_with_the_usage_view_in_place(self):
+        # The usage allowance pays for the view, its host cards and its routing table, so the budget may not be met by removing them.
+        self.assertLessEqual(sum(USAGE_ALLOWANCE.values()), USAGE_LIMIT)
+        views = (UI / 'views_knowledge.js').read_text(encoding='utf-8')
+        self.assertIn('P.registerView("usage"', views)
+        self.assertIn('function usageCard(item, data)', views)
+        self.assertIn('section("Routing decisions of recent runs"', views)
 
 
 if __name__ == '__main__':

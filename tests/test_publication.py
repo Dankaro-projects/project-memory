@@ -37,6 +37,19 @@ class PublicationTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             check_member('project_memory_mcp-1.dist-info/results/session.json', b'{}', 'wheel')
 
+    def test_usage_fixtures_are_public_source_but_not_runtime_files(self):
+        name = 'tests/fixtures/usage/codex/sessions/rollout-sample.fixture'
+        check_member(name, b'{}')
+        check_member(name, b'{}', 'sdist')
+        for rejected, kind in ((name, 'wheel'), ('tests/fixtures/usage/session.jsonl', 'source'),
+                               ('tests/fixtures/other/session.fixture', 'source'),
+                               ('tests/fixtures/usage/session.fixture', 'source')):
+            with self.subTest(name=rejected, kind=kind):
+                with self.assertRaises(ValueError):
+                    check_member(rejected, b'{}', kind)
+        with self.assertRaises(ValueError):
+            check_member(name, b'/' + b'Users/private-person/project/session.jsonl')
+
     def test_repo_check_catches_staged_ignored_files_and_new_reports(self):
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as directory:
             root = Path(directory)

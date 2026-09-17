@@ -99,6 +99,42 @@ CREATE TRIGGER IF NOT EXISTS immutable_registry_delete BEFORE DELETE ON machine_
  SELECT RAISE(ABORT,'A registered project cannot be deleted.'); END;
 '''
 REGISTRY_MARKER = 'immutable_registry_delete'
+# The usage ledger of section 16.2, written by usage.py. It records numbers, times and short fixed names only: no
+# message content, prompt, file path, project name or session title. A log file is known by a digest of its file
+# system identity, and an entry by a digest of what makes it unique, so a second collection changes nothing.
+USAGE_SCHEMA = '''
+CREATE TABLE IF NOT EXISTS usage_files (
+ identity TEXT PRIMARY KEY, source TEXT NOT NULL, read_offset INTEGER NOT NULL, size INTEGER NOT NULL,
+ modified_ns INTEGER NOT NULL, head_length INTEGER NOT NULL, head_digest TEXT NOT NULL, state TEXT NOT NULL,
+ updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS usage_records (
+ entry TEXT PRIMARY KEY, host TEXT NOT NULL, kind TEXT NOT NULL, started_at TEXT NOT NULL, ended_at TEXT NOT NULL,
+ input_tokens INTEGER, cached_input_tokens INTEGER, cache_write_tokens INTEGER, output_tokens INTEGER,
+ reasoning_tokens INTEGER, total_tokens INTEGER, cost REAL, currency TEXT, duration_ms INTEGER, recorded_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS usage_record_time ON usage_records(host, ended_at);
+CREATE TABLE IF NOT EXISTS usage_limits (
+ host TEXT NOT NULL, limit_id TEXT NOT NULL, window TEXT NOT NULL, used_percent REAL NOT NULL, window_minutes INTEGER,
+ resets_at TEXT, observed_at TEXT NOT NULL, PRIMARY KEY (host, limit_id, window)
+);
+CREATE TABLE IF NOT EXISTS usage_limit_hits (
+ entry TEXT PRIMARY KEY, host TEXT NOT NULL, reason TEXT NOT NULL, hit_at TEXT NOT NULL, until TEXT
+);
+CREATE INDEX IF NOT EXISTS usage_limit_hit_time ON usage_limit_hits(host, hit_at);
+'''
+USAGE_MARKER = 'usage_limit_hit_time'
+USAGE_TABLES = ('usage_files', 'usage_records', 'usage_limits', 'usage_limit_hits')
+
+
+def ensure_usage(machine):
+    """Create the tables of the usage ledger in the machine memory, once."""
+    _ensure(machine, USAGE_SCHEMA, USAGE_MARKER)
+
+
+def has_usage(machine):
+    """True when the usage ledger exists, so a read path never creates it."""
+    return _table_exists(machine, 'usage_records')
 
 
 # The machine database.

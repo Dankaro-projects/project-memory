@@ -10,6 +10,9 @@ a recurrence; a rule accepted for every agent role and a reviewer base text save
 by the user; a proposed lesson; a scope block receipt; a completed delegated run
 with a passing work review that awaits a merge; authored components with links;
 one rule accepted into the machine memory and one promotion that awaits the user;
+a usage ledger in the machine memory with Codex at 91 percent of its window, a
+Claude limit hit that has not reset and a passing Grok probe, and a routing
+decision on the delegated run and on its work review;
 and project files for the template (a small source tree, engagement documents or
 exported n8n workflows).
 
@@ -26,6 +29,7 @@ The script prints JSON with the project, the database path, the record ids and,
 with --serve, the URL of the live control panel.
 """
 import argparse
+from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 import os
@@ -488,7 +492,7 @@ class Builder:
                                                   'host': 'codex'})
         self.ids['scope_block'] = receipt['id'] if isinstance(receipt, dict) else receipt
 
-    def run_row(self, role, host, state, *, parent=None, report, metrics, snapshot_extra=None, run_id=None, episode_id=None):
+    def run_row(self, role, host, state, *, parent=None, report, metrics, snapshot_extra=None, run_id=None, episode_id=None, routing=None):
         """Insert one finished run. Finished rows are immutable, so every value is final at insert."""
         run_id = run_id or 'check_' + uuid.uuid4().hex
         story = episode_id or self.ids['story']
@@ -497,11 +501,12 @@ class Builder:
         now = self.m.now()
         with self.m._write():
             self.m.db.execute('''INSERT INTO review_runs (id,episode_id,role,signature,host,session_id,state,created_at,updated_at,
-                request_key,snapshot,report,metrics,error,parent_run,workspace,branch) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+                request_key,snapshot,report,metrics,error,parent_run,workspace,branch,routing) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
                               (run_id, story, role, 'fixture', host, '', state, now, now, 'fixture:run:' + run_id,
                                json.dumps(snapshot), json.dumps(report), json.dumps(metrics), '', parent,
                                '.memory/worktrees/' + run_id if role == 'work' else None,
-                               'pm/' + story[8:16] + '-' + run_id[6:14] if role == 'work' else None))
+                               'pm/' + story[8:16] + '-' + run_id[6:14] if role == 'work' else None,
+                               json.dumps(routing) if routing else None))
             name = 'DelegationRequested' if role == 'work' else 'WorkReviewRequested'
             codex_host.receipt(self.m, session_id=run_id, event_name=name, episode_id=story, key=run_id + ':requested',
                                payload={'run_id': run_id, 'role': role, 'host': host, 'parent_run': parent})
@@ -521,7 +526,10 @@ class Builder:
                                diff, 'tool', subject=spec['subject'])
         # Both runs name the rules they composed, so the Learning view can count the runs of a rule.
         worker_rules = [self.ids['rule'], self.ids['guard']]
-        self.run_row('work', 'codex', 'completed', run_id=work, report=report,
+        routing = {'preferred': 'claude', 'reason': 'headroom', 'decided_at': self.m.now(),
+                   'sentence': 'The preferred host claude was not chosen because it hit a usage limit that resets in one hour. '
+                               'The codex host was chosen because it has the most headroom among the hosts that are not constrained.'}
+        self.run_row('work', 'codex', 'completed', run_id=work, report=report, routing={**routing, 'host': 'codex'},
                      metrics={'changed_files': changed, 'commit': 'f1x7ure0', 'diff_source': source['id'],
                               'instruction_role': 'worker', 'instruction_source': 'instructions:worker',
                               'rule_ids': worker_rules, 'rules_omitted': []})
@@ -529,6 +537,8 @@ class Builder:
                   'checks': [{'criterion': 'C001', 'evidence': 'The diff changes only the allowed paths.', 'result': 'met'}],
                   'findings': [], 'lesson_proposals': []}
         review_id = self.run_row('work_review', 'claude', 'pass', parent=work, report=review,
+                                 routing={'host': 'claude', 'preferred': 'claude', 'reason': 'preferred', 'decided_at': self.m.now(),
+                                          'sentence': 'The preferred host claude was chosen because it is not constrained.'},
                                  metrics={'input_tokens': 10, 'instruction_role': 'reviewer',
                                           'instruction_source': 'instructions:reviewer',
                                           'rule_ids': [self.ids['rule']], 'rules_omitted': []})
@@ -672,6 +682,33 @@ class Builder:
         self.ids.update(machine_rule=result['machine_rule_id'], accepted_promotion=accepted['id'],
                         proposed_promotion=waiting['id'])
 
+    def usage_ledger(self):
+        """Usage of this machine: Codex at 91 percent of its 5 hour window, a Claude limit hit that has not reset,
+        OpenCode runs with a cost, and a passing probe of Grok. Only counts, times and states are written."""
+        now = datetime.now(timezone.utc)
+        stamp = lambda value: value.isoformat(timespec='microseconds')
+        path = machine.database_path()
+        machine.initialize(path)
+        with Memory(path) as store:
+            machine.ensure_usage(store)
+            if not codex_host.exists(store):
+                codex_host.initialize(store)
+            with store._write():
+                for index, (host, hours, total, cost) in enumerate((('codex', 1, 48000, None), ('codex', 30, 120000, None),
+                                                                    ('claude', 2, 36000, None), ('opencode', 3, 28291, 0.085))):
+                    ended = stamp(now - timedelta(hours=hours))
+                    store.db.execute('INSERT INTO usage_records (entry,host,kind,started_at,ended_at,input_tokens,output_tokens,total_tokens,'
+                                     'cost,currency,recorded_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
+                                     ('fixture-' + str(index), host, 'session' if cost is None else 'run', ended, ended,
+                                      total - 1000, 1000, total, cost, 'USD' if cost is not None else None, stamp(now)))
+                store.db.execute("INSERT INTO usage_limits VALUES ('codex','codex','primary',91,300,?,?)",
+                                 (stamp(now + timedelta(hours=2)), stamp(now)))
+                store.db.execute("INSERT INTO usage_limit_hits VALUES ('fixture-hit','claude','usage_limit',?,?)",
+                                 (stamp(now - timedelta(minutes=5)), stamp(now + timedelta(hours=1))))
+                codex_host.receipt(store, session_id='probe:grok', event_name=hosts.PROBE_EVENT, key='fixture:probe:grok',
+                                   payload={'host': 'grok', 'version': 'grok 0.2.93', 'runner': 'process', 'passed': True,
+                                            'roles': ['review', 'work'], 'checks': [], 'measured': {}, 'seconds': 41.0})
+
     def components(self):
         created = {}
         for key, title, kind, description, status, path, actor in self.spec['components']:
@@ -723,6 +760,7 @@ def build(kind, output, with_focus=False, with_hive=False):
         builder.delegated_run()
         builder.components()
         builder.machine_memory()
+        builder.usage_ledger()
         if with_hive:
             builder.open_hive_swarm()
         if with_focus:

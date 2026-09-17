@@ -168,3 +168,34 @@ The machine memory holds promoted rules and the registry. It holds no customer n
 ## Agent hosts
 
 Configuring Codex or Claude Code also enables agent checks and delegated work through that installed CLI and account. Those runs consume the account's usage. Configuring both hosts lets a check run on a host other than the one that did the work, and lets a delegated run reroute when one host reports a usage limit. See [agent checks and delegated work](agents.md).
+
+Project Memory knows four hosts. Each has a profile that states its command lines, how its answer is read and which roles it may take.
+
+| Host | Program | Roles before a probe | Roles after a passing probe |
+| --- | --- | --- | --- |
+| Codex | `codex` | review and work | review and work |
+| Claude Code | `claude` | review and work | review and work |
+| Grok | `grok` | review | review and work |
+| OpenCode | `opencode` | review | review |
+
+A program is found through `PROJECT_MEMORY_<HOST>_BIN`, then the search path, then its install folder in your home folder (`~/.grok/bin/grok` and `~/.opencode/bin/opencode`). A host that is not installed or not signed in is reported unavailable, and the other hosts keep working. OpenCode takes no work, because it offers no sandbox.
+
+### The usage of each host
+
+```sh
+project-memory usage
+project-memory usage --json
+```
+
+The command collects usage from the local logs of Codex and Claude Code and from the runs of every registered project, then prints the tokens of each host for the last 5 hours, the current day and the last 7 days, the cost where a host reports it, the latest reported limit state with its reset time, and which of these data are unavailable for each host. The ledger lives in the machine memory. It stores counts, times and limit states only: no message content, prompt, file path, project name or session title. Collection is incremental, so a second run over unchanged logs reads nothing. A forked Codex session that replays the reports of its parent is counted once, and a value too large to be a real count is skipped. It also runs at the end of each Project Memory run. There is no background service. The Usage view of the control panel shows the same ledger and the routing decisions of the recent runs of the project.
+
+### The probe of a host
+
+```sh
+project-memory host probe grok
+project-memory host probe codex --timeout 600
+```
+
+The probe starts the real host, so it spends tokens. Run it yourself in a terminal; it refuses to run from inside an assistant session. It checks that a small task returns a structured answer, that token usage can be read from the event log, and that a canned limit message is classified with its reset time, which needs no model. For a host that may work it also checks that a shell write outside the worktree is refused and, for Codex and Claude Code, that a write through the hive server is accepted. For Grok it checks that no MCP server or skill of your configuration is visible to it, and that a worker cannot write into the Grok configuration folder (`~/.grok`, or `GROK_HOME`), where later runs load hooks and configuration. The probe removes its file from that folder afterwards. This last check rests on the report of the host itself.
+
+Each probe is recorded in the machine memory with the host, its installed version, each check and the roles it allows. Grok takes delegated work only while the latest probe of its installed version passed, so an upgrade of Grok needs a new probe.

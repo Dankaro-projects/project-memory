@@ -12,7 +12,7 @@ const { pathToFileURL } = require("node:url");
 
 const ROOT = path.resolve(__dirname, "../..");
 const PYTHON = process.env.MEMORY_PYTHON || "python";
-const RAIL = ["Now", "Plan", "Work", "Architecture", "Dependencies", "Decisions", "Learning", "Agents", "Machine", "Hive", "Records", "Requirements"];
+const RAIL = ["Now", "Plan", "Work", "Architecture", "Dependencies", "Decisions", "Learning", "Agents", "Machine", "Hive", "Usage", "Records", "Requirements"];
 // nodes is the number of items the architecture graph shows before any filter or toggle is changed.
 const KINDS = {
   product: { template: "Software product template", architecture: "Components and packages", items: /2 code components/, nodes: 3 },
@@ -291,6 +291,31 @@ async function views(page, kind, expected) {
   assert.equal(await page.locator('#main [data-key^="retire-rule-"]').count(), 1);
   step(`${kind}: Machine lists the promoted rule, its adoption count, the registry and the waiting proposal`);
 
+  // The Usage view reads the ledger of the fixture machine memory: Codex at 91 percent and a Claude limit hit constrain both.
+  await go(page, "#usage");
+  assert.match(await text(page, "#main .sentence"), /^Usage was measured at .+ UTC\. 2 hosts are constrained\.$/);
+  assert.equal(await page.locator('#main [data-key^="usage-host-"]').count(), 4);
+  const codexCard = await text(page, '[data-key="usage-host-codex"]');
+  assert.match(codexCard, /Constrained/);
+  assert.match(codexCard, /168,000 tokens/);
+  assert.match(codexCard, /91 percent of the 300 minute window codex, which resets at .+ UTC\./);
+  assert.match(codexCard, /Configured for this project/);
+  assert.match(await text(page, '[data-key="usage-host-claude"]'), /A limit was hit \(usage limit\) and resets at .+ UTC\./);
+  const grokCard = await text(page, '[data-key="usage-host-grok"]');
+  assert.match(grokCard, /Not constrained/);
+  assert.match(grokCard, /Passed for version grok 0\.2\.93 on .+ UTC\. Roles: review and work\./);
+  assert.match(await text(page, '[data-key="usage-host-opencode"]'), /0\.09 USD/);
+  assert.equal(await page.locator('#main tr[data-key^="routing-"]').count(), 2);
+  assert.match(await text(page, "#main table.data"), /Most headroom\s*The preferred host claude was not chosen/);
+  step(`${kind}: Usage shows each host with its windows, cost, limit state, probe and the routing decisions of recent runs`);
+  await page.setViewportSize({ width: 390, height: 900 });
+  await settle(page);
+  const usageBoxes = await page.locator('#main [data-key^="usage-host-"], #main tr[data-key^="routing-"]').evaluateAll((nodes) => nodes.map((node) => node.getBoundingClientRect().right));
+  assert.ok(usageBoxes.length === 6 && usageBoxes.every((right) => right <= 390), `${kind}: a usage card or routing row sits off a 390 pixel screen: ${usageBoxes}`);
+  await noOverflow(page, 390, `${kind} #usage`);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  step(`${kind}: the Usage cards and routing rows stay on a 390 pixel screen`);
+
   await go(page, "#records");
   assert.ok(await page.locator("#main table.data").count() >= 1, "the records view lists no records");
   await go(page, "#requirements");
@@ -298,7 +323,7 @@ async function views(page, kind, expected) {
   step(`${kind}: Records and Requirements render their current state`);
 
   for (const width of [1440, 768, 390, 320]) {
-    for (const hash of ["#now", "#plan", "#work", "#architecture", "#decisions", "#learning", "#machine", "#hive"]) {
+    for (const hash of ["#now", "#plan", "#work", "#architecture", "#decisions", "#learning", "#machine", "#hive", "#usage"]) {
       await go(page, hash);
       await noOverflow(page, width, `${kind} ${hash}`);
     }
@@ -648,6 +673,10 @@ async function focused(browser, directory) {
   assert.match(await text(offline, "#main"), /not included in this snapshot/);
   assert.deepEqual(offlineProblems, [], "the Hive view of the snapshot logged console or page errors");
   step("hive: the read only snapshot names the hive as not included");
+  await go(offline, "#usage");
+  assert.match(await text(offline, "#main"), /The usage ledger stays on the computer that holds it, so a snapshot carries no usage\./);
+  assert.deepEqual(offlineProblems, [], "the Usage view of the snapshot logged console or page errors");
+  step("usage: the read only snapshot names the usage ledger as not included");
   await offline.close();
   return fixture;
 }

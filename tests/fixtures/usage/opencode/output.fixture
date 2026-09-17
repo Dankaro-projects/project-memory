@@ -1,0 +1,5 @@
+{"type":"step_start","timestamp":1789549200000,"sessionID":"ses_sample","part":{"id":"prt_sample_1","sessionID":"ses_sample","messageID":"msg_sample","type":"step-start"}}
+{"type":"text","timestamp":1789549201000,"sessionID":"ses_sample","part":{"id":"prt_sample_2","type":"text","text":"SENTINEL-CONTENT-7431 an invented review with step_finish and cost words."}}
+{"type":"step_finish","timestamp":1789549260000,"sessionID":"ses_sample","part":{"id":"prt_sample_3","sessionID":"ses_sample","messageID":"msg_sample","type":"step-finish","reason":"tool-calls","tokens":{"total":1500,"input":1400,"output":60,"reasoning":40,"cache":{"read":0,"write":0}},"cost":0.0123}}
+{"type":"step_finish","timestamp":1789549800000,"sessionID":"ses_sample","part":{"id":"prt_sample_4","sessionID":"ses_sample","messageID":"msg_sample","type":"step-finish","reason":"stop","tokens":{"total":500,"input":300,"output":50,"reasoning":0,"cache":{"read":150,"write":0}},"cost":0.004}}
+{"type":"step_finish","timestamp":

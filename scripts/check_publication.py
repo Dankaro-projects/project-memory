@@ -61,7 +61,14 @@ def source_file(name):
         or (path.parent.as_posix() in {'scripts', 'tests', 'tests/integration', 'tests/browser'}
             and path.suffix == '.py' and not path.name.startswith('.'))
         or (path.parent.as_posix() == 'tests/browser' and path.suffix == '.cjs')
+        or usage_fixture(path)
     )
+
+
+def usage_fixture(path):
+    """Hand written host log shapes that the usage tests read, never recorded logs."""
+    return (path.parts[:3] == ('tests', 'fixtures', 'usage') and len(path.parts) > 4
+            and path.suffix == '.fixture' and not path.name.startswith('.'))
 
 
 def check_member(name, body, kind='source'):

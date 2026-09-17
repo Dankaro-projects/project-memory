@@ -726,6 +726,41 @@ def focus(memory, params):
     return value
 
 
+ROUTING_LIMIT = 20
+
+
+def usage(memory, params):
+    """The usage ledger of this machine for each host, the latest probe of each host and the routing decisions of the
+    recent runs of this project.
+
+    The machine memory is opened read only and nothing is collected here: collection runs with project-memory usage
+    and at the end of each run. A ledger that cannot be read is reported as an error instead of failing the view.
+    """
+    import sqlite3
+    from . import hosts, machine as store, reviews, usage as ledger
+    from .core import MemoryError
+    limit = _int(params, 'limit', ROUTING_LIMIT, 1, 100)
+    try:
+        value = ledger.report(collect_first=False)
+    except (MemoryError, sqlite3.Error, OSError, ValueError) as exc:
+        value = {'database': str(store.database_path()), **ledger.summary(None), 'error': str(exc)}
+    try:
+        value['probes'] = hosts.probe_results()
+    except (MemoryError, sqlite3.Error, OSError, ValueError) as exc:
+        value['probes'] = {}
+        value['probe_error'] = str(exc)
+    config = reviews.configured(memory)
+    value['configured_hosts'] = (config or {}).get('hosts', [])
+    value['routing'] = []
+    if reviews.exists(memory) and 'routing' in {row[1] for row in memory.db.execute('PRAGMA table_info(review_runs)')}:
+        rows = memory.db.execute('SELECT id,episode_id,role,host,state,created_at,routing FROM review_runs WHERE routing IS NOT NULL '
+                                 'ORDER BY rowid DESC LIMIT ?', (limit,)).fetchall()
+        value['routing'] = [{**{key: row[key] for key in ('id', 'episode_id', 'role', 'host', 'state', 'created_at')},
+                             **{key: decision.get(key) for key in ('preferred', 'reason', 'sentence', 'decided_at')}}
+                            for row in rows for decision in [json.loads(row['routing'])]]
+    return value
+
+
 HIVE_ENTRY_LIMIT = 500
 HIVE_ENTRY_FIELDS = ('id', 'seq', 'move', 'claim', 'detail', 'confidence', 'addressed_to', 'created_at', 'bases')
 
@@ -771,5 +806,5 @@ ENDPOINTS = {
     'health': health, 'now': now, 'board': board, 'sprints': sprints, 'work': work, 'records': page, 'record': record, 'run': run,
     'lineage': lineage, 'work_graph': work_graph, 'architecture': architecture, 'learning': learning,
     'agents': agents, 'requirements': requirements, 'coverage': coverage, 'kickoff': kickoff, 'plan': plan,
-    'components': components, 'machine': machine, 'focus': focus, 'hive': hive,
+    'components': components, 'machine': machine, 'focus': focus, 'hive': hive, 'usage': usage,
 }

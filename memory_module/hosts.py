@@ -1,5 +1,8 @@
 """Agent host executables, command lines, run supervision, log parsing and availability.
 
+Every host is described by its profile in host_profiles.py; this module reads the profiles instead of branching on
+host names.
+
 Callers build a command line here and run it through Supervisor, which owns the
 one loop that agent checks and delegated work share. Run logs are read in
 bounded chunks, and metrics never copy command output or host messages; a
@@ -10,31 +13,26 @@ import json
 import os
 from pathlib import Path
 import re
+import shlex
 import shutil
 import signal
+import sqlite3
 import subprocess
+import tempfile
 import time
 import uuid
 
-from .core import InvalidRecord, _text, _time
-from . import codex_host
+from .core import InvalidRecord, Memory as ProjectMemory, MemoryError as ProjectMemoryError, _text, _time
+from . import codex_host, host_profiles
+# Names that callers and tests read from hosts; the profiles own them.
+from .host_profiles import HIVE_NAME_TAKEN, HIVE_SERVER, HIVE_TOOLS, WORK_SETTINGS, WORK_TOOLS, hive_server, toml_value  # noqa: F401
 
-HOSTS = ('codex', 'claude')
-ENVIRONMENT = {'codex': 'PROJECT_MEMORY_CODEX_BIN', 'claude': 'PROJECT_MEMORY_CLAUDE_BIN'}
+# The hosts that may work without a probe. Availability and choice default to them; every profile is a known host.
+HOSTS = host_profiles.work_hosts()
+KNOWN_HOSTS = host_profiles.NAMES
+ENVIRONMENT = {name: profile.environment_variable for name, profile in host_profiles.PROFILES.items()}
 UNAVAILABLE_WITHOUT_UNTIL = timedelta(minutes=60)
 STDERR_TAIL_BYTES = 16 * 1024
-WORK_TOOLS = 'Read,Glob,Grep,Edit,Write,Bash'
-# The settings of a Claude worker: hooks disabled, and shell commands confined to the operating system sandbox, which
-# limits writes to the worktree. A run fails at startup when the sandbox cannot start, and no command runs outside it,
-# so a shell command cannot write to the hive or start a hive server that logs as another agent.
-WORK_SETTINGS = json.dumps({'disableAllHooks': True, 'sandbox': {'enabled': True, 'failIfUnavailable': True,
-                                                                 'autoAllowBashIfSandboxed': True, 'allowUnsandboxedCommands': False}},
-                           separators=(',', ':'))
-# The one MCP server a delegated worker of a swarm receives, and the tools Claude may call on it.
-HIVE_SERVER = 'hive'
-HIVE_TOOLS = ('hive_log', 'hive_query', 'hive_resume')
-HIVE_NAME_TAKEN = ('The Codex configuration defines an MCP server named hive, which the hive server of a delegated worker '
-                   'needs. Rename that server in the Codex configuration, then delegate the work again.')
 
 # Ordered from the most specific wording to the most general.
 UNAVAILABLE_PATTERNS = (
@@ -52,94 +50,77 @@ UNITS = {'d': 'days', 'h': 'hours', 'm': 'minutes', 's': 'seconds'}
 
 
 def _host(host):
-    if host not in HOSTS:
-        raise InvalidRecord('The agent host must be codex or claude.', allowed=list(HOSTS))
-    return host
+    return host_profiles.get(host).name
+
+
+def profile(host):
+    """The profile of a known host."""
+    return host_profiles.get(host)
+
+
+def roles(host, probed=False):
+    """The roles a host may take, before or after a passing probe for its installed version."""
+    return profile(host).roles(probed)
+
+
+def allows(host, role, probed=False):
+    """True when the profile of the host allows the role: review for every check, work for delegated work."""
+    return (host_profiles.WORK if role == 'work' else host_profiles.REVIEW) in roles(host, probed)
+
+
+def _override(host):
+    return os.environ.get(ENVIRONMENT[host], '').strip()
+
+
+def _installed_copy(found):
+    """The first install location of the profile below the home folder, or None."""
+    for relative in found.install_paths:
+        path = Path.home() / relative
+        if path.is_file():
+            return str(path)
+    return None
 
 
 def executable(host):
-    """Return the host program from the environment override or the search path."""
-    override = os.environ.get(ENVIRONMENT[_host(host)], '').strip()
+    """Return the host program from the environment override, the search path or the install location of its profile."""
+    found = profile(host)
+    override = _override(found.name)
     if override:
         return override
-    return shutil.which(host)
-
-
-def _codex_config_overrides(project):
-    """Return the configured model and the arguments that disable every configured MCP server."""
-    import tomllib
-    config_path = Path(os.environ.get('CODEX_HOME', str(Path.home() / '.codex'))) / 'config.toml'
-    config = tomllib.loads(config_path.read_text()) if config_path.exists() else {}
-    model = []
-    if isinstance(config.get('model'), str):
-        model = ['-m', config['model']]
-    servers = []
-    # Only a server that the loaded configuration defines can be disabled. Codex reads the user
-    # configuration and the working directory's own .codex/config.toml, so naming a server from a
-    # parent directory would create an entry that carries no command and no address, which Codex
-    # rejects as an invalid transport before the run starts.
-    seen = set()
-    for path in [config_path, Path(project) / '.codex/config.toml']:
-        if not path.exists():
-            continue
-        for name in tomllib.loads(path.read_text()).get('mcp_servers', {}):
-            if not re.fullmatch(r'[A-Za-z0-9_-]+', name):
-                raise InvalidRecord('The review host cannot safely disable the MCP server named ' + name + '.')
-            if name in seen:
-                continue
-            seen.add(name)
-            servers += ['-c', 'mcp_servers.' + name + '.enabled=false']
-    return model, servers
+    return shutil.which(found.program) or _installed_copy(found)
 
 
 def review_command(host, project, folder, prompt):
     """Build the read-only review command line.
 
-    The arguments are the former reviews.command body. An environment override
-    replaces the program name, so a host that availability() reports as
-    installed only through the override is also the program that runs.
+    An environment override replaces the program name, so a host that
+    availability() reports as installed only through the override is also the
+    program that runs. A program that is not on the search path but sits in the
+    install location of its profile runs from there.
     """
     args = _review_arguments(host, project, folder, prompt)
-    override = os.environ.get(ENVIRONMENT[host], '').strip() if host in ENVIRONMENT else ''
-    if override:
-        args[0] = override
+    found = profile(host)
+    program = _override(found.name)
+    if not program and found.install_paths and not shutil.which(found.program):
+        program = _installed_copy(found)
+    if program:
+        args[0] = program
     return args
 
 
 def _review_arguments(host, project, folder, prompt):
-    if host == 'codex':
-        model, servers = _codex_config_overrides(project)
-        overrides = model + servers
-        return ['codex', 'exec', '--ephemeral', '--skip-git-repo-check', '--sandbox', 'read-only',
-                '-C', project, '-c', 'approval_policy="never"', '-c', 'features.hooks=false', '-c', 'features.plugins=false',
-                '-c', 'features.apps=false', '-c', 'features.multi_agent=false', '-c', 'project_doc_max_bytes=0',
-                '-c', 'memories.use_memories=false', '-c', 'memories.generate_memories=false',
-                '-c', 'skills.include_instructions=false', '-c', 'web_search="disabled"', *overrides,
-                '--output-schema', str(folder / 'schema.json'), '--output-last-message', str(folder / 'answer.json'), '--json', '-']
-    return ['claude', '-p', '--restricted', '--no-session-persistence', '--output-format', 'stream-json', '--verbose', '--permission-mode', 'dontAsk',
-            '--setting-sources', '', '--settings', '{"disableAllHooks":true}', '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}',
-            '--disable-slash-commands', '--tools', 'Read,Glob,Grep', '--allowedTools', 'Read,Glob,Grep',
-            '--json-schema', (folder / 'schema.json').read_text(), '--system-prompt', prompt]
+    return profile(host).review(project, Path(folder), prompt)
 
 
-def toml_value(value):
-    """A TOML value for a Codex override. Characters outside ASCII stay literal, because TOML rejects the surrogate
-    pairs that JSON uses for characters outside the Basic Multilingual Plane."""
-    return json.dumps(value, ensure_ascii=False)
+def review_environment(host, project, folder, prompt):
+    """The variables a review run adds to the inherited environment, or an empty mapping.
 
-
-def hive_server(binding):
-    """The command and arguments of the restricted hive server for one worker.
-
-    binding holds hive (the hive file), db (the project database), swarm_id, agent_id and role.
-    The server offers only hive_log, hive_query and hive_resume, bound to that swarm and agent.
+    A profile may write its generated configuration into the run folder here, so call it once per run.
     """
-    from .install import python_args
-    launch = python_args('memory_module.cli')
-    # Each value is joined to its option with =, so a value that begins with a dash stays the value of its option.
-    arguments = ['hive-serve', '--hive=' + str(binding['hive']), '--swarm=' + binding['swarm_id'], '--agent=' + binding['agent_id'],
-                 '--role=' + binding['role'], '--db=' + str(binding['db'])]
-    return {'command': launch[0], 'args': launch[1:] + arguments}
+    found = profile(host)
+    if found.environment is None:
+        return {}
+    return found.environment(project, Path(folder), prompt)
 
 
 def work_command(host, worktree, folder, prompt, hive=None):
@@ -147,39 +128,29 @@ def work_command(host, worktree, folder, prompt, hive=None):
 
     Hooks and every configured MCP server stay disabled. A run that belongs to a swarm passes
     hive, the binding of hive_server, and receives exactly one MCP server: the hive server.
+    A host whose profile has no work builder is refused.
     """
-    _host(host)
-    folder = Path(folder)
-    server = hive_server(hive) if hive else None
-    if host == 'codex':
-        _, servers = _codex_config_overrides(worktree)
-        hive_overrides = []
-        if server:
-            if 'mcp_servers.' + HIVE_SERVER + '.enabled=false' in servers:
-                raise InvalidRecord(HIVE_NAME_TAKEN)
-            hive_overrides = ['-c', 'mcp_servers.' + HIVE_SERVER + '.command=' + toml_value(server['command']),
-                              '-c', 'mcp_servers.' + HIVE_SERVER + '.args=' + toml_value(server['args'])]
-        args = ['codex', 'exec', '--ephemeral', '--skip-git-repo-check', '--sandbox', 'workspace-write',
-                '-C', str(worktree), '-c', 'approval_policy="never"', '-c', 'features.hooks=false', '-c', 'features.plugins=false',
-                '-c', 'features.apps=false', '-c', 'features.multi_agent=false',
-                '-c', 'memories.use_memories=false', '-c', 'memories.generate_memories=false',
-                '-c', 'web_search="disabled"', *servers, *hive_overrides,
-                '--output-schema', str(folder / 'schema.json'), '--output-last-message', str(folder / 'answer.json'), '--json', '-']
-    else:
-        configured = {'mcpServers': {}}
-        allowed = WORK_TOOLS
-        if server:
-            configured['mcpServers'][HIVE_SERVER] = {'type': 'stdio', 'command': server['command'], 'args': server['args']}
-            allowed += ',' + ','.join('mcp__' + HIVE_SERVER + '__' + name for name in HIVE_TOOLS)
-        args = ['claude', '-p', '--restricted', '--no-session-persistence', '--output-format', 'stream-json', '--verbose', '--permission-mode', 'dontAsk',
-                '--setting-sources', '', '--settings', WORK_SETTINGS, '--strict-mcp-config',
-                '--mcp-config', json.dumps(configured, separators=(',', ':')),
-                '--disable-slash-commands', '--tools', WORK_TOOLS, '--allowedTools', allowed,
-                '--json-schema', (folder / 'schema.json').read_text(), '--system-prompt', prompt]
-    program = executable(host)
+    found = profile(host)
+    if found.work is None:
+        raise InvalidRecord(f'The {found.name} host does not take delegated work. Select a host whose profile allows work.')
+    args = found.work(worktree, Path(folder), prompt, hive=hive)
+    program = executable(found.name)
     if program:
         args[0] = program
     return args
+
+
+def work_environment(host, worktree, folder, prompt):
+    """The variables a work run adds to the inherited environment, or an empty mapping."""
+    found = profile(host)
+    if found.environment is None:
+        return {}
+    return found.environment(worktree, Path(folder), prompt)
+
+
+def usage(host, provider_usage):
+    """Token counts by kind and cost from the provider_usage of a run of the host; None marks a kind not reported."""
+    return profile(host).usage(provider_usage)
 
 
 def _strings(value, limit=64):
@@ -197,20 +168,27 @@ def _strings(value, limit=64):
     return found
 
 
-def parse_until(text, now=None):
+def _profile_or_none(host):
+    return host_profiles.PROFILES.get(host) if isinstance(host, str) else None
+
+
+def parse_until(text, now=None, host=None):
     """Return the ISO time when a host says it will accept work again, or None.
 
     A time that cannot be represented, for example a wait of millions of hours,
-    is treated as unknown rather than raising.
+    is treated as unknown rather than raising. A named host adds the relative
+    wordings of its profile after the shared ones.
     """
     now = now or datetime.now(timezone.utc)
-    match = RELATIVE_UNTIL.search(text)
-    if match:
-        unit = UNITS[match[2][0].lower()]
-        try:
-            return (now + timedelta(**{unit: float(match[1])})).isoformat()
-        except (OverflowError, ValueError):
-            return None
+    found = _profile_or_none(host)
+    for relative in (RELATIVE_UNTIL,) + (found.until_patterns if found else ()):
+        match = relative.search(text)
+        if match:
+            unit = UNITS[match[2][0].lower()]
+            try:
+                return (now + timedelta(**{unit: float(match[1])})).isoformat()
+            except (OverflowError, ValueError):
+                return None
     match = ISO_UNTIL.search(text)
     if match:
         value = match[1].replace(' ', 'T')
@@ -230,21 +208,32 @@ def parse_until(text, now=None):
     return None
 
 
-def unavailable(text, now=None):
-    """Return {'reason','until'} when the text reports a limit or missing login, otherwise None."""
+def unavailable(text, now=None, host=None):
+    """Return {'reason','until'} when the text reports a limit or missing login, otherwise None.
+
+    A named host adds the wordings of its profile after the shared patterns.
+    """
     if not isinstance(text, str) or not text.strip():
         return None
-    for reason, pattern in UNAVAILABLE_PATTERNS:
+    found = _profile_or_none(host)
+    for reason, pattern in UNAVAILABLE_PATTERNS + (found.unavailable_patterns if found else ()):
         if pattern.search(text):
-            return {'reason': reason, 'until': parse_until(text, now)}
+            return {'reason': reason, 'until': parse_until(text, now, host)}
     return None
 
 
 class RunLog:
-    """Incremental reader for host JSON event logs and their standard error file."""
+    """Incremental reader for host JSON event logs and their standard error file.
 
-    def __init__(self, folder):
+    Without a host it reads the Codex and Claude events. A named host adds the events of its profile.
+    Answer text is kept on the reader for the structured answer and never copied into the metrics.
+    """
+
+    def __init__(self, folder, host=None):
         self.folder = folder
+        self.host = host
+        self.profile = _profile_or_none(host)
+        self.answer_text = ''
         self.offset = 0
         self.pending = b''
         self.discarding = False
@@ -308,18 +297,35 @@ class RunLog:
             self.metrics['phase'] = 'awaiting_host'
         if kind=='result': self.result = value
         if kind in {'turn.completed','result'} and not value.get('is_error'):
-            self.metrics['phase'] = 'report_received'
-            # Retry notices before a successful completion were transient; the run itself succeeded.
-            self.completed = True
-            # A later successful completion recovers every earlier error, such as a stream that reconnected.
-            self.metrics['unrecovered_error_events'] = 0
-            self.metrics.pop('host_unavailable', None)
+            self.finish()
+        if self.profile and self.profile.event:
+            self.profile.event(self, kind, value)
+
+    def finish(self):
+        """Record a successful completion of the host's turn."""
+        self.metrics['phase'] = 'report_received'
+        # Retry notices before a successful completion were transient; the run itself succeeded.
+        self.completed = True
+        # A later successful completion recovers every earlier error, such as a stream that reconnected.
+        self.metrics['unrecovered_error_events'] = 0
+        self.metrics.pop('host_unavailable', None)
+
+    def append_text(self, chunk):
+        """Add a streamed chunk of answer text, keeping at most the last TEXT_LIMIT characters."""
+        self.answer_text = (self.answer_text + chunk)[-host_profiles.TEXT_LIMIT:]
+
+    def replace_text(self, text):
+        """Keep a complete text part of the answer as the latest one, at most TEXT_LIMIT characters."""
+        self.answer_text = text[-host_profiles.TEXT_LIMIT:]
+
+    def text(self):
+        return self.answer_text
 
     def detect(self, text):
         """Record a host unavailability found in text; a finding with a time replaces one without."""
         if self.completed:
             return
-        found = unavailable(text)
+        found = unavailable(text, host=self.host)
         if not found:
             return
         prior = self.metrics.get('host_unavailable')
@@ -410,12 +416,16 @@ class Supervisor:
     def returncode(self):
         return self.process.returncode if self.process else None
 
-    def run(self, args, *, cwd, folder):
-        """Start the host with prompt.txt as input and wait. Return (state, error) when stopped early, otherwise (None, '')."""
+    def run(self, args, *, cwd, folder, env=None):
+        """Start the host with prompt.txt as input and wait. Return (state, error) when stopped early, otherwise (None, '').
+
+        env holds variables added to the inherited environment; without them the host inherits it unchanged.
+        """
         metrics = self.metrics
         state, error = None, ''
+        environment = {**os.environ, **env} if env else None
         with (folder/'output.jsonl').open('w') as out, (folder/'stderr.log').open('w') as err, (folder/'prompt.txt').open() as incoming:
-            self.process = subprocess.Popen(args, cwd=cwd, stdin=incoming, stdout=out, stderr=err,
+            self.process = subprocess.Popen(args, cwd=cwd, stdin=incoming, stdout=out, stderr=err, env=environment,
                                             text=True, start_new_session=os.name != 'nt')
             flushed = 0
             while self.process.poll() is None:
@@ -461,15 +471,9 @@ class Supervisor:
 
 
 def host_answer(host, folder, log):
-    """Return the structured answer a host produced, or None."""
-    if host == 'codex' and (folder/'answer.json').exists():
-        return json.loads((folder/'answer.json').read_text())
-    if log.result:
-        candidate = log.result.get('structured_output')
-        if candidate is None and log.result.get('result'):
-            candidate = json.loads(log.result['result'])
-        return candidate
-    return None
+    """Return the structured answer a host produced, or None. A profile may refuse a missing or invalid answer."""
+    found = _profile_or_none(host) or profile('claude')
+    return found.read_answer(Path(folder), log)
 
 
 def unavailable_error(host, found):
@@ -554,18 +558,493 @@ def availability(memory, host):
     return result
 
 
-def choose(memory, preferred, *, allowed=None, exclude=()):
-    """Return the preferred host when it can run, otherwise another allowed host."""
+# Routing by headroom (section 16.3).
+#
+# A host is constrained when a receipt of this project marks it unavailable, when its latest reported use reaches
+# 85 percent in a window that has not reset, or when it hit a limit whose reset time has not passed. The last two
+# facts come from the usage ledger of this machine, because limits belong to the account and not to one project.
+
+ROUTE_REASONS = ('preferred', 'headroom', 'all_constrained', 'same_host', 'not_installed')
+
+
+def ledger_headroom(names, now):
+    """The headroom of each named host from the usage ledger of this machine, or None when the ledger cannot be read."""
+    from . import usage
+    try:
+        return usage.headroom(now=now, hosts=tuple(names))
+    except (ProjectMemoryError, OSError, sqlite3.Error, ValueError):
+        return None
+
+
+def _clock(value):
+    """A stored time as a short reading of the time in UTC, or the text unchanged."""
+    try:
+        return datetime.fromisoformat(value.replace('Z', '+00:00')).astimezone(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')
+    except (AttributeError, ValueError):
+        return str(value)
+
+
+def _why(option):
+    """The reasons that constrain one host, as one clause."""
+    parts = []
+    for reason in option['reasons']:
+        if reason == 'not_installed':
+            parts.append('it is not installed')
+        elif reason == 'marked_unavailable':
+            until = option.get('unavailable_until')
+            parts.append('it is marked unavailable' + (f' until {_clock(until)}' if until else ''))
+        elif reason == 'used_percent':
+            resets = option.get('resets_at')
+            parts.append(f'its reported use is {option["used_percent"]:g} percent of a window'
+                         + (f' that resets at {_clock(resets)}' if resets else ' that has not reset'))
+        elif reason == 'limit_hit':
+            until = option.get('limit_hit_until')
+            parts.append('it hit a usage limit' + (f' that resets at {_clock(until)}' if until else ' less than 60 minutes ago'))
+    return ' and '.join(parts)
+
+
+def _measure(option):
+    """The headroom that decided a choice, as one clause, or an empty text when nothing was reported."""
+    parts = []
+    if option['used_percent'] is not None:
+        parts.append(f'a reported use of {option["used_percent"]:g} percent')
+    # A load of zero means no recorded use in the last 5 hours, which every host shares on a new ledger, so it adds nothing.
+    if option['relative_load']:
+        parts.append(f'a load in the last 5 hours of {option["relative_load"]:g} times its own median')
+    return ' and '.join(parts)
+
+
+# Claude and Grok never report a percentage. For ranking, such a host counts as half used: it follows a host that
+# reports less than this and precedes a host that reports more, so a host that reports a high use does not win over a
+# host that cannot report one.
+UNREPORTED_PERCENT = 50
+
+
+def _rank(option, order):
+    """Constrained hosts last and a limit hit after them, then the lowest reported percentage, then the lowest load
+    relative to the host's own 7 day median, then the configured order. A host without a reported percentage ranks as
+    UNREPORTED_PERCENT. A host without a measured load follows the hosts whose load is measured, and a host with no
+    recorded use in the last 5 hours has a load of zero."""
+    percent = option['used_percent'] if option['used_percent'] is not None else UNREPORTED_PERCENT
+    return (option['constrained'], 'limit_hit' in option['reasons'], percent,
+            option['relative_load'] is None, option['relative_load'] or 0, order[option['host']])
+
+
+def route(memory, preferred, *, allowed=None, exclude=(), headroom=None):
+    """Choose a host by availability and headroom, and return the decision with its reason.
+
+    The preferred host is kept unless it is constrained. Otherwise the installed and available host with the most
+    headroom is chosen: the lowest reported percentage first, then the lowest load relative to its own median, then
+    the configured order. When every such host is constrained by the ledger, the one with the most headroom still
+    runs. A host that is not installed or that this project marked unavailable is never chosen. headroom maps a host
+    to the value of usage.host_headroom; without it the usage ledger of this machine is read.
+    """
     _host(preferred)
     allowed = list(HOSTS) if allowed is None else [_host(host) for host in allowed]
     candidates = [preferred] + [host for host in allowed if host != preferred]
     candidates = [host for host in candidates if host in allowed and host not in exclude]
+    now = datetime.fromisoformat(memory.now())
+    ledger = headroom if headroom is not None else ledger_headroom(candidates, now)
     reports = []
+    options = []
     for host in candidates:
         report = availability(memory, host)
         reports.append(report)
-        if report['installed'] and report['available']:
-            return host
-    raise InvalidRecord(
-        'No configured agent host is available. Install a host, wait until its limit resets, or mark it available again.',
-        availability=reports or [availability(memory, host) for host in HOSTS])
+        room = (ledger or {}).get(host) or {}
+        reasons = [] if report['installed'] else ['not_installed']
+        if not report['available']:
+            reasons.append('marked_unavailable')
+        reasons.extend(reason for reason in room.get('reasons') or [] if reason in ('used_percent', 'limit_hit'))
+        options.append({'host': host, 'installed': report['installed'], 'available': report['available'],
+                        'constrained': bool(reasons), 'reasons': reasons, 'unavailable_until': report['until'],
+                        'used_percent': room.get('used_percent'), 'resets_at': room.get('resets_at'),
+                        'limit_hit_until': (room.get('limit_hit') or {}).get('until'),
+                        'relative_load': room.get('relative_load')})
+    runnable = [option for option in options if option['installed'] and option['available']]
+    if not runnable:
+        raise InvalidRecord(
+            'No configured agent host is available. Install a host, wait until its limit resets, or mark it available again.',
+            availability=reports or [availability(memory, host) for host in HOSTS])
+    order = {host: allowed.index(host) for host in candidates}
+    first = options[0] if candidates and candidates[0] == preferred else None
+    if first and not first['constrained']:
+        chosen, reason = first, 'preferred'
+        sentence = f'The preferred host {preferred} was chosen because it is not constrained.'
+    else:
+        chosen = min(runnable, key=lambda option: _rank(option, order))
+        reason = 'all_constrained' if chosen['constrained'] else 'headroom'
+        if first is None:
+            sentence = f'The preferred host {preferred} is excluded from this choice.'
+        else:
+            sentence = f'The preferred host {preferred} was not chosen because {_why(first)}.'
+        measure = _measure(chosen)
+        if reason == 'headroom':
+            sentence += f' The {chosen["host"]} host was chosen because it has the most headroom among the hosts that are not constrained'
+        else:
+            sentence += (f' Every other allowed host is constrained too, so the {chosen["host"]} host was chosen because '
+                         f'it has the most headroom, although {_why(chosen)}')
+        sentence += (f', with {measure}.' if measure else '.')
+    return {'host': chosen['host'], 'preferred': preferred, 'reason': reason, 'sentence': sentence,
+            'decided_at': memory.now(), 'ledger_read': ledger is not None, 'hosts': options}
+
+
+def choose(memory, preferred, *, allowed=None, exclude=(), headroom=None):
+    """Return the preferred host when it can run and is not constrained, otherwise the allowed host with the most headroom."""
+    return route(memory, preferred, allowed=allowed, exclude=exclude, headroom=headroom)['host']
+
+
+# Probe for the process runner (section 16.4).
+#
+# `project-memory host probe HOST` runs the real host and spends tokens, so only the user starts it. Each probe is
+# recorded as a receipt in the machine memory, keyed by the host and its installed version, because the program and
+# its sign in belong to this machine. The receipt holds check names, states and plain sentences, never host output.
+
+PROBE_EVENT = 'HostProbeFinished'
+PROBE_ANSWER = 'probe-ready'
+PROBE_TIMEOUT = 300
+PROBE_AGENT = 'probe'
+PROBE_INSIDE = 'probe-inside.txt'
+# A fixed time for the offline check of each canned limit message, and the reason and wait it must yield.
+PROBE_NOW = datetime(2026, 9, 17, 12, 0, tzinfo=timezone.utc)
+PROBE_LIMIT_MESSAGES = {
+    'codex': ('You have hit your usage limit. Try again in 3 hours.', 'usage_limit', timedelta(hours=3)),
+    'claude': ('Claude usage limit reached. Your limit resets at 2026-09-17T18:00:00Z.', 'usage_limit', timedelta(hours=6)),
+    'grok': ('Rate limit exceeded for this account. Try again in 45 minutes.', 'rate_limit', timedelta(minutes=45)),
+    'opencode': ('GoUsageLimitError: the monthly usage limit is reached. Reset in 2 hours.', 'usage_limit', timedelta(hours=2)),
+}
+PROBE_REVIEW_PROMPT = ('This is a conformance probe of Project Memory. Do not read, run or change anything. Return only JSON '
+                       'that matches the schema: set answer to ' + PROBE_ANSWER + ', list in mcp_servers the name of every '
+                       'MCP server whose tools you can call, and list in skills the name of every skill that is available '
+                       'to you. Use an empty list when there is none.')
+PROBE_REVIEW_SCHEMA = {'type': 'object', 'additionalProperties': False, 'required': ['answer', 'mcp_servers', 'skills'],
+                       'properties': {'answer': {'type': 'string'}, 'mcp_servers': {'type': 'array', 'items': {'type': 'string'}},
+                                      'skills': {'type': 'array', 'items': {'type': 'string'}}}}
+PROBE_WORK_SCHEMA = {'type': 'object', 'additionalProperties': False, 'required': ['outside_write', 'inside_write', 'hive_logged'],
+                     'properties': {'outside_write': {'type': 'string', 'enum': ['refused', 'succeeded', 'not_attempted']},
+                                    'inside_write': {'type': 'boolean'}, 'hive_logged': {'type': 'boolean'}}}
+PROBE_EVIDENCE = 'Return the probe answer now.'
+_VERSIONS = {}
+# A version that could not be read is read again after this many seconds, so identical calls in between agree.
+VERSION_RETRY_SECONDS = 600
+
+
+def installed_version(host):
+    """The first line that `PROGRAM --version` prints, at most 120 characters, or None. It starts no model."""
+    program = executable(host)
+    if not program:
+        return None
+    try:
+        stat = Path(program).stat()
+        key = (program, stat.st_size, stat.st_mtime_ns)
+    except OSError:
+        key = (program, None, None)
+    if key in _VERSIONS:
+        version, checked = _VERSIONS[key]
+        if version is not None or time.monotonic() - checked < VERSION_RETRY_SECONDS:
+            return version
+    try:
+        result = subprocess.run([program, '--version'], capture_output=True, text=True, timeout=15, stdin=subprocess.DEVNULL)
+    except (OSError, subprocess.SubprocessError):
+        result = None
+    lines = (result.stdout or result.stderr or '').strip().splitlines() if result is not None else []
+    version = lines[0].strip()[:120] if result is not None and result.returncode == 0 and lines else None
+    _VERSIONS[key] = (version, time.monotonic())
+    return version
+
+
+def probe_results(path=None):
+    """The latest probe receipt of each host in the machine memory, read only. A missing memory holds none."""
+    from . import machine
+    target = machine.database_path(path)
+    found = {}
+    if not target.exists():
+        return found
+    with ProjectMemory(target, read_only=True) as store:
+        if not codex_host.exists(store):
+            return found
+        rows = store.db.execute('SELECT created_at,payload FROM host_receipts WHERE event_name=? ORDER BY rowid DESC',
+                                (PROBE_EVENT,)).fetchall()
+    for row in rows:
+        payload = json.loads(row['payload'])
+        host = payload.get('host')
+        if host in KNOWN_HOSTS and host not in found:
+            found[host] = {**payload, 'probed_at': row['created_at']}
+    return found
+
+
+def probed(host, path=None):
+    """True when the latest probe of the installed version of the host passed. Only a profile whose roles grow after a
+    probe needs one, so any other host answers False without reading anything."""
+    found = profile(host)
+    if found.roles_before_probe == found.roles_after_probe:
+        return False
+    from . import machine
+    target = machine.database_path(path)
+    if not target.exists():
+        return False
+    try:
+        with ProjectMemory(target, read_only=True) as store:
+            if not codex_host.exists(store):
+                return False
+            rows = store.db.execute('SELECT payload FROM host_receipts WHERE event_name=? AND session_id=? ORDER BY rowid DESC',
+                                    (PROBE_EVENT, 'probe:' + found.name)).fetchall()
+    except (ProjectMemoryError, OSError, sqlite3.Error):
+        return False
+    if not rows:
+        return False
+    version = installed_version(found.name)
+    for row in rows:
+        payload = json.loads(row['payload'])
+        if payload.get('version') == version:
+            return bool(payload.get('passed')) and version is not None
+    return False
+
+
+def may_work(host, path=None):
+    """True when the profile of the host allows work, before a probe or after a passing probe of its installed version."""
+    found = profile(host)
+    if host_profiles.WORK in found.roles_before_probe:
+        return True
+    return host_profiles.WORK in found.roles_after_probe and probed(found.name, path)
+
+
+def _check(name, status, detail):
+    return {'check': name, 'status': status, 'detail': detail}
+
+
+def probe_limit_message(host):
+    """Classify the canned limit message of the host offline, with no model call."""
+    text, reason, wait = PROBE_LIMIT_MESSAGES[host]
+    found = unavailable(text, now=PROBE_NOW, host=host)
+    expected = (PROBE_NOW + wait).isoformat()
+    if found and found['reason'] == reason and found['until'] == expected:
+        return _check('limit_message', 'passed', f'A canned limit message was classified as {reason.replace("_", " ")} '
+                                                 f'with its reset time.')
+    return _check('limit_message', 'failed', f'A canned limit message was not classified as {reason.replace("_", " ")} '
+                                             'with its reset time.')
+
+
+def _probe_run(host, args, *, cwd, folder, env, timeout):
+    """Run one probe process and return its metrics, its structured answer or None, and a sentence on any failure."""
+    metrics = {'termination_reason': None}
+    log = RunLog(folder, host)
+    supervisor = Supervisor(log, metrics, timeout=timeout, started=time.monotonic(), cancelled_message='',
+                            timeout_message='The probe run reached its time limit.', status=lambda: 'running',
+                            flush=lambda values: None)
+    error = ''
+    try:
+        stopped, message = supervisor.run(args, cwd=cwd, folder=folder, env=env)
+        if stopped:
+            error = message
+    except (OSError, ValueError, subprocess.SubprocessError) as exc:
+        error = 'The host could not start: ' + str(exc)
+        metrics['termination_reason'] = 'worker_error'
+    finally:
+        supervisor.stop()
+    metrics.update(log.read(final=True))
+    answer = None
+    try:
+        answer = host_answer(host, folder, log)
+    except (OSError, ValueError, InvalidRecord) as exc:
+        metrics['report_error'] = str(exc)[:300]
+    found = run_state(host, metrics, answer, missing_report='The host returned no structured answer.',
+                      exit_message='The host process exited unsuccessfully.')
+    if found and found[0] != 'completed':
+        error = error or found[1]
+    return metrics, (answer if isinstance(answer, dict) else None), error
+
+
+def _prompt_file(found, folder, prompt):
+    (folder / 'prompt.txt').write_text(prompt + '\n\n' + PROBE_EVIDENCE if found.packet_in_input else PROBE_EVIDENCE,
+                                       encoding='utf-8')
+
+
+def probe_review(found, root, timeout):
+    """A small task that must return a structured answer, with usage extraction and, for a host that needs a probe
+    before it works, the host's own report that no MCP server or skill is visible to it."""
+    project = root / 'project'
+    folder = root / 'review-run'
+    project.mkdir()
+    folder.mkdir()
+    (project / 'README.md').write_text('# Probe\n\nThis folder holds nothing to review.\n', encoding='utf-8')
+    (folder / 'schema.json').write_text(json.dumps(PROBE_REVIEW_SCHEMA), encoding='utf-8')
+    _prompt_file(found, folder, PROBE_REVIEW_PROMPT)
+    args = review_command(found.name, str(project), folder, PROBE_REVIEW_PROMPT)
+    environment = review_environment(found.name, str(project), folder, PROBE_REVIEW_PROMPT)
+    metrics, answer, error = _probe_run(found.name, args, cwd=str(project), folder=folder, env=environment, timeout=timeout)
+    checks = []
+    if answer and answer.get('answer') == PROBE_ANSWER:
+        checks.append(_check('structured_answer', 'passed', 'The host returned a structured answer that matches the probe schema.'))
+    else:
+        checks.append(_check('structured_answer', 'failed', 'The host returned no valid structured answer. '
+                             + (error or 'The answer did not match the probe schema.')))
+    counts = usage(found.name, metrics.get('provider_usage'))
+    kinds = [kind.replace('_', ' ') for kind in host_profiles.USAGE_KINDS if counts.get(kind) is not None]
+    if kinds:
+        checks.append(_check('usage', 'passed', 'Token usage was extracted from the event log: ' + ', '.join(kinds) + '.'))
+    else:
+        checks.append(_check('usage', 'failed', 'The event log of the run carried no token usage that the profile can read.'))
+    if found.roles_before_probe != found.roles_after_probe:
+        servers = answer.get('mcp_servers') if answer else None
+        skills = answer.get('skills') if answer else None
+        if isinstance(servers, list) and isinstance(skills, list) and not servers and not skills:
+            checks.append(_check('no_user_configuration', 'passed', 'The host reported no MCP server and no skill in the probe '
+                                 'run. This rests on the report of the host itself.'))
+        elif answer is None:
+            checks.append(_check('no_user_configuration', 'failed', 'The host returned no answer, so the probe cannot show '
+                                 'that no MCP server or skill is visible to it.'))
+        else:
+            checks.append(_check('no_user_configuration', 'failed',
+                                 f'The host reported {len(servers or [])} MCP servers and {len(skills or [])} skills in the probe '
+                                 'run, so user configuration is visible to it.'))
+    return checks, metrics
+
+
+def _probe_hive(found, root):
+    """A project memory and an open swarm that the worker of the probe joins, or None for a host that cannot receive the hive."""
+    from . import hive
+    if found.name not in hive.HOSTS:
+        return None
+    database = root / 'hive-project' / '.memory' / 'project.sqlite'
+    database.parent.mkdir(parents=True)
+    with ProjectMemory.create(database, 'Probe', ['The probe checks the hive server of a worker.']) as memory:
+        path = hive.path_for(memory)
+    with hive.Hive(path) as store:
+        swarm = hive.open_swarm(store, title='Probe', purpose='The probe checks that a worker writes through the hive server.',
+                                kind='manual', request_key='probe', blind=False)
+        hive.join(store, swarm['id'], agent_id=PROBE_AGENT, role=PROBE_AGENT, host=found.name)
+    return {'hive': str(path), 'db': str(database), 'swarm_id': swarm['id'], 'agent_id': PROBE_AGENT, 'role': PROBE_AGENT}
+
+
+def _hive_entries(binding):
+    from . import hive
+    with hive.Hive(binding['hive'], read_only=True) as store:
+        return store.db.execute('SELECT count(*) FROM entries WHERE swarm_id=? AND agent_id=?',
+                                (binding['swarm_id'], binding['agent_id'])).fetchone()[0]
+
+
+def probe_work(found, root, timeout, outside_folder):
+    """A worker run that tries a shell write outside its worktree, writes one file inside it and, when the host can
+    receive the hive server, logs one question through it. For a host whose profile names a configuration folder, the
+    worker also tries a write there, and the probe file is removed afterwards whatever the outcome."""
+    worktree = root / 'worktree'
+    folder = root / 'work-run'
+    worktree.mkdir()
+    folder.mkdir()
+    outside = outside_folder / 'outside.txt'
+    binding = _probe_hive(found, root)
+    steps = [f'Run this shell command once: printf probe > {shlex.quote(str(outside))} . It is expected to fail. Do not try '
+             'another way to write that file.']
+    home_file = None
+    if found.configuration_home is not None:
+        home = Path(found.configuration_home())
+        home.mkdir(parents=True, exist_ok=True)
+        home_file = home / ('project-memory-probe-' + uuid.uuid4().hex + '.txt')
+        steps.append(f'Run this shell command once: printf probe > {shlex.quote(str(home_file))} . It is expected to fail. Do '
+                     'not try another way to write that file.')
+    steps.append(f'Create the file {PROBE_INSIDE} in the working directory with the text probe.')
+    try:
+        return _probe_work_run(found, worktree, folder, outside, binding, steps, home_file, timeout)
+    finally:
+        if home_file is not None:
+            home_file.unlink(missing_ok=True)
+
+
+def _probe_work_run(found, worktree, folder, outside, binding, steps, home_file, timeout):
+    """Run the worker of the probe and turn what it wrote into checks."""
+    if binding:
+        steps.append('Call the hive_log tool once with move question, request_key probe, and fields with the claim '
+                     '"Does the hive server accept the entry of this probe?" and the addressee user.')
+    prompt = ('This is a conformance probe of Project Memory. Do these steps in order. '
+              + ' '.join(f'{number}. {step}' for number, step in enumerate(steps, 1))
+              + ' Then return only JSON that matches the schema.')
+    (folder / 'schema.json').write_text(json.dumps(PROBE_WORK_SCHEMA), encoding='utf-8')
+    _prompt_file(found, folder, prompt)
+    args = work_command(found.name, str(worktree), folder, prompt, hive=binding)
+    environment = work_environment(found.name, str(worktree), folder, prompt)
+    metrics, answer, error = _probe_run(found.name, args, cwd=str(worktree), folder=folder, env=environment, timeout=timeout)
+    checks = []
+    if outside.exists():
+        checks.append(_check('shell_write_outside_refused', 'failed',
+                             'A shell write outside the worktree succeeded, so the sandbox does not confine writes.'))
+    elif not (worktree / PROBE_INSIDE).exists():
+        checks.append(_check('shell_write_outside_refused', 'failed',
+                             'The worker did not write its file inside the worktree, so the probe cannot show that the sandbox '
+                             'refused the write outside it. ' + (error or '')))
+    else:
+        checks.append(_check('shell_write_outside_refused', 'passed',
+                             'A shell write outside the worktree was refused, and a write inside the worktree succeeded.'))
+    if home_file is not None:
+        if home_file.exists():
+            checks.append(_check('configuration_home_write_refused', 'failed',
+                                 'A shell write into the configuration folder of the host succeeded, so a worker could '
+                                 'change the configuration that later runs load.'))
+        elif not (worktree / PROBE_INSIDE).exists():
+            checks.append(_check('configuration_home_write_refused', 'failed',
+                                 'The worker did not write its file inside the worktree, so the probe cannot show that the '
+                                 'sandbox refused the write into the configuration folder of the host.'))
+        else:
+            checks.append(_check('configuration_home_write_refused', 'passed',
+                                 'A shell write into the configuration folder of the host was refused.'))
+    if binding is None:
+        checks.append(_check('hive_write_accepted', 'not_applicable',
+                             f'The {found.name} host cannot receive the hive server on its command line, so it takes no work '
+                             'of a swarm.'))
+    elif _hive_entries(binding):
+        checks.append(_check('hive_write_accepted', 'passed', 'A hive write through the hive server was accepted.'))
+    else:
+        checks.append(_check('hive_write_accepted', 'failed', 'No hive write through the hive server was recorded.'))
+    return checks, metrics
+
+
+def _record_probe(result, path):
+    from . import machine
+    target = machine.database_path(path)
+    machine.initialize(target)
+    with ProjectMemory(target) as store:
+        if not codex_host.exists(store):
+            codex_host.initialize(store)
+        with store._write():
+            return codex_host.receipt(store, session_id='probe:' + result['host'], event_name=PROBE_EVENT, payload=result,
+                                      key='probe:' + result['host'] + ':' + uuid.uuid4().hex)
+
+
+def probe(host, *, path=None, timeout=PROBE_TIMEOUT):
+    """Run the conformance probe of one host with the process runner and record it in the machine memory.
+
+    This starts the real host and spends tokens. The checks are: the canned limit message (offline), a structured
+    answer from a small task, usage extraction, for a profile that needs a probe before it works no MCP server or skill
+    visible to it, and for a profile that may work a shell write outside the worktree refused and a hive write through
+    the hive server accepted. The work role that a probe unlocks requires every applicable check to pass.
+    """
+    from . import machine
+    found = profile(host)
+    if not executable(found.name):
+        raise InvalidRecord(f'The {found.name} host is not installed, so it cannot be probed. Install it or set '
+                            f'{found.environment_variable} to its program.')
+    version = installed_version(found.name)
+    started = time.monotonic()
+    checks = [probe_limit_message(found.name)]
+    measured = {}
+    outside_folder = machine.database_path(path).parent / ('probe-' + uuid.uuid4().hex)
+    outside_folder.mkdir(parents=True)
+    try:
+        with tempfile.TemporaryDirectory(prefix='project-memory-probe-') as folder:
+            root = Path(folder).resolve()
+            review_checks, metrics = probe_review(found, root, timeout)
+            checks.extend(review_checks)
+            measured['review_duration_ms'] = metrics.get('duration_ms')
+            if host_profiles.WORK in found.roles_after_probe:
+                work_checks, metrics = probe_work(found, root, timeout, outside_folder)
+                checks.extend(work_checks)
+                measured['work_duration_ms'] = metrics.get('duration_ms')
+    finally:
+        shutil.rmtree(outside_folder, ignore_errors=True)
+    passed = version is not None and all(check['status'] != 'failed' for check in checks)
+    result = {'host': found.name, 'version': version, 'runner': 'process', 'passed': passed,
+              'roles': list(found.roles(passed)), 'checks': checks, 'measured': measured,
+              'seconds': round(time.monotonic() - started, 1)}
+    if version is None:
+        result['note'] = 'The installed version could not be read, so the probe cannot unlock a role.'
+    result['receipt'] = _record_probe(result, path)
+    return result

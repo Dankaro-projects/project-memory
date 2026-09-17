@@ -130,6 +130,22 @@ def machine_command(args):
             'retired':value['retired']}
 
 
+PROBE_FROM_ASSISTANT=('project-memory host probe runs the real host and spends tokens, so it is a user action and does not run '
+                     'from inside an assistant session. Run it in your own terminal.')
+
+
+def host_probe(args):
+    """Run the conformance probe of one host. Only the user starts it, because it runs the real host and spends tokens."""
+    from .live import assistant_session
+    from . import hosts
+    if assistant_session():
+        raise ValueError(PROBE_FROM_ASSISTANT)
+    if not 30<=args.timeout<=1800:
+        raise ValueError('The probe time limit must be between 30 and 1,800 seconds.')
+    print(f'Project Memory: the probe runs the {args.name} host and spends tokens.',file=sys.stderr)
+    return hosts.probe(args.name,timeout=args.timeout)
+
+
 def main(argv=None):
     parser=argparse.ArgumentParser(description='Keep project decisions, evidence and outcomes locally.')
     parser.add_argument('--version',action='version',version=__version__)
@@ -169,6 +185,12 @@ def main(argv=None):
     mach.add_argument('--db',help='The project database that init records in the registry.')
     mach.add_argument('--role',choices=['assistant','worker','reviewer'],help='Read the rules composed into the prompt of this role.')
     mach.add_argument('--limit',type=int,default=50)
+    usage_parser=sub.add_parser('usage',help='Collect and show the usage of each agent host on this machine: tokens, cost and limit state.')
+    usage_parser.add_argument('--json',action='store_true',help='Print the report as JSON instead of a table.')
+    host_parser=sub.add_parser('host',help='Agent hosts on this machine. probe runs the real host, spends tokens and records what it may do.')
+    host_parser.add_argument('action',choices=['probe'],help='probe runs the conformance checks of the process runner for one host.')
+    host_parser.add_argument('name',choices=['codex','claude','grok','opencode'],metavar='HOST',help='codex, claude, grok or opencode.')
+    host_parser.add_argument('--timeout',type=int,default=300,help='The time limit of each probe run in seconds, from 30 to 1,800 (default: 300).')
     hive_server=sub.add_parser('hive-serve',help='The restricted MCP server of a delegated worker: hive_log, hive_query and hive_resume for one swarm and agent.')
     hive_server.add_argument('--hive',required=True,help='The hive file, .memory/hive.sqlite beside the project database.')
     hive_server.add_argument('--swarm',required=True)
@@ -200,6 +222,14 @@ def main(argv=None):
                 result['viewer']=open_viewer(start(result['database']))
         elif args.command=='uninstall':result=uninstall(args.project,args.client)
         elif args.command=='machine':result=machine_command(args)
+        elif args.command=='usage':
+            from . import usage
+            result=usage.report()
+            if not args.json:
+                print(usage.render(result),end='')
+                return 0
+        elif args.command=='host':
+            result=host_probe(args)
         elif args.command=='hive-serve':
             from .mcp import serve_hive
             path=Path(args.hive).resolve()

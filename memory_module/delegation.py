@@ -35,6 +35,8 @@ from .worktree import cleaned, cleanup, collect, diff_body, project_relative, re
 ROLES = ('work', 'work_review')
 ACTIVE = reviews.ACTIVE
 WORKTREES = '.memory/worktrees'
+HIVE_HOST_REFUSED = ('The {host} host cannot receive the hive server, so it cannot join a swarm. Delegate work of a swarm '
+                     'to Codex or Claude.')
 INLINE_DIFF_LIMIT = 200_000
 SOURCE_BODY_LIMIT = 50_000
 SOURCE_TOTAL_LIMIT = 150_000
@@ -118,8 +120,8 @@ def _receipt(memory, run, event_name, payload, key):
                                   episode_id=run['episode_id'], payload=payload, key=key)
 
 
-def _insert(memory, *, host, parent_run=None, details=None, **fields):
-    """Insert a queued delegated run, naming its host and its parent run in the receipt."""
+def _insert(memory, *, host, parent_run=None, details=None, routing=None, **fields):
+    """Insert a queued delegated run, naming its host and its parent run in the receipt, with the routing decision on the run."""
     focus = fields['snapshot'].get('focus')
     if fields['role'] == 'work' and focus:
         # Focused siblings share a role family; all other work and the project limit still apply.
@@ -129,18 +131,19 @@ def _insert(memory, *, host, parent_run=None, details=None, **fields):
             raise Conflict(reviews.FAMILY_CONFLICTS['work'])
         if len(active) >= reviews.PROJECT_ACTIVE_LIMIT:
             raise Conflict('Two agent runs are already active for this project. Wait for one of them or cancel it first.')
+        reviews.ensure_run_columns(memory)
         now = memory.now()
         memory.db.execute('INSERT INTO review_runs '
-                          '(id,episode_id,role,signature,host,session_id,state,created_at,updated_at,request_key,snapshot,parent_run,workspace,branch) '
-                          'VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+                          '(id,episode_id,role,signature,host,session_id,state,created_at,updated_at,request_key,snapshot,parent_run,workspace,branch,routing) '
+                          'VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
                           (fields['run_id'], fields['episode_id'], fields['role'], hashlib.sha256(dumps(fields['snapshot']).encode()).hexdigest(),
                            host, fields['session_id'], 'queued', now, now, fields['request_key'], dumps(fields['snapshot']),
-                           parent_run, fields.get('workspace'), fields.get('branch')))
+                           parent_run, fields.get('workspace'), fields.get('branch'), dumps(routing) if routing else None))
         codex_host.receipt(memory, session_id=fields['session_id'] or fields['run_id'], event_name=fields['event_name'],
                            episode_id=fields['episode_id'], payload={'run_id': fields['run_id'], 'role': fields['role'],
                            'host': host, 'parent_run': parent_run, **(details or {})}, key=fields['run_id'] + ':requested')
         return
-    reviews.insert_run(memory, host=host, parent_run=parent_run,
+    reviews.insert_run(memory, host=host, parent_run=parent_run, routing=routing,
                        payload={'host': host, 'parent_run': parent_run, **(details or {})}, **fields)
 
 
@@ -200,8 +203,19 @@ def request_work(memory, episode_id, *, request_key, host=None, session_id='', m
         raise InvalidRecord('Run setup with --client codex or --client claude before delegating work.')
     if host is not None and host not in config['hosts']:
         raise InvalidRecord('Select a host that is configured for this project.', configured_hosts=config['hosts'])
+    if host is not None and not hosts.may_work(host):
+        raise InvalidRecord('The ' + host + ' host does not take delegated work. Select a host whose profile allows work.',
+                            work_hosts=work_hosts(config))
+    if not work_hosts(config):
+        raise InvalidRecord('No configured host takes delegated work. Run setup with --client codex or --client claude first.',
+                            configured_hosts=config['hosts'])
     if hive is not None:
         hive = _hive_binding(memory, hive)
+        if host is not None and host not in swarm_hosts([host]):
+            raise InvalidRecord(HIVE_HOST_REFUSED.format(host=host), work_hosts=swarm_hosts(work_hosts(config)))
+        if not swarm_hosts(work_hosts(config)):
+            raise InvalidRecord('No configured host that takes delegated work can join a swarm. Configure Codex or Claude '
+                                'for this project first.', configured_hosts=config['hosts'])
     _ensure_receipts(memory)
     reviews.ensure_run_columns(memory)
     prior = _prior(memory, request_key, episode_id, 'work')
@@ -245,12 +259,18 @@ def request_work(memory, episode_id, *, request_key, host=None, session_id='', m
     if item_type == 'research':
         limitations.append('This work item is research. The worker can analyse the project files and the included sources only; '
                            'it cannot collect new evidence from the web or from people.')
+    allowed = work_hosts(config)
+    if hive is not None:
+        allowed = swarm_hosts(allowed)
     preferred = host or config.get('work_host') or config['hosts'][0]
+    if preferred not in allowed:
+        preferred = allowed[0]
     with memory._write():
         prior = _prior(memory, request_key, episode_id, 'work')
         if prior:
             return prior
-        chosen = hosts.choose(memory, preferred, allowed=config['hosts'])
+        routing = hosts.route(memory, preferred, allowed=allowed)
+        chosen = routing['host']
         if focus_attempt:
             sibling = memory.db.execute("""SELECT snapshot FROM review_runs WHERE episode_id=? AND role='work'
                 AND json_extract(snapshot,'$.focus.start_key')=? ORDER BY rowid LIMIT 1""",
@@ -272,7 +292,7 @@ def request_work(memory, episode_id, *, request_key, host=None, session_id='', m
             snapshot['focus'] = focus_attempt
         if hive is not None:
             snapshot['hive'] = hive
-        _insert(memory, run_id=run_id, episode_id=episode_id, role='work', host=chosen, snapshot=snapshot,
+        _insert(memory, run_id=run_id, episode_id=episode_id, role='work', host=chosen, snapshot=snapshot, routing=routing,
                 request_key=request_key, session_id=session_id, workspace=WORKTREES + '/' + run_id, branch=branch,
                 event_name='DelegationRequested',
                 details={'branch': branch, 'base_commit': base, 'item_type': item_type, 'uncommitted_outside_paths': len(outside)})
@@ -429,6 +449,20 @@ def protocol_problems(memory, binding, report):
     except (InvalidRecord, sqlite3.Error) as exc:
         return ['Project Memory could not read the hive: ' + str(exc)[:300]]
     return result['problems']
+
+
+def work_hosts(config):
+    """The configured hosts whose profiles allow delegated work, in configured order.
+
+    A profile that allows work only after a probe, such as Grok, counts once the latest probe of its installed
+    version passed (hosts.may_work).
+    """
+    return [name for name in (config or {}).get('hosts', []) if name in hosts.KNOWN_HOSTS and hosts.may_work(name)]
+
+
+def swarm_hosts(names):
+    """The hosts among names that can receive the hive server and join a swarm, in the given order."""
+    return [name for name in names if name in hive.HOSTS]
 
 
 def launch(memory, run):
@@ -592,7 +626,7 @@ def _execute_work(memory, run, timeout):
             prompt = worker_prompt(given, deadline, timeout, instructions=instructions['text'], hive_context=context)
             packet = prompt + dumps(given)
             (folder / 'input.json').write_text(dumps(given), encoding='utf-8')
-            (folder / 'prompt.txt').write_text(packet if run['host'] == 'codex' else dumps(given), encoding='utf-8')
+            (folder / 'prompt.txt').write_text(packet if hosts.profile(run['host']).packet_in_input else dumps(given), encoding='utf-8')
             metrics['input_characters'] = len(packet)
             if binding:
                 server = {'hive': str(hive.path_for(memory)), 'db': str(memory.path),
@@ -600,7 +634,8 @@ def _execute_work(memory, run, timeout):
                 args = work_command(run['host'], str(cwd), folder, prompt, hive=server)
             else:
                 args = work_command(run['host'], str(cwd), folder, prompt)
-        stopped, message = supervisor.run(args, cwd=str(cwd), folder=folder)
+            environment = hosts.work_environment(run['host'], str(cwd), folder, prompt)
+        stopped, message = supervisor.run(args, cwd=str(cwd), folder=folder, env=environment)
         if stopped:
             state, error = stopped, message
     except (OSError, ValueError, InvalidRecord, Conflict, sqlite3.Error, subprocess.SubprocessError) as exc:
@@ -764,13 +799,17 @@ def reroute(memory, run):
     if run['parent_run'] or run['role'] != 'work':
         return None
     config = reviews.configured(memory)
-    others = [name for name in (config or {}).get('hosts', []) if name != run['host']]
+    allowed = work_hosts(config)
+    if run['snapshot'].get('hive'):
+        allowed = swarm_hosts(allowed)
+    others = [name for name in allowed if name != run['host']]
     if not others:
         return None
     try:
-        host = hosts.choose(memory, others[0], allowed=config['hosts'], exclude=(run['host'],))
+        routing = hosts.route(memory, others[0], allowed=allowed, exclude=(run['host'],))
     except InvalidRecord:
         return None
+    host = routing['host']
     with memory._write():
         existing = memory.db.execute("SELECT id FROM review_runs WHERE parent_run=? AND role='work' LIMIT 1", (run['id'],)).fetchone()
         if existing:
@@ -779,7 +818,7 @@ def reroute(memory, run):
         branch = branch_name(run['episode_id'], run_id)
         _insert(memory, run_id=run_id, episode_id=run['episode_id'], role='work', host=host,
                 snapshot=_rerouted_snapshot(run, branch, host),
-                request_key=run['id'] + ':reroute', session_id=run['session_id'], parent_run=run['id'],
+                request_key=run['id'] + ':reroute', session_id=run['session_id'], parent_run=run['id'], routing=routing,
                 workspace=WORKTREES + '/' + run_id, branch=branch, event_name='DelegationRerouted',
                 details={'from_host': run['host'], 'to_host': host, 'reason': (run['metrics'] or {}).get('host_unavailable')})
         if run['snapshot'].get('focus'):
@@ -852,11 +891,13 @@ def request_review(memory, work_run_id, *, request_key, max_seconds=900):
         prior = _prior(memory, request_key, work['episode_id'], 'work_review')
         if prior:
             return prior
-        reviewer = reviews.review_host(memory, config, work['host'])
+        decisions = []
+        reviewer = reviews.review_host(memory, config, work['host'], decisions)
+        routing = decisions[0] if decisions else None
         value['implementer_host'] = work['host']
         value['independence'] = 'other_host' if reviewer != work['host'] else 'same_host'
         run_id = reviews.new_run_id()
-        _insert(memory, run_id=run_id, episode_id=work['episode_id'], role='work_review', host=reviewer, snapshot=value,
+        _insert(memory, run_id=run_id, episode_id=work['episode_id'], role='work_review', host=reviewer, snapshot=value, routing=routing,
                 request_key=request_key, session_id=work['session_id'], parent_run=work_run_id,
                 event_name='WorkReviewRequested', details={'independence': value['independence']})
     return reviews.read(memory, run_id)

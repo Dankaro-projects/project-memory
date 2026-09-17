@@ -6,7 +6,7 @@
  * A snapshot holds records {view, limit: 100} for each view, so the Records view filters and pages those in the
  * browser. A snapshot carries no machine response, because the machine memory stays on the computer that holds it.
  * The Hive view lists the swarms and shows one swarm as a timeline; it opens hive_post {swarm_id, move, target},
- * hive_close {swarm_id} and hive_purge {}.
+ * hive_close {swarm_id} and hive_purge {}. The Usage view reads usage {} and offers no action.
  */
 (() => {
   "use strict";
@@ -681,4 +681,58 @@
   }
   P.registerView("hive", { title: "Hive", section: "Oversight",
     render: (container, params, ctx) => (params.swarm ? hiveSwarm(container, params, ctx) : hiveList(container, ctx)) });
+
+  // Usage: the usage ledger of this machine for each host, the latest probe of each host and the routing decisions of
+  // the recent runs of this project. The ledger stays on the computer that holds it, so a snapshot carries no usage.
+  const HOST_NAMES = { codex: "Codex", claude: "Claude", grok: "Grok", opencode: "OpenCode" };
+  const hostName = (host) => HOST_NAMES[host] || P.words(host);
+  const WINDOWS = [["last_5_hours", "Last 5 hours"], ["today", "Today"], ["last_7_days", "Last 7 days"]];
+  const ROUTES = { preferred: "Preferred host", headroom: "Most headroom", all_constrained: "Every host constrained", same_host: "Worker host reviews", not_installed: "No host installed" };
+  function limitText(item) {
+    const parts = (item.limits || []).filter((limit) => !limit.expired).map((limit) => limit.used_percent + " percent of the "
+      + (limit.window_minutes ? number(limit.window_minutes) + " minute " : "") + "window " + limit.limit_id + (limit.resets_at ? ", which resets at " + P.date(limit.resets_at) : ""));
+    const hit = item.limit_hit;
+    if (hit && hit.active) parts.push("A limit was hit (" + P.lower(P.words(hit.reason)) + ")" + (hit.until ? " and resets at " + P.date(hit.until) : ""));
+    return parts.length ? parts.join("; ") + "." : (item.measured || {}).limit_state ? "Every reported limit window has reset." : "Not reported.";
+  }
+  function costText(cost, measured) {
+    const amounts = Object.entries(cost || {}).map(([currency, amount]) => amount.toFixed(2) + " " + currency);
+    return amounts.length ? amounts.join(", ") : measured ? "0.00 USD" : "Unavailable";
+  }
+  const probeText = (probe) => (probe ? (probe.passed ? "Passed" : "Failed") + " for version " + (probe.version || "unknown") + " on " + P.date(probe.probed_at)
+    + ". Roles: " + probe.roles.join(" and ") + "." : "No probe is recorded on this machine.");
+  function usageCard(item, data) {
+    const room = item.headroom || {}, measured = item.measured || {}, windows = item.windows || {};
+    return h("article", { class: "card", dataset: { key: "usage-host-" + item.host, constrained: String(Boolean(room.constrained)) } },
+      h("h3", null, h("span", null, hostName(item.host)), P.badge(room.constrained ? "review" : "ready", room.constrained ? "Constrained" : "Not constrained")),
+      (data.configured_hosts || []).includes(item.host) ? h("div", { class: "row" }, P.chip("Configured for this project")) : null,
+      kv([...WINDOWS.map(([name, label]) => [label, measured.tokens ? number((windows[name] || {}).total_tokens) + " tokens" : "Unavailable"]),
+        ["Cost in the last 7 days", costText((windows.last_7_days || {}).cost, measured.cost)], ["Limit state", limitText(item)],
+        ["Load in the last 5 hours", room.relative_load == null ? "Not measured" : room.relative_load + " times the median of the last 7 days"],
+        ["Probe", probeText((data.probes || {})[item.host])]]),
+      h("div", { class: "row" }, Object.entries(measured).map(([name, yes]) => P.badge(yes ? "ready" : "backlog", P.words(name) + (yes ? " measured" : " unavailable")))),
+      (item.unavailable || []).length ? h("ul", { class: "kn-plain muted" }, item.unavailable.map((text) => h("li", null, text))) : null);
+  }
+  P.registerView("usage", { title: "Usage", section: "Oversight", async render(container) {
+      let data;
+      try {
+        data = await P.get("usage");
+      } catch (error) {
+        put(container, error && error.notIncluded ? P.empty("The usage ledger stays on the computer that holds it, so a snapshot carries no usage.") : failed(error));
+        return;
+      }
+      const items = data.hosts || [], routing = data.routing || [], constrained = items.filter((item) => (item.headroom || {}).constrained).length;
+      put(container, sentence(data.ledger ? "Usage was measured at " + P.date(data.measured_at) + ". " + P.count(constrained, "host") + " " + isAre(constrained) + " constrained."
+        : "No usage is recorded on this machine yet."),
+      h("div", { class: "notice", dataset: { key: "usage-note" } }, h("p", null, data.note),
+        data.error ? h("p", null, "The usage ledger could not be read: " + data.error) : null,
+        h("p", { class: "muted" }, "Run project-memory usage to collect the latest usage. Run project-memory host probe with a host name in your own terminal to check which roles it may take. The probe runs the host and spends tokens.")),
+      section("Hosts", counted(items.length, "host"), grid(items, (item) => usageCard(item, data), "No host is known.")),
+      section("Routing decisions of recent runs", counted(routing.length, "decision"), routing.length
+        ? table(["Run", "Chosen host", "Preferred host", "Reason", "Decided"], routing.map((item) => h("tr", { dataset: { key: "routing-" + item.id } },
+          cell("Run", button(P.words(item.role), "routing-run-" + item.id, openRun(item.id), "quiet kn-link")), cell("Chosen host", hostName(item.host)),
+          cell("Preferred host", hostName(item.preferred)), cell("Reason", P.chip(ROUTES[item.reason] || P.words(item.reason)), " ", h("span", null, item.sentence)),
+          dateCell("Decided", item.decided_at || item.created_at))))
+        : P.empty("No run of this project records a routing decision yet.")));
+  } });
 })();

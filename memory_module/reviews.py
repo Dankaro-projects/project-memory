@@ -36,7 +36,8 @@ FAMILY_CONFLICTS = {
     'work_review': 'A work review is already running for this work item. Wait for it or cancel it first.',
 }
 PROJECT_ACTIVE_LIMIT = 2
-RUN_COLUMNS = ('parent_run', 'workspace', 'branch')
+# routing holds the decision of hosts.route that chose the host of the run, with its reason (section 16.3).
+RUN_COLUMNS = ('parent_run', 'workspace', 'branch', 'routing')
 CHECK_CANCELLED = 'The check was cancelled. It did not approve this work.'
 CHECK_TIMED_OUT = 'The reviewer reached its execution deadline. It did not approve this work.'
 SCHEMA = '''
@@ -69,9 +70,9 @@ def configured(memory):
 
 
 def configure(memory, project, host):
-    """Record the last configured host and the sorted union of all configured hosts."""
-    if host not in {'codex', 'claude'}:
-        raise InvalidRecord('Select Codex or Claude for agent checks.')
+    """Record the last configured host and the sorted union of all configured hosts. Every host with a profile may be configured."""
+    if host not in hosts.KNOWN_HOSTS:
+        raise InvalidRecord('Select Codex, Claude, Grok or OpenCode for agent checks.')
     previous = configured(memory)
     names = sorted(set(previous.get('hosts', []) if previous else []) | {host})
     ensure_run_columns(memory)
@@ -138,14 +139,20 @@ def new_run_id():
 
 
 def insert_run(memory, *, run_id, episode_id, role, host, snapshot, request_key, session_id, signature=None,
-               parent_run=None, workspace=None, branch=None, event_name, payload=None):
-    """Insert one queued run and its receipt inside an open write, after checking the concurrency limits."""
+               parent_run=None, workspace=None, branch=None, event_name, payload=None, routing=None):
+    """Insert one queued run and its receipt inside an open write, after checking the concurrency limits.
+
+    routing is the decision of hosts.route that chose the host. It is kept on the run, outside the snapshot, so the
+    agent that runs never reads it.
+    """
     require_capacity(memory, episode_id, role)
+    ensure_run_columns(memory)
     now = memory.now()
-    memory.db.execute('INSERT INTO review_runs (id,episode_id,role,signature,host,session_id,state,created_at,updated_at,request_key,snapshot,parent_run,workspace,branch) '
-                      'VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+    memory.db.execute('INSERT INTO review_runs (id,episode_id,role,signature,host,session_id,state,created_at,updated_at,request_key,snapshot,parent_run,workspace,branch,routing) '
+                      'VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
                       (run_id, episode_id, role, signature or hashlib.sha256(dumps(snapshot).encode()).hexdigest(), host,
-                       session_id, 'queued', now, now, request_key, dumps(snapshot), parent_run, workspace, branch))
+                       session_id, 'queued', now, now, request_key, dumps(snapshot), parent_run, workspace, branch,
+                       dumps(routing) if routing else None))
     codex_host.receipt(memory, session_id=session_id or run_id, event_name=event_name, episode_id=episode_id,
                        payload={'run_id': run_id, 'role': role, **(payload or {})}, key=run_id + ':requested')
 
@@ -165,23 +172,48 @@ def implementer_host(memory, episode_id, parent_run=None):
     return 'codex'
 
 
-def review_host(memory, config, implementer):
-    """Choose a configured host other than the implementer when one is available.
+def review_host(memory, config, implementer, decisions=None):
+    """Choose a configured host other than the implementer when one is available. See review_route.
 
-    A host that this process cannot find still receives the check when no other
-    host can run; the run then fails visibly at execution. A host marked
-    unavailable is never chosen.
+    A caller that records the routing decision passes a list as decisions, and the decision is appended to it.
+    """
+    decision = review_route(memory, config, implementer)
+    if decisions is not None:
+        decisions.append(decision)
+    return decision['host']
+
+
+def review_route(memory, config, implementer):
+    """The routing decision for a check or a work review, which keeps the reviewer on another host than the implementer.
+
+    The hosts other than the implementer are routed first by headroom, so a constrained other host still reviews
+    before the implementer's own host does. Only when no other host is installed and available does the implementer's
+    host review. A host that this process cannot find still receives the check when no host can run; the run then
+    fails visibly at execution. A host marked unavailable is never chosen.
     """
     allowed = list(config['hosts'])
     others = [name for name in allowed if name != implementer]
+    if others:
+        try:
+            return hosts.route(memory, others[0], allowed=others)
+        except InvalidRecord:
+            pass
     preferred = others[0] if others else allowed[0]
     try:
-        return hosts.choose(memory, preferred, allowed=allowed)
+        decision = hosts.route(memory, preferred, allowed=allowed)
     except InvalidRecord:
         for name in [preferred] + [name for name in allowed if name != preferred]:
             if hosts.availability(memory, name)['available']:
-                return name
+                return {'host': name, 'preferred': preferred, 'reason': 'not_installed',
+                        'sentence': f'No allowed host is installed, so the {name} host receives the check and the run '
+                                    'reports the missing program.', 'decided_at': memory.now(), 'ledger_read': False, 'hosts': []}
         raise
+    if decision['host'] == implementer:
+        # The rule of a different reviewer could not be kept, and the decision says so.
+        decision = {**decision, 'reason': 'same_host',
+                    'sentence': f'No host other than the worker host {implementer} is installed and available, so the '
+                                f'{implementer} host reviews its own work. ' + decision['sentence']}
+    return decision
 
 
 def task_checklist(memory, episode_id, criterion):
@@ -302,7 +334,7 @@ def read(memory, run_id):
     if not row:
         raise InvalidRecord('The agent check was not found.')
     value = {**{column: None for column in RUN_COLUMNS}, **dict(row)}
-    for key in ('snapshot', 'report', 'metrics'):
+    for key in ('snapshot', 'report', 'metrics', 'routing'):
         value[key] = json.loads(value[key]) if value[key] else None
     if value['metrics'] and value['state'] in ACTIVE:
         metrics = value['metrics']
@@ -389,13 +421,16 @@ def request(memory, episode_id, role='outcome', *, request_key, session_id='', r
             if old['state'] in ACTIVE or not retry:
                 return old
         implementer = implementer_host(memory, episode_id)
-        host = review_host(memory, config, implementer)
+        decisions = []
+        host = review_host(memory, config, implementer, decisions)
+        routing = decisions[0] if decisions else None
         # The signature covers the evidence only, so a later host choice does not make a check stale.
         value['implementer_host'] = implementer
         value['independence'] = 'other_host' if host != implementer else 'same_host'
         rid = new_run_id()
         insert_run(memory, run_id=rid, episode_id=episode_id, role=role, host=host, snapshot=value, signature=signature,
-                   request_key=request_key, session_id=session_id, event_name='ReviewRequested', payload={'signature': signature})
+                   request_key=request_key, session_id=session_id, event_name='ReviewRequested', payload={'signature': signature},
+                   routing=routing)
     return read(memory, rid)
 
 
@@ -488,7 +523,7 @@ def begin_run(memory, run, timeout, *, cancelled_message, timeout_message, **ext
     folder = memory.path.parent/'agent-runs'/run['id']
     metrics = {'input_characters':None, 'provider_usage':None, 'execution_limit_seconds':timeout,
                'deadline_at':deadline.isoformat(), 'termination_reason':None, 'report_valid':False, **extra}
-    log = hosts.RunLog(folder)
+    log = hosts.RunLog(folder, run['host'])
 
     def flush(values):
         with memory._write():
@@ -678,10 +713,11 @@ def execute(memory, run_id, timeout=None):
         evidence = evidence_manifest(run['snapshot'],folder)
         packet = prompt+dumps(evidence)
         (folder/'input.json').write_text(dumps(run['snapshot']), encoding='utf-8')
-        (folder/'prompt.txt').write_text(packet if run['host']=='codex' else dumps(evidence), encoding='utf-8')
+        (folder/'prompt.txt').write_text(packet if hosts.profile(run['host']).packet_in_input else dumps(evidence), encoding='utf-8')
         metrics['input_characters'] = len(packet)
         args = command(run['host'],run['snapshot']['project'],folder,prompt)
-        stopped, message = supervisor.run(args, cwd=run['snapshot']['project'], folder=folder)
+        environment = hosts.review_environment(run['host'], run['snapshot']['project'], folder, prompt)
+        stopped, message = supervisor.run(args, cwd=run['snapshot']['project'], folder=folder, env=environment)
         if stopped:
             state, error = stopped, message
     except (OSError,ValueError,InvalidRecord,subprocess.SubprocessError) as exc:
@@ -847,6 +883,10 @@ def main():
             execute(memory,args.run)
             # A finished check frees capacity, so a work review that could not start earlier can start now.
             delegation.start_missing_reviews(memory)
+    # The usage ledger of this machine collects at the end of each run (section 16.2). It never raises and does
+    # nothing before the machine memory exists; it runs in this worker process, so no caller waits for it.
+    from . import usage
+    usage.collect_after_run()
 
 
 if __name__=='__main__': main()

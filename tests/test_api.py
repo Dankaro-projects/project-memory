@@ -403,6 +403,33 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(value['promotions'][0]['rule']['do'], RULE['do'])
         self.assertFalse(Path(os.environ[machine.DATABASE_VARIABLE]).exists())
 
+    def test_usage_endpoint_reads_the_ledger_read_only_and_the_revision_follows_it(self):
+        from datetime import datetime, timedelta, timezone
+        from memory_module import usage
+        database = Path(os.environ[machine.DATABASE_VARIABLE])
+        value = api.usage(self.m, {})
+        self.assertEqual((value['ledger'], value['probes'], value['routing']), (False, {}, []))
+        self.assertEqual([item['host'] for item in value['hosts']], ['codex', 'claude', 'grok', 'opencode'])
+        self.assertEqual(value['note'], usage.NO_LEDGER_NOTE)
+        self.assertEqual(value['configured_hosts'], ['codex'])
+        self.assertFalse(database.exists())
+        with Viewer(self.m.path, 'usage-revision-token') as server:
+            before = server.revision()
+            empty = self.root / 'no-logs'
+            usage.collect_machine(folders={'codex': empty, 'claude': empty}, projects=False)
+            collected = server.revision()
+            self.assertNotEqual(collected, before)
+            resets = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat(timespec='microseconds')
+            with Memory(database) as store, store._write():
+                store.db.execute("INSERT INTO usage_limits VALUES ('codex','codex','primary',93,300,?,?)", (resets, resets))
+            self.assertNotEqual(server.revision(), collected)
+        value = api.usage(self.m, {})
+        codex = value['hosts'][0]
+        self.assertTrue(value['ledger'])
+        self.assertEqual((codex['headroom']['constrained'], codex['headroom']['used_percent']), (True, 93))
+        with self.assertRaises(InvalidRecord):
+            api.usage(self.m, {'limit': '0'})
+
     def test_the_panel_accepts_a_promotion_retires_the_rule_and_the_endpoint_reports_both(self):
         proposal = self.propose()
         accepted = action(self.m, 'promotion', {'promotion_id': proposal['id'], 'status': 'accepted',
@@ -808,6 +835,8 @@ class ExportTests(unittest.TestCase):
                     'agents', 'requirements', 'kickoff', 'plan', 'components', 'record?body_offset=0&id=' + self.ids['source']):
             self.assertIn(key, responses)
         self.assertEqual([item['key'] for item in data['omitted']], ['machine'])
+        # The usage ledger belongs to the machine, so a snapshot carries none and the Usage view says so.
+        self.assertFalse([key for key in responses if key.startswith('usage')])
         self.assertNotIn('csrf', responses['health'])
         # A record key holds the live response, so a panel that requests record?id= finds the body offline as well.
         live = json.loads(json.dumps(api.record(self.m, {'id': self.ids['source']})))

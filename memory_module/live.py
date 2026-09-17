@@ -109,6 +109,25 @@ def hive_state(memory):
         return ['hive_unavailable', str(exc)]
 
 
+def ledger_state():
+    """The file state of the machine memory that holds the usage ledger, read from metadata only.
+
+    A collection writes to the machine database, which does not change the data version of the project database,
+    so the revision of the panel follows the size and modification time of the machine database and its write ahead
+    log. It is None while the machine memory does not exist.
+    """
+    from .machine import database_path
+    path = database_path()
+    state = []
+    for candidate in (path, path.with_name(path.name + '-wal')):
+        try:
+            value = candidate.stat()
+            state.append([value.st_size, value.st_mtime_ns])
+        except OSError:
+            state.append(None)
+    return state if state[0] else None
+
+
 def file_fingerprint(root):
     """A metadata only fingerprint of the project files. It reads no file contents."""
     from .reviews import project_paths
@@ -208,6 +227,7 @@ class Viewer(ThreadingHTTPServer):
                 stats.append((str(path), None))
         stats.append(('project', self.project_state()))
         stats.append(('hive', hive_state(self.memory)))
+        stats.append(('usage', ledger_state()))
         from .reviews import exists
         # Unavailability expires with time, without a database write.
         stats.append(('hosts', [item['available'] for item in api.host_overview(self.memory)['hosts']]))

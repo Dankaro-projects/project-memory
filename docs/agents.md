@@ -1,8 +1,21 @@
 # Agent checks and delegated work
 
-Project Memory can start short host processes that read the project and report, and it can delegate a work item to a host that changes files in a separate git worktree. Both use the Codex or Claude Code CLI that you installed and signed in to, so both consume that account's usage. Project Memory manages no model service and holds no API key.
+Project Memory can start short host processes that read the project and report, and it can delegate a work item to a host that changes files in a separate git worktree. Both use a command line host that you installed and signed in to, so both consume that account's usage. Project Memory manages no model service and holds no API key.
 
-Setup with `--client codex` or `--client claude` records that host. A project can configure both. Generic MCP setup configures no host, so neither checks nor delegated work are available there.
+Setup with `--client codex` or `--client claude` records that host. A project can configure several hosts. Generic MCP setup configures no host, so neither checks nor delegated work are available there.
+
+## Hosts and their roles
+
+Four hosts have a profile: Codex, Claude Code, Grok and OpenCode. A profile states the command line of each role, how the structured answer is read, how usage and limit messages are read, and the roles the host may take.
+
+| Host | Checks and work reviews | Delegated work | Isolation of a run |
+| --- | --- | --- | --- |
+| Codex | Yes | Yes | Ephemeral session, hooks, plugins, memories and web search switched off, every configured MCP server disabled, read only sandbox for reviews and workspace write sandbox for work. |
+| Claude Code | Yes | Yes | No setting sources, hooks disabled, an empty MCP configuration, reading tools only for reviews, and shell commands inside the operating system sandbox for work. |
+| Grok | Yes | Only after a passing probe of its installed version | The compatibility variables switch off Claude Code and Cursor skills, rules, agents, MCP servers and hooks; memory, subagents and web search are off; only listed tools are allowed and every MCP tool is refused. |
+| OpenCode | Yes | No | An empty global configuration, a generated configuration that denies edit, shell and web tools and defines no MCP server, and no project configuration. OpenCode offers no sandbox. |
+
+Grok cannot receive the hive server on its command line, so work of a swarm is routed only to Codex or Claude Code. Grok also loads configuration that no setting switches off: the skills in `~/.grok/skills` and `~/.agents/skills`, the MCP servers and hooks of `~/.grok`, AGENTS.md project rules, and in a repository `.grok` and `.agents/skills`. A Grok run refuses a folder whose repository holds `.grok` or `.agents/skills`. Every Grok sandbox allows writes to `~/.grok`, so the probe of the work role also tries a write there, and Grok takes no work while that write succeeds. An OpenCode review must end its answer with one fenced JSON block; a missing or invalid block fails the run. See [setup and lifecycle](setup.md) for the probe and the usage command.
 
 ## Agent checks
 
@@ -67,7 +80,23 @@ The worker has no web access, must not commit, push, switch branches or change g
 
 Project Memory reads the run log of each host. A usage limit, a rate limit, an exhausted quota, HTTP 429, a missing login, an authentication failure or HTTP 401 marks that host unavailable, with the time parsed from the message when the message states one. Without a stated time the host counts as unavailable for 60 minutes.
 
-An unavailable host during delegated work reroutes the run once to the other configured host, with the original run recorded as its parent, and removes the abandoned worktree and branch. When no configured host can run, the request fails with the availability of each host instead of waiting. A successful run marks its host available again. Host availability is visible in the Agents view.
+An unavailable host during delegated work reroutes the run once to another configured host that may work, with the original run recorded as its parent, and removes the abandoned worktree and branch. When no configured host can run, the request fails with the availability of each host instead of waiting. A successful run marks its host available again. Host availability is visible in the Agents view.
+
+## Routing by headroom
+
+Every check, delegated run, work review and reroute chooses its host by headroom, using the usage ledger of this machine. A host is constrained when this project marked it unavailable, when its latest reported use is 85 percent or more in a window whose reset time has not passed, or when it hit a limit whose reset time has not passed. A limit hit without a reset time counts for 60 minutes. Codex reports its used percentage in its session logs. Claude Code, Grok and OpenCode report none, so for them only limit hits and marked unavailability constrain.
+
+The preferred host is kept unless it is constrained. The preferred host of delegated work is the host you selected, then the configured work host, then the first configured host. Otherwise the installed and available host with the most headroom is chosen, in this order:
+
+1. The lowest reported percentage. A host that reports no percentage counts as 50 percent here, so it follows a host that reports less and precedes a host that reports more. When Codex reports several limits, its general limit decides, and a limit of a single model does not.
+2. The lowest load of the last 5 hours relative to the median 5 hour load of the same host over the last 7 days. A host with no recorded use in the last 5 hours has a load of zero, also when it was never used. A host whose load cannot be measured follows the hosts whose load is measured.
+3. The configured order.
+
+When every such host is constrained, the one with the most headroom still runs, and a host with a limit hit comes after a host that is only close to its limit. A host that is not installed or that this project marked unavailable is never chosen. The choice is deterministic: the same ledger, receipts and time give the same host.
+
+A check and a work review keep the rule that the reviewer differs from the host that did the work. The other hosts are routed first, so a constrained other host still reviews before the implementer's host does. Only when no other host is installed and available does the same host review, and the run records `same_host`.
+
+Each run records its decision: the chosen host, the preferred host, the reason (`preferred`, `headroom`, `all_constrained`, `same_host` or `not_installed`), a sentence that states why, and the headroom of every candidate. The decision is kept on the run, outside the snapshot the agent reads, and the Usage view lists the decisions of the recent runs.
 
 ## Guards
 
@@ -146,5 +175,6 @@ Reviewer reports must address every numbered criterion and constraint exactly on
 - A reviewer cannot edit a plan, accept a lesson, repair the work, approve a retry or grant a permission. Codex reviewers run in its read only sandbox and Claude reviewers receive only the reading tools. Nested hooks, connectors and delegation are disabled inside a run.
 - A model verdict is an interpretation. A pass does not prove that the work is correct, and an empty findings list is not evidence of correctness.
 - Delegated work is limited by the recorded paths and by the worktree, not by an operating system sandbox. The host's own permissions still apply.
-- Runs consume your host account's usage. Project Memory reports the counters the host returns and does not estimate cost.
+- Runs consume your host account's usage. Project Memory reports the counters and the cost the host returns and does not estimate cost. `project-memory usage` shows them per host.
+- The probe of Grok relies on the report of Grok itself for the MCP servers and skills it can see. The process runner confines writes, not reads, so a worker shell can still read files that your user account can read.
 - The time an agent saves, the tokens it uses and the corrections it avoids are not measured. See [testing and limitations](evidence.md).

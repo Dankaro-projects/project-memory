@@ -166,7 +166,7 @@ def reference_rule(key, nullable):
 def operation_rules(operation):
     """Field rules that a function signature cannot express, and fields that MCP callers may not send."""
     rules = {'link': {'type': {'type': 'string', 'enum': list(module('graph').LINK_TYPES)}},
-             'delegate': {'host': {'type': ['string', 'null'], 'enum': list(module('hosts').HOSTS) + [None]}},
+             'delegate': {'host': {'type': ['string', 'null'], 'enum': list(module('hosts').KNOWN_HOSTS) + [None]}},
              'component': {'kind': {'type': 'string', 'enum': list(module('architecture').COMPONENT_KINDS)},
                            'status': {'type': 'string', 'enum': list(module('architecture').COMPONENT_STATUSES)},
                            # An omitted path keeps the stored path; an explicit null clears it.
