@@ -13,11 +13,18 @@ ledger lives in the machine memory. It is filled from four sources:
   and cost. Grok usage is recorded only when its run metrics carry it.
 
 What the ledger stores: the host, the source kind (`run` or `session`), start
-and end time, token counts by kind, cost and currency when reported, and for
-each reported limit the latest used percentage, window and reset time. What it
-never stores: message content, prompts, file paths, project names or session
-titles. A log file is known by a digest of its file system identity and an
-entry by a digest of what makes it unique.
+and end time, token counts by kind, cost and currency when reported, for an
+interactive session a digest of its identity and the context size of each
+model response, and for each reported limit the latest used percentage, window
+and reset time. What it never stores: message content, prompts, file paths,
+project names or session titles. A log file is known by a digest of its file
+system identity and an entry by a digest of what makes it unique.
+
+What it reports (section 17.1): fresh input, cache writes, cache reads, output
+and reasoning apart, and fresh work, which is fresh input plus cache writes
+plus output. Cache reads are never added into a single total, because a long
+session reads its whole context from the cache on every turn and would hide the
+work that was actually new. Routing headroom compares fresh work as well.
 
 Collection is incremental and idempotent. Each log file keeps the offset of the
 last complete line read, and a file that is unchanged since the last collection
@@ -60,6 +67,7 @@ UNFINISHED_RUN_STATES = ('queued', 'running', 'cancelling')
 READ_CHUNK = 4 * 1024 * 1024
 HEAD_BYTES = 256
 DIGEST_CHARACTERS = 32
+DIGEST = re.compile(r'[0-9a-f]{32}')
 LIMIT_IDENTIFIER = re.compile(r'[a-z0-9][a-z0-9_]{0,59}')
 REASON = re.compile(r'[a-z][a-z_]{0,39}')
 RUN_IDENTIFIER = re.compile(r'[A-Za-z0-9_][A-Za-z0-9_.-]{0,199}')
@@ -89,9 +97,31 @@ UNAVAILABLE = {
 }
 NO_LEDGER_NOTE = ('No usage has been collected on this machine yet. Run project-memory usage to collect it from the local '
                   'logs of each host.')
-WINDOWS_NOTE = ('Token totals follow the counting of each provider: Codex includes cached input in its input tokens, '
-                'while Claude Code and OpenCode count cached input separately. Totals of different hosts are therefore '
-                'not directly comparable.')
+WINDOWS_NOTE = ('Fresh work is fresh input plus cache writes plus output. Cache reads are shown apart and are never added '
+                'to it. Reasoning is part of output as the providers count it, so it is shown for information and not '
+                'added again. Codex includes cached input in its input tokens, so its fresh input is its input minus its '
+                'cached input.')
+# The fresh input of a stored record, as a SQL expression per host. Codex reports input_tokens with the cached input
+# inside it, so its fresh input is input_tokens minus cached_input_tokens. Claude Code and OpenCode report cache reads and
+# cache writes apart from input_tokens, and a Grok run is read the same way, so their input_tokens is fresh input already.
+INCLUDES_CACHED_INPUT = ('codex',)
+SEPARATED = ('(input_tokens IS NOT NULL OR cached_input_tokens IS NOT NULL OR cache_write_tokens IS NOT NULL'
+             ' OR output_tokens IS NOT NULL)')
+SESSIONS_SHOWN = 20
+UNSEPARATED_NOTE = ('Some records carry only a reported total without separated counts. That total is shown apart, is not '
+                    'part of fresh work, and counts toward the routing load because nothing better is known.')
+
+
+def fresh_input_sql(host):
+    if host in INCLUDES_CACHED_INPUT:
+        return 'max(coalesce(input_tokens,0)-coalesce(cached_input_tokens,0),0)'
+    return 'coalesce(input_tokens,0)'
+
+
+def load_sql(host):
+    """The routing load of one record: its fresh work, or its reported total when it carries no separated counts."""
+    return ('CASE WHEN ' + SEPARATED + ' THEN ' + fresh_input_sql(host) + '+coalesce(cache_write_tokens,0)'
+            '+coalesce(output_tokens,0) ELSE coalesce(total_tokens,0) END')
 
 
 # Small value helpers.
@@ -260,15 +290,25 @@ class Batch:
         self.largest = {}
         self.limits = {}
 
-    def record(self, entry, host, kind, started, ended, counts, *, cost=None, duration_ms=None, keep='first'):
-        """Add one usage record. With keep='largest' a later report of the same entry replaces a smaller one."""
+    def record(self, entry, host, kind, started, ended, counts, *, cost=None, duration_ms=None, keep='first',
+               session=None, context=None, earlier=()):
+        """Add one usage record. With keep='largest' a later report of the same entry replaces a smaller one.
+
+        `earlier` names the entries an older version of the ledger gave the same report, so a report read again after an
+        upgrade updates that record instead of adding a second one.
+        """
         row = {'entry': entry, 'host': host, 'kind': kind, 'started_at': stamp(started), 'ended_at': stamp(ended),
                **{field: (counts or {}).get(field) for field in TOKEN_FIELDS},
-               'cost': cost, 'currency': CURRENCY if cost is not None else None, 'duration_ms': duration_ms}
+               'cost': cost, 'currency': CURRENCY if cost is not None else None, 'duration_ms': duration_ms,
+               'session': session, 'context_tokens': context, 'earlier': set(earlier)}
         if keep == 'largest':
             prior = self.largest.get(entry)
+            if prior is not None:
+                row['earlier'] |= prior['earlier']
             if prior is None or (row['total_tokens'] or 0) > (prior['total_tokens'] or 0):
                 self.largest[entry] = row
+            else:
+                prior['earlier'] = row['earlier']
         else:
             self.first.setdefault(entry, row)
 
@@ -301,17 +341,29 @@ class Batch:
     def write(self):
         """Write everything gathered inside the current transaction of the store."""
         now = self.store.now()
-        columns = ['entry', 'host', 'kind', 'started_at', 'ended_at', *TOKEN_FIELDS, 'cost', 'currency', 'duration_ms']
+        columns = ['entry', 'host', 'kind', 'started_at', 'ended_at', *TOKEN_FIELDS, 'cost', 'currency', 'duration_ms',
+                   'session', 'context_tokens']
         placeholders = ','.join('?' * (len(columns) + 1))
         insert = 'INSERT INTO usage_records (' + ','.join(columns) + ',recorded_at) VALUES (' + placeholders + ')'
         for row in self.first.values():
             cursor = self.store.db.execute(insert + ' ON CONFLICT(entry) DO NOTHING', [row[name] for name in columns] + [now])
             self.stats['records_written'] += cursor.rowcount
-        updated = ','.join(name + '=excluded.' + name for name in TOKEN_FIELDS)
+        # A larger report replaces the counts. A record written before the session columns existed receives its session
+        # from any later report, so the statistics of a session become complete without counting anything twice.
+        larger = 'coalesce(excluded.total_tokens,0)>coalesce(usage_records.total_tokens,0)'
+        updated = ','.join(name + '=CASE WHEN ' + larger + ' THEN excluded.' + name + ' ELSE usage_records.' + name + ' END'
+                           for name in TOKEN_FIELDS)
+        updated += (',context_tokens=CASE WHEN ' + larger + ' THEN excluded.context_tokens ELSE'
+                    ' coalesce(usage_records.context_tokens,excluded.context_tokens) END'
+                    ',session=coalesce(usage_records.session,excluded.session)')
         for row in self.largest.values():
+            values = [row[name] for name in columns]
+            target = self._earlier_entry(row)
+            if target is not None:
+                values[0] = target
             cursor = self.store.db.execute(
-                insert + ' ON CONFLICT(entry) DO UPDATE SET ' + updated + ' WHERE coalesce(excluded.total_tokens,0)'
-                ' > coalesce(usage_records.total_tokens,0)', [row[name] for name in columns] + [now])
+                insert + ' ON CONFLICT(entry) DO UPDATE SET ' + updated + ' WHERE ' + larger
+                + ' OR (usage_records.session IS NULL AND excluded.session IS NOT NULL)', values + [now])
             self.stats['records_written'] += cursor.rowcount
         for row in self.limits.values():
             cursor = self.store.db.execute(
@@ -326,6 +378,15 @@ class Batch:
         self.largest = {}
         self.limits = {}
 
+    def _earlier_entry(self, row):
+        """The entry an older ledger gave this report, when only that one is recorded."""
+        earlier = sorted(row['earlier'] - {row['entry']})
+        if not earlier or self.store.db.execute('SELECT 1 FROM usage_records WHERE entry=?', (row['entry'],)).fetchone():
+            return None
+        found = self.store.db.execute('SELECT entry FROM usage_records WHERE entry IN (' + ','.join('?' * len(earlier))
+                                      + ') ORDER BY entry LIMIT 1', earlier).fetchone()
+        return found[0] if found else None
+
 
 # The readers of each log format. Each reads one complete line and keeps only numbers and times.
 
@@ -339,11 +400,25 @@ class CodexSession:
 
     host = 'codex'
 
-    def __init__(self, batch, state):
+    def __init__(self, batch, state, file_identity):
         self.batch = batch
         self.state = state
+        self.file_identity = file_identity
+
+    def session(self):
+        """The session digest: from the first session metadata of the file, or else from the identity of the file."""
+        found = self.state.get('session')
+        return found if isinstance(found, str) and DIGEST.fullmatch(found) else _digest('session:file:' + self.file_identity)
 
     def line(self, raw):
+        if b'"session_meta"' in raw and 'session' not in self.state:
+            value = _json(raw)
+            payload = value.get('payload') if value else None
+            if value and value.get('type') == 'session_meta' and isinstance(payload, dict):
+                identifier = payload.get('id') or payload.get('session_id')
+                if isinstance(identifier, str) and identifier:
+                    self.state['session'] = _digest('session:codex:' + identifier)
+            return
         if b'"token_count"' not in raw:
             return
         value = _json(raw)
@@ -383,22 +458,28 @@ class CodexSession:
         # times. The same total copied into another session file is therefore the same entry. A report without a total
         # is known by its time as well.
         entry = _digest('codex:' + dumps(total)) if total else _digest('codex:' + stamp(at) + ':' + dumps(last))
-        self.batch.record(entry, self.host, 'session', at, at, delta)
+        # The input of the last response includes its cached input, so it is the context that response read.
+        context = last['input_tokens'] if last else None
+        self.batch.record(entry, self.host, 'session', at, at, delta, session=self.session(), context=context)
 
 
 class ClaudeTranscript:
     """A Claude Code transcript: the usage of each assistant message.
 
-    A message written in several lines repeats its identifier with growing usage,
-    so the largest report of an identifier is kept. A resumed transcript repeats
-    earlier messages, which share their identifier and are recorded once.
+    A message written in several lines, one for each block of its content, repeats
+    its usage on every line, so the entry is keyed by the message identifier alone
+    and the largest report of it is kept. A resumed transcript repeats earlier
+    messages, which share their identifier and are recorded once. Before section
+    17.1 the entry also carried the request identifier; a report read again finds
+    a record under that older entry and updates it instead of adding a second one.
     """
 
     host = 'claude'
 
-    def __init__(self, batch, state):
+    def __init__(self, batch, state, file_identity):
         self.batch = batch
         self.state = state
+        self.file_identity = file_identity
 
     def line(self, raw):
         if b'"usage"' not in raw or b'"assistant"' not in raw:
@@ -417,12 +498,22 @@ class ClaudeTranscript:
         if at is None:
             self.batch.stats['lines_without_time'] += 1
             return
-        identifier = message.get('id') if isinstance(message.get('id'), str) and message.get('id') else value.get('uuid')
-        if not isinstance(identifier, str) or not identifier:
-            return
         request = value.get('requestId') if isinstance(value.get('requestId'), str) else ''
-        entry = _digest('claude:' + identifier + ':' + request)
-        self.batch.record(entry, self.host, 'session', at, at, counts, keep='largest')
+        if isinstance(message.get('id'), str) and message['id']:
+            entry = _digest('claude:' + message['id'])
+            earlier = {_digest('claude:' + message['id'] + ':' + request)}
+        elif isinstance(value.get('uuid'), str) and value['uuid']:
+            entry = _digest('claude:' + value['uuid'] + ':' + request)
+            earlier = ()
+        else:
+            return
+        session = value.get('sessionId')
+        session = (_digest('session:claude:' + session) if isinstance(session, str) and session
+                   else _digest('session:file:' + self.file_identity))
+        # Claude counts cache reads and cache writes apart from input, so the context of a response is their sum.
+        context = sum(counts[field] or 0 for field in ('input_tokens', 'cached_input_tokens', 'cache_write_tokens'))
+        self.batch.record(entry, self.host, 'session', at, at, counts, keep='largest', session=session, context=context,
+                          earlier=earlier)
 
 
 READERS = {'codex': CodexSession, 'claude': ClaudeTranscript}
@@ -546,7 +637,7 @@ def scan_file(store, path, host, stats):
             stream.seek(0)
             head_digest = _digest_bytes(stream.read(head_length))
         batch = Batch(store, stats)
-        reader = READERS[host](batch, state)
+        reader = READERS[host](batch, state, identity)
         stream.seek(offset)
         rest = b''
         position = offset
@@ -587,11 +678,14 @@ def _state(text):
 
 
 def _stored_state(state):
-    """Only the running token total of a Codex session is kept between collections."""
+    """Only the running token total and the session digest of a Codex session are kept between collections."""
+    kept = {}
     total = state.get('total')
     if isinstance(total, list) and all(_count(item) is not None for item in total):
-        return dumps({'total': total})
-    return dumps({})
+        kept['total'] = total
+    if isinstance(state.get('session'), str) and DIGEST.fullmatch(state['session']):
+        kept['session'] = state['session']
+    return dumps(kept)
 
 
 def collect_runs(store, stats):
@@ -703,7 +797,7 @@ def collect_machine(path=None, *, folders=None, projects=True):
     target = machine.database_path(path)
     created = not target.exists()
     machine.initialize(target)
-    with Memory(target) as store:
+    with machine.writer(target) as store:
         stats = collect(store, folders=folders, projects=projects)
     stats['machine_memory_created'] = created
     return stats
@@ -715,7 +809,7 @@ def collect_after_run(path=None):
     if not target.exists():
         return None
     try:
-        with Memory(target) as store:
+        with machine.writer(target) as store:
             return collect(store)
     except Exception:  # noqa: BLE001 because the run has finished and its result must not depend on the ledger.
         return None
@@ -744,24 +838,65 @@ def window_bounds(now, zone=None):
     return {'last_5_hours': now - FIVE_HOURS, 'today': _day_start(now, zone), 'last_7_days': now - SEVEN_DAYS}
 
 
+# The figures of a window, each a SQL expression over the records of one host.
+def _figures(host):
+    return (('fresh_input_tokens', 'CASE WHEN ' + SEPARATED + ' THEN ' + fresh_input_sql(host) + ' END'),
+            ('cache_write_tokens', 'cache_write_tokens'), ('cache_read_tokens', 'cached_input_tokens'),
+            ('output_tokens', 'output_tokens'), ('reasoning_tokens', 'reasoning_tokens'),
+            ('unseparated_tokens', 'CASE WHEN NOT ' + SEPARATED + ' THEN total_tokens END'),
+            ('load_tokens', load_sql(host)))
+
+
 def _window(store, host, start, now, *, inclusive):
+    """The separated figures of one host in one window. Fresh work is fresh input plus cache writes plus output."""
     comparison = '>=' if inclusive else '>'
+    figures = _figures(host)
     # total() adds as real numbers, so a large ledger cannot overflow the integers of SQLite while it is read.
-    sums = ','.join('total(' + field + ')' for field in TOKEN_FIELDS)
+    sums = ','.join('total(' + expression + ')' for _, expression in figures)
     rows = store.db.execute('SELECT kind,count(*),count(total_tokens),' + sums + ',sum(cost),currency FROM usage_records'
                             ' WHERE host=? AND ended_at' + comparison + '? AND ended_at<=? GROUP BY kind,currency',
                             (host, stamp(start), stamp(now))).fetchall()
     value = {'from': stamp(start), 'records': 0, 'run_records': 0, 'session_records': 0, 'records_with_tokens': 0,
-             **{field: 0 for field in TOKEN_FIELDS}, 'cost': {}}
+             **{name: 0 for name, _ in figures}, 'cost': {}}
     for row in rows:
         value['records'] += row[1]
         value[row[0] + '_records'] = value.get(row[0] + '_records', 0) + row[1]
         value['records_with_tokens'] += row[2]
-        for index, field in enumerate(TOKEN_FIELDS):
-            value[field] += int(row[3 + index] or 0)
+        for index, (name, _) in enumerate(figures):
+            value[name] += int(row[3 + index] or 0)
         if row[-1] and row[-2] is not None:
             value['cost'][row[-1]] = round(value['cost'].get(row[-1], 0.0) + row[-2], 6)
+    value['fresh_work_tokens'] = value['fresh_input_tokens'] + value['cache_write_tokens'] + value['output_tokens']
+    value['cost'] = value.pop('cost')
     return value
+
+
+def sessions(store, host, start, now, *, limit=SESSIONS_SHOWN):
+    """Counts per interactive session in a window, largest context first: turns, largest context and cache read share.
+
+    A turn is one recorded model response. The cache read share is cache reads divided by all input the session sent,
+    which is fresh input plus cache writes plus cache reads. The session is named by its digest only.
+    """
+    empty = {'from': stamp(start), 'total': 0, 'shown': []}
+    if not machine.has_usage_sessions(store):
+        return empty
+    where = " FROM usage_records WHERE host=? AND kind='session' AND session IS NOT NULL AND ended_at>? AND ended_at<=?"
+    parameters = (host, stamp(start), stamp(now))
+    total = store.db.execute('SELECT count(DISTINCT session)' + where, parameters).fetchone()[0]
+    rows = store.db.execute(
+        'SELECT session,count(*),max(context_tokens),total(' + fresh_input_sql(host) + '),total(cache_write_tokens),'
+        'total(cached_input_tokens),total(output_tokens),min(started_at),max(ended_at)' + where
+        + ' GROUP BY session ORDER BY max(context_tokens) DESC,max(ended_at) DESC,session LIMIT ?',
+        parameters + (limit,)).fetchall()
+    shown = []
+    for row in rows:
+        fresh, writes, reads, output = (int(row[index] or 0) for index in (3, 4, 5, 6))
+        sent = fresh + writes + reads
+        shown.append({'session': row[0], 'turns': row[1], 'largest_context_tokens': row[2],
+                      'cache_read_share': round(reads / sent, 4) if sent else None, 'fresh_input_tokens': fresh,
+                      'cache_write_tokens': writes, 'cache_read_tokens': reads, 'output_tokens': output,
+                      'fresh_work_tokens': fresh + writes + output, 'first_at': row[7], 'last_at': row[8]})
+    return {'from': stamp(start), 'total': total, 'shown': shown}
 
 
 def limit_state(store, host, now):
@@ -836,9 +971,10 @@ def latest_limit_hit(store, host, now):
 
 
 def _median_of_windows(store, host, now):
-    """The median total of the 5 hour windows in the last 7 days that recorded any tokens, or None."""
-    rows = store.db.execute('SELECT ended_at,total_tokens FROM usage_records WHERE host=? AND ended_at>? AND ended_at<=?'
-                            ' AND total_tokens IS NOT NULL', (host, stamp(now - SEVEN_DAYS), stamp(now))).fetchall()
+    """The median fresh work of the 5 hour windows in the last 7 days that recorded any, or None."""
+    rows = store.db.execute('SELECT ended_at,' + load_sql(host) + ' FROM usage_records WHERE host=? AND ended_at>?'
+                            ' AND ended_at<=? AND (total_tokens IS NOT NULL OR ' + SEPARATED + ')',
+                            (host, stamp(now - SEVEN_DAYS), stamp(now))).fetchall()
     buckets = [0] * MEDIAN_WINDOWS
     for row in rows:
         at = moment(row[0])
@@ -857,10 +993,15 @@ def host_headroom(store, host, now=None):
     A host is constrained when its latest reported use reaches 85 percent in a window
     whose reset time has not passed, or when it hit a limit that has not reset.
     Whether a project marked the host unavailable is read by `hosts.availability`.
+
+    The relative load compares the fresh work of the last 5 hours with the median of
+    the 5 hour windows of the week. Cache reads are left out, because a long session
+    reads its whole context again on every turn. A record that carries only a reported
+    total counts by that total, because nothing better is known.
     """
     now = _now(now)
     value = {'host': host, 'constrained': False, 'reasons': [], 'used_percent': None, 'resets_at': None,
-             'limit_hit': None, 'tokens_5_hours': None, 'median_5_hours': None, 'relative_load': None}
+             'limit_hit': None, 'fresh_work_5_hours': None, 'median_fresh_work_5_hours': None, 'relative_load': None}
     if store is None or not machine.has_usage(store):
         return value
     current = [item for item in limit_state(store, host, now) if not item['expired']]
@@ -880,11 +1021,11 @@ def host_headroom(store, host, now=None):
         value['limit_hit'] = hit
         value['reasons'].append('limit_hit')
     recent = _window(store, host, now - FIVE_HOURS, now, inclusive=False)
-    value['tokens_5_hours'] = recent['total_tokens'] if recent['records_with_tokens'] else None
+    value['fresh_work_5_hours'] = recent['load_tokens'] if recent['records_with_tokens'] else None
     median = _median_of_windows(store, host, now)
-    value['median_5_hours'] = median
-    if median and value['tokens_5_hours'] is not None:
-        value['relative_load'] = round(value['tokens_5_hours'] / median, 4)
+    value['median_fresh_work_5_hours'] = median
+    if median and value['fresh_work_5_hours'] is not None:
+        value['relative_load'] = round(value['fresh_work_5_hours'] / median, 4)
     elif not recent['records']:
         # A host with no recorded use in the last 5 hours has the lowest possible load, also when it was never used.
         value['relative_load'] = 0.0
@@ -908,12 +1049,15 @@ def summary(store, *, now=None, zone=None):
     ledger = store is not None and machine.has_usage(store)
     hosts = []
     for host in HOSTS:
-        item = {'host': host, 'windows': {}, 'limits': [], 'limit_hit': None,
+        item = {'host': host, 'windows': {}, 'sessions': None, 'limits': [], 'limit_hit': None,
                 'measured': {'tokens': False, 'cost': False, 'limit_state': False, 'limit_hits': False},
                 'unavailable': list(UNAVAILABLE[host])}
         if ledger:
             for name, start in bounds.items():
                 item['windows'][name] = _window(store, host, start, now, inclusive=name == 'today')
+                # The routing load is read by host_headroom and is not a figure of the report.
+                item['windows'][name].pop('load_tokens')
+            item['sessions'] = sessions(store, host, bounds['last_7_days'], now)
             flags = store.db.execute('SELECT count(total_tokens),count(cost) FROM usage_records WHERE host=?',
                                      (host,)).fetchone()
             item['limits'] = limit_state(store, host, now)
@@ -966,8 +1110,30 @@ def _limit_text(item):
     return parts
 
 
+WINDOW_LABELS = (('last_5_hours', '5 hours'), ('today', 'Today'), ('last_7_days', '7 days'))
+COLUMNS = (('fresh_input_tokens', 'Fresh input'), ('cache_write_tokens', 'Cache writes'), ('output_tokens', 'Output'),
+           ('fresh_work_tokens', 'Fresh work'), ('cache_read_tokens', 'Cache reads'), ('reasoning_tokens', 'Reasoning'))
+SESSIONS_RENDERED = 5
+
+
+def _cost_text(item, window):
+    cost = window['cost']
+    if cost:
+        return ', '.join(f'{amount:.2f} {currency}' for currency, amount in sorted(cost.items()))
+    return f'0.00 {CURRENCY}' if item['measured']['cost'] else 'unavailable'
+
+
+def _share(value):
+    return 'unavailable' if value is None else f'{value * 100:.1f} percent'
+
+
 def render(value):
-    """The usage report as plain text for a terminal."""
+    """The usage report as plain text for a terminal.
+
+    Each host has one row per window with the separated figures. Fresh work sits beside
+    its three parts, and cache reads and reasoning follow it apart, so no column adds
+    cache reads into a total.
+    """
     lines = []
     collection = value.get('collection')
     if collection:
@@ -978,19 +1144,35 @@ def render(value):
         lines.append(value['note'])
         return '\n'.join(lines) + '\n'
     lines.append('')
-    header = f'{"Host":<10}{"5 hours":>16}{"Today":>16}{"7 days":>16}{"Cost in 7 days":>18}'
-    lines.append(header)
+    lines.append(f'{"Host":<10}{"Window":<9}' + ''.join(f'{label:>15}' for _, label in COLUMNS) + f'{"Cost":>14}')
+    unseparated = []
     for item in value['hosts']:
-        windows = item['windows']
-        cells = []
-        for name in ('last_5_hours', 'today', 'last_7_days'):
-            window = windows[name]
+        for index, (name, label) in enumerate(WINDOW_LABELS):
+            window = item['windows'][name]
             # A host that reported tokens before shows zero for a quiet window. Only a host never measured is unavailable.
-            cells.append(_number(window['total_tokens']) if item['measured']['tokens'] else 'unavailable')
-        cost = windows['last_7_days']['cost']
-        cost_text = ', '.join(f'{amount:.2f} {currency}' for currency, amount in sorted(cost.items())) if cost else (
-            f'0.00 {CURRENCY}' if item['measured']['cost'] else 'unavailable')
-        lines.append(f'{item["host"]:<10}{cells[0]:>16}{cells[1]:>16}{cells[2]:>16}{cost_text:>18}')
+            cells = [_number(window[field]) if item['measured']['tokens'] else 'unavailable' for field, _ in COLUMNS]
+            host = item['host'] if index == 0 else ''
+            lines.append(f'{host:<10}{label:<9}' + ''.join(f'{cell:>15}' for cell in cells)
+                         + f'{_cost_text(item, window):>14}')
+        if item['windows']['last_7_days']['unseparated_tokens']:
+            unseparated.append(item['host'])
+    if unseparated:
+        lines.append('')
+    for host in unseparated:
+        lines.append(host + ': ' + UNSEPARATED_NOTE)
+    rows = [(item['host'], found) for item in value['hosts'] for found in ((item.get('sessions') or {}).get('shown') or [])
+            [:SESSIONS_RENDERED]]
+    if rows:
+        lines.append('')
+        lines.append(f'Sessions of the last 7 days with the largest context, at most {SESSIONS_RENDERED} for each host:')
+        lines.append(f'{"Host":<10}{"Session":<14}{"Turns":>8}{"Largest context":>18}{"Fresh work":>15}'
+                     f'{"Cache reads":>16}{"Cache read share":>19}')
+        for host, found in rows:
+            context = found['largest_context_tokens']
+            lines.append(f'{host:<10}{found["session"][:12]:<14}{_number(found["turns"]):>8}'
+                         f'{(_number(context) if context is not None else "unavailable"):>18}'
+                         f'{_number(found["fresh_work_tokens"]):>15}{_number(found["cache_read_tokens"]):>16}'
+                         f'{_share(found["cache_read_share"]):>19}')
     lines.append('')
     for item in value['hosts']:
         limits = _limit_text(item)

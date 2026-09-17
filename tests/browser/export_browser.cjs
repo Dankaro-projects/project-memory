@@ -91,7 +91,12 @@ const drawer = (page) => page.locator("#drawer-body .drawer-content:not(.pending
       assert.ok(!(await text(page, "#main")).includes("Not applicable"), `${kind}: the snapshot runs table prints Not applicable`);
       await go(page, "#now");
       assert.match(await text(page, "#main"), /occurred once after the lesson was accepted/);
-      assert.equal(await page.locator('#main [data-key^="now-attention-"] .item-action').count(), 8);
+      assert.equal(await page.locator('#main [data-key^="now-attention-"] .item-action').count(), 5);
+      // The rest of the attention list opens in the drawer from the embedded response of the Now view.
+      await page.click("[data-key=now-all-attention]");
+      await page.waitForSelector("#drawer-body [data-key^='now-attention-']");
+      assert.equal(await page.locator('#drawer-body [data-key^="now-attention-"] .item-action').count(), 8);
+      await page.evaluate(() => Panel.closeDrawer());
       step(`${kind}: the snapshot counts a single event in the singular and names the action of every attention entry`);
 
       // No action is offered and none can be opened.

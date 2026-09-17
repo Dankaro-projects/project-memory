@@ -462,13 +462,15 @@ async function editing(page, ids, posts) {
 
   // Allowing the blocked path of the scope block.
   await go(page, "#now");
+  await page.click("[data-key=now-open-blocks]");
   await page.getByRole("button", { name: "Allow paths" }).first().click();
   await page.waitForSelector("#form-dialog[open]");
   assert.equal(await field(page, "paths").inputValue(), "docs/brief.md");
   await field(page, "reason").fill("The work item needs the brief.");
   await page.locator("#form-save").click();
   await savedToast(page, /docs\/brief\.md/);
-  step("the blocked path of a scope block is allowed from the Now view");
+  step("the blocked path of a scope block is allowed from the scope blocks drawer of the Now view");
+  await closeDrawer(page);
 
   // The phase of the project, which decides who merges delegated work.
   await page.locator('[data-key="phase-change"]').click();

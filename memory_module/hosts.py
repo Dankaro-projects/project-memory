@@ -1001,7 +1001,7 @@ def _record_probe(result, path):
     from . import machine
     target = machine.database_path(path)
     machine.initialize(target)
-    with ProjectMemory(target) as store:
+    with machine.writer(target) as store:
         if not codex_host.exists(store):
             codex_host.initialize(store)
         with store._write():

@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+Finished sessions become memory. The Claude Code and Codex sessions of a project, including a session started in another folder that works on the project, are read into redacted digests of at most 20,000 characters: the user messages, failed commands, changed files, memory records written and commits, each with its transcript line. A message worded as an approval, a refusal, a correction or a choice that no record followed is flagged with low confidence, and the user confirms or dismisses it in the new Sessions view. `project-memory sessions distill` asks a host for proposed decisions, requirements, lessons, next actions and corrections, and nothing is recorded until the user accepts one. Transcripts are never changed, session content never enters the machine memory, and `project-memory sessions off` switches reading off for a project.
+
+Starting fresh is cheaper and safer. A new session receives a short summary of the three latest earlier sessions, with identifiers and counts and no quoted message. The prompt hook names the context size once it passes 250,000 tokens. `project-memory handoff` lists work whose next action is older than the latest activity, decisions without an outcome, changed documents, Markdown files no record cites and open flags, or reports ready.
+
+Unconfirmed tool calls can be reconciled from the control panel. Now and a blocked work item list each call with what the transcript of its session reports, and one click records the resolution with that entry as evidence. Read-only calls with a transcript result can be resolved together; calls that can change something are always decided one by one.
+
+The Now view keeps its first screen: Latest decisions and Recent scope blocks open from buttons in the view head, each card shows at most five items and opens the rest in a drawer, and board columns show ten cards at a time.
+
+The usage ledger separates fresh input, cache writes, cache reads, output and reasoning, and labels fresh work as fresh input plus cache writes plus output. Cache reads are never added into one total, routing by headroom compares fresh work, each Claude message counts once, and per session statistics report turns, the largest context and the cache read share. The machine memory folder and its database files are readable by their owner only, and doctor reports a wider mode.
+
 ## 0.6.0b1 (17 September 2026)
 
 Agents improve between runs. Accepted rules can target a role, and the instructions for the assistant, the worker and the reviewer are composed from a base text the user edits in the control panel plus the matching rules, within a fixed budget per role, with every omission reported. The panel shows how often each rule was used and whether its failure recurred. A failure stays counted until the user reassesses it, because an agent cannot clear its own failure by recording a later outcome.

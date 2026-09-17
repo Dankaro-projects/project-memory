@@ -321,7 +321,7 @@ class SessionTests(Fixture):
 
     def test_redaction_covers_the_common_credential_formats(self):
         for secret in (SECRET, 'sk-ant-' + 'b' * 30, 'AKIA' + 'C' * 16, 'Bearer ' + 'd' * 30, 'api_key=' + 'e' * 20,
-                       '-----BEGIN OPENSSH PRIVATE KEY-----\nabc\n-----END OPENSSH PRIVATE KEY-----'):
+                       '-----BEGIN OPENSSH ' + 'PRIVATE KEY-----\nabc\n-----END OPENSSH ' + 'PRIVATE KEY-----'):
             with self.subTest(secret=secret[:12]):
                 self.assertNotIn(secret, sessions.redact('value ' + secret + ' end'))
 
@@ -348,12 +348,12 @@ class ReconcileTests(Fixture):
             claude_line('user', [{'type': 'tool_result', 'tool_use_id': 'toolu_bash_bad', 'is_error': True, 'content': 'Exit code 2'}], at.format(4), session=self.SESSION),
             claude_line('assistant', [{'type': 'tool_use', 'id': 'toolu_read_lost', 'name': 'Read', 'input': {'file_path': 'b'}}], at.format(5), session=self.SESSION)])
         folder = self.codex / '2026' / '09' / '13'
-        self.transcript('rollout-2026-09-13-01a0bbbb-0000-7000-8000-000000000001', [
+        self.transcript('rollout-2026-09-13-02a0bbbb-0000-7000-8000-000000000001', [
             json.dumps({'type': 'event_msg', 'payload': {'type': 'item_completed', 'item': {'type': 'McpToolCall', 'id': 'exec-codex-get-1', 'tool': 'memory_get',
                         'readOnlyHint': 'True', 'status': 'failed', 'result': {'content': [{'type': 'text', 'text': 'Event was not found.'}], 'isError': True}}}})], folder=folder)
         for tool, identifier in (('Read', 'toolu_read_ok'), ('Bash', 'toolu_bash_bad'), ('Read', 'toolu_read_lost'), ('Edit', 'toolu_edit_gone')):
             self.pre(tool, identifier)
-        self.pre('mcp__cua_repl__js', 'exec-codex-get-1', session='01a0bbbb-0000-7000-8000-000000000001')
+        self.pre('mcp__cua_repl__js', 'exec-codex-get-1', session='02a0bbbb-0000-7000-8000-000000000001')
 
     def test_each_call_carries_the_suggestion_of_its_transcript(self):
         self.fixture()

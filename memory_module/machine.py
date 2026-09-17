@@ -30,6 +30,7 @@ from pathlib import Path
 import re
 import socket
 import sqlite3
+import stat
 import uuid
 
 from .core import Conflict, InvalidRecord, Memory, MemoryError, USER_ACTOR, _digest, _text, dumps
@@ -111,7 +112,8 @@ CREATE TABLE IF NOT EXISTS usage_files (
 CREATE TABLE IF NOT EXISTS usage_records (
  entry TEXT PRIMARY KEY, host TEXT NOT NULL, kind TEXT NOT NULL, started_at TEXT NOT NULL, ended_at TEXT NOT NULL,
  input_tokens INTEGER, cached_input_tokens INTEGER, cache_write_tokens INTEGER, output_tokens INTEGER,
- reasoning_tokens INTEGER, total_tokens INTEGER, cost REAL, currency TEXT, duration_ms INTEGER, recorded_at TEXT NOT NULL
+ reasoning_tokens INTEGER, total_tokens INTEGER, cost REAL, currency TEXT, duration_ms INTEGER, recorded_at TEXT NOT NULL,
+ session TEXT, context_tokens INTEGER
 );
 CREATE INDEX IF NOT EXISTS usage_record_time ON usage_records(host, ended_at);
 CREATE TABLE IF NOT EXISTS usage_limits (
@@ -125,11 +127,30 @@ CREATE INDEX IF NOT EXISTS usage_limit_hit_time ON usage_limit_hits(host, hit_at
 '''
 USAGE_MARKER = 'usage_limit_hit_time'
 USAGE_TABLES = ('usage_files', 'usage_records', 'usage_limits', 'usage_limit_hits')
+# Section 17.1 added the session digest and the context size of each record. A ledger created before receives the two
+# columns on its next write; its earlier records keep no session and are left out of the session statistics.
+USAGE_COLUMNS = (('session', 'TEXT'), ('context_tokens', 'INTEGER'))
+# The folder of the machine memory is readable by its owner only, and so are the database and its two SQLite files.
+FOLDER_MODE = 0o700
+FILE_MODE = 0o600
+DATABASE_FILES = (('database', ''), ('write_ahead_log', '-wal'), ('shared_memory', '-shm'))
 
 
 def ensure_usage(machine):
-    """Create the tables of the usage ledger in the machine memory, once."""
+    """Create the tables of the usage ledger in the machine memory once, and add the columns of section 17.1 once."""
     _ensure(machine, USAGE_SCHEMA, USAGE_MARKER)
+    present = {row[1] for row in machine.db.execute('PRAGMA table_info(usage_records)')}
+    missing = [(name, kind) for name, kind in USAGE_COLUMNS if name not in present]
+    if missing or machine.db.execute("SELECT 1 FROM sqlite_master WHERE name='usage_record_session'").fetchone() is None:
+        with machine._write():
+            for name, kind in missing:
+                machine.db.execute('ALTER TABLE usage_records ADD COLUMN ' + name + ' ' + kind)
+            machine.db.execute('CREATE INDEX IF NOT EXISTS usage_record_session ON usage_records(host, session, ended_at)')
+
+
+def has_usage_sessions(machine):
+    """True when the ledger carries the session columns, so a read only connection never needs the migration."""
+    return {name for name, _ in USAGE_COLUMNS} <= {row[1] for row in machine.db.execute('PRAGMA table_info(usage_records)')}
 
 
 def has_usage(machine):
@@ -158,6 +179,63 @@ def database_path(path=None):
     return Path.home() / DEFAULT_DIRECTORY / DEFAULT_FILE
 
 
+def _mode_targets(target):
+    """The folder and files whose modes are kept narrow. Only the folder of the default name is changed, because a
+    database placed elsewhere by the environment variable may sit in a folder that other programs share."""
+    found = []
+    if target.parent.name == DEFAULT_DIRECTORY:
+        found.append(('folder', target.parent, FOLDER_MODE))
+    found += [(name, target.with_name(target.name + suffix), FILE_MODE) for name, suffix in DATABASE_FILES]
+    return found
+
+
+def secure(path=None):
+    """Narrow the modes of the machine folder and database files to their owner. File modes are not used on Windows."""
+    if os.name == 'nt':
+        return
+    for _, item, mode in _mode_targets(database_path(path)):
+        try:
+            current = stat.S_IMODE(item.stat().st_mode)
+            if current & ~mode:
+                item.chmod(mode)
+        except OSError:
+            continue
+
+
+def permissions(path=None):
+    """The modes of the machine folder and database files, and every one that is wider than its owner only.
+
+    Doctor reports this. Nothing is changed here; the next write to the machine memory corrects a wider mode.
+    """
+    target = database_path(path)
+    if os.name == 'nt':
+        return {'status': 'not_checked', 'wider': [], 'note': 'File modes are not checked on Windows.'}
+    wider = []
+    for name, item, mode in _mode_targets(target):
+        try:
+            current = stat.S_IMODE(item.stat().st_mode)
+        except OSError:
+            continue
+        if current & ~mode:
+            wider.append({'item': name, 'mode': format(current, '04o'), 'expected': format(mode, '04o')})
+    if not target.exists():
+        return {'status': 'not_created', 'wider': wider, 'note': 'No machine memory exists on this computer yet.'}
+    if wider:
+        return {'status': 'too_wide', 'wider': wider,
+                'note': 'Other local users may read the machine memory. The next write to it narrows the modes to its owner.'}
+    return {'status': 'owner_only', 'wider': [], 'note': 'Only the owner can read the machine memory.'}
+
+
+def writer(path=None, *, clock=None):
+    """The machine memory opened for writing, with its folder and files narrowed to the owner before and after opening,
+    because SQLite creates the two files beside the database when it opens it."""
+    target = database_path(path)
+    secure(target)
+    store = Memory(target, clock=clock)
+    secure(target)
+    return store
+
+
 def exists(path=None):
     """True when the machine database is already created."""
     return database_path(path).exists()
@@ -168,7 +246,11 @@ def create(path=None, *, name=None, clock=None):
     target = database_path(path)
     if target.exists():
         raise Conflict('This machine already has a memory. Open it instead of creating a second one.')
-    return Memory.create(target, name or machine_name(), list(REQUIREMENTS), clock=clock)
+    if target.parent.name == DEFAULT_DIRECTORY:
+        target.parent.mkdir(mode=FOLDER_MODE, parents=True, exist_ok=True)
+    store = Memory.create(target, name or machine_name(), list(REQUIREMENTS), clock=clock)
+    secure(target)
+    return store
 
 
 def initialize(path=None, *, name=None, clock=None):
@@ -177,7 +259,7 @@ def initialize(path=None, *, name=None, clock=None):
     created = not target.exists()
     if created:
         create(target, name=name, clock=clock).close()
-    with Memory(target, clock=clock) as store:
+    with writer(target, clock=clock) as store:
         return {'database': str(target), 'machine': store.project, 'created': created}
 
 
@@ -186,7 +268,7 @@ def open_machine(path=None, *, read_only=False, clock=None):
     target = database_path(path)
     if not target.exists():
         return None
-    return Memory(target, read_only=read_only, clock=clock)
+    return Memory(target, read_only=True, clock=clock) if read_only else writer(target, clock=clock)
 
 
 def reader(path=None):
@@ -652,7 +734,7 @@ def accept(memory, promotion_id, *, actor, reason, changes=None, basis=None, pat
     # The machine key is a digest of the promotion identifier, so the write is repeatable
     # without the machine memory holding a record identifier of this project.
     key = _digest(promotion_id)[:16]
-    with Memory(target) as store:
+    with writer(target) as store:
         rule_id, adopted = _store_rule(store, rule, basis, key)
         project_id = register(store, path=str(_project_path(memory)), template=_project_template(memory),
                               phase=_project_phase(memory))
@@ -850,7 +932,7 @@ def refresh_phase(memory, *, path=None):
     if not target.exists():
         return 'no_machine_memory'
     try:
-        with Memory(target) as store:
+        with writer(target) as store:
             if not _table_exists(store, 'machine_projects'):
                 return 'not_registered'
             row = store.db.execute('SELECT id FROM machine_projects WHERE path=?', (str(_project_path(memory)),)).fetchone()

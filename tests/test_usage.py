@@ -160,10 +160,15 @@ class CollectorTests(UsageFixture):
         self.assertEqual([row[5] for row in rows], [5000, 1100, 500])
         self.assertEqual(rows[2][1:], (400, 100, 100, 20, 500))
         self.assertEqual(stats['malformed_lines'], 2)
+        # Codex counts cached input inside its input, so fresh input is input minus cached input.
         windows = self.summary()['codex']['windows']
-        self.assertEqual(windows['last_5_hours']['total_tokens'], 1600)
-        self.assertEqual(windows['today']['total_tokens'], 1600)
-        self.assertEqual(windows['last_7_days']['total_tokens'], 6600)
+        self.assertEqual(windows['last_5_hours']['fresh_work_tokens'], 1300)
+        self.assertEqual(windows['today']['fresh_work_tokens'], 1300)
+        self.assertEqual(windows['last_7_days']['fresh_work_tokens'], 5300)
+        self.assertEqual({name: windows['last_7_days'][name] for name in (
+            'fresh_input_tokens', 'cache_write_tokens', 'cache_read_tokens', 'output_tokens', 'reasoning_tokens')},
+            {'fresh_input_tokens': 4600, 'cache_write_tokens': 0, 'cache_read_tokens': 1300, 'output_tokens': 700,
+             'reasoning_tokens': 160})
 
     def test_codex_limits_keep_the_latest_observation_of_each_window(self):
         self.collect(projects=False)
@@ -185,7 +190,7 @@ class CollectorTests(UsageFixture):
         self.assertEqual(stats['files_read'], 1)
         self.assertEqual(stats['records_added'], 1)
         self.assertLess(stats['bytes_read'], 1000)
-        self.assertEqual(self.summary()['codex']['windows']['last_5_hours']['total_tokens'], 2200)
+        self.assertEqual(self.summary()['codex']['windows']['last_5_hours']['fresh_work_tokens'], 1900)
         # The completed report carries no secondary window, so the secondary window of the earlier report is dropped.
         self.assertEqual({item['window']: item['used_percent'] for item in self.summary()['codex']['limits']},
                          {'primary': 50.0})
@@ -197,9 +202,11 @@ class CollectorTests(UsageFixture):
         self.assertEqual([row[6] for row in rows], [120, 100, 6260, 6100])
         self.assertEqual(rows[2][1:], (10, 5000, 1000, 250, 30, 6260))
         windows = self.summary()['claude']['windows']
-        self.assertEqual(windows['last_5_hours']['total_tokens'], 12360)
-        self.assertEqual(windows['today']['total_tokens'], 12460)
-        self.assertEqual(windows['last_7_days']['total_tokens'], 12580)
+        self.assertEqual(windows['last_5_hours']['fresh_work_tokens'], 1360)
+        self.assertEqual(windows['today']['fresh_work_tokens'], 1460)
+        self.assertEqual(windows['last_7_days']['fresh_work_tokens'], 1480)
+        self.assertEqual(windows['last_7_days']['cache_read_tokens'], 11100)
+        self.assertNotIn('total_tokens', windows['last_7_days'])
         self.assertEqual(self.summary()['claude']['limits'], [])
 
     def test_a_second_collection_changes_nothing_and_opens_no_unchanged_file(self):
@@ -333,14 +340,16 @@ class RunCollectionTests(ProjectFixture):
         if value is None or isinstance(value, (int, float)):
             return
         self.assertIsInstance(value, str, where)
-        self.assertLessEqual(len(value), 64, where)
         for mark in ('/', '\\', ' ', '@', '~', 'harbour', 'example', 'msg_', 'req_'):
             self.assertNotIn(mark, value.lower(), where)
         if column == 'state':
+            # The state of a Codex log keeps its running total and the digest of its session, and nothing else.
             state = json.loads(value)
-            self.assertLessEqual(set(state), {'total'}, where)
+            self.assertLessEqual(set(state), {'total', 'session'}, where)
             self.assertTrue(all(isinstance(item, int) for item in state.get('total', [])), where)
+            self.assertTrue(DIGEST.fullmatch(state.get('session', '0' * 32)), where)
             return
+        self.assertLessEqual(len(value), 64, where)
         allowed = (DIGEST.fullmatch(value) or STAMP.fullmatch(value) or value in ENUMS
                    or (column == 'limit_id' and usage.LIMIT_IDENTIFIER.fullmatch(value))
                    or (column == 'reason' and usage.REASON.fullmatch(value)))
@@ -365,9 +374,9 @@ class WindowTests(UsageFixture):
         self.add_record('grok', NOON - timedelta(days=7), 23)
         self.add_record('grok', NOON - timedelta(days=7) + timedelta(seconds=1), 29)
         windows = self.summary()['grok']['windows']
-        self.assertEqual(windows['last_5_hours']['total_tokens'], 24)
-        self.assertEqual(windows['today']['total_tokens'], 50)
-        self.assertEqual(windows['last_7_days']['total_tokens'], 79)
+        self.assertEqual(windows['last_5_hours']['fresh_work_tokens'], 24)
+        self.assertEqual(windows['today']['fresh_work_tokens'], 50)
+        self.assertEqual(windows['last_7_days']['fresh_work_tokens'], 79)
         self.assertEqual(windows['last_7_days']['session_records'], 5)
 
     def test_the_day_starts_at_local_midnight_of_the_given_zone(self):
@@ -375,9 +384,9 @@ class WindowTests(UsageFixture):
         zone = timezone(timedelta(hours=2))
         with Memory(self.machine_path, read_only=True) as store:
             hosts_found = {item['host']: item for item in usage.summary(store, now=NOON, zone=zone)['hosts']}
-        self.assertEqual(hosts_found['grok']['windows']['today']['total_tokens'], 5)
+        self.assertEqual(hosts_found['grok']['windows']['today']['fresh_work_tokens'], 5)
         self.assertEqual(hosts_found['grok']['windows']['today']['from'], '2026-09-15T22:00:00.000000+00:00')
-        self.assertEqual(self.summary()['grok']['windows']['today']['total_tokens'], 0)
+        self.assertEqual(self.summary()['grok']['windows']['today']['fresh_work_tokens'], 0)
 
     def test_a_host_is_constrained_at_85_percent_until_its_window_resets(self):
         self.add_limit('codex', 84.9, int((NOON + timedelta(hours=1)).timestamp()))
@@ -409,8 +418,9 @@ class WindowTests(UsageFixture):
         self.add_record('codex', NOON - timedelta(hours=26), 200)
         self.add_record('codex', NOON - timedelta(hours=51), 400)
         found = self.headroom('codex')
-        self.assertEqual((found['tokens_5_hours'], found['median_5_hours'], found['relative_load']), (300, 250, 1.2))
-        self.assertIsNone(self.headroom('claude')['tokens_5_hours'])
+        self.assertEqual((found['fresh_work_5_hours'], found['median_fresh_work_5_hours'], found['relative_load']),
+                         (300, 250, 1.2))
+        self.assertIsNone(self.headroom('claude')['fresh_work_5_hours'])
         # A host with no recorded use in the last 5 hours has a load of zero, so it ranks before a loaded host.
         self.assertEqual(self.headroom('claude')['relative_load'], 0.0)
 
@@ -476,7 +486,9 @@ class LedgerRegressionTests(UsageFixture):
                 store.db.execute("INSERT INTO usage_records (entry,host,kind,started_at,ended_at,total_tokens,recorded_at)"
                                  " VALUES (?,'claude','session',?,?,?,?)", ('large-%d' % index, stamp_text(NOON), stamp_text(NOON),
                                                                             2 ** 62, stamp_text(NOON)))
-        self.assertEqual(self.summary()['claude']['windows']['last_5_hours']['total_tokens'], 2 ** 63)
+        # A record with only a reported total is shown apart from fresh work.
+        window = self.summary()['claude']['windows']['last_5_hours']
+        self.assertEqual((window['unseparated_tokens'], window['fresh_work_tokens']), (2 ** 63, 0))
         self.assertIsNotNone(hosts.ledger_headroom(['claude', 'codex'], NOON))
 
     def test_a_time_at_the_edge_of_the_date_range_is_treated_as_missing(self):

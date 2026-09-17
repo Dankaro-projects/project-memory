@@ -700,6 +700,18 @@
     const amounts = Object.entries(cost || {}).map(([currency, amount]) => amount.toFixed(2) + " " + currency);
     return amounts.length ? amounts.join(", ") : measured ? "0.00 USD" : "Unavailable";
   }
+  // Section 17.1: fresh work (fresh input, cache writes and output) and cache reads are shown apart and never added up.
+  function windowText(value) {
+    if (!value) return "Unavailable";
+    const parts = [number(value.fresh_work_tokens) + " tokens of fresh work", number(value.cache_read_tokens) + " tokens of cache reads"];
+    if (value.unseparated_tokens) parts.push(number(value.unseparated_tokens) + " tokens not separated by kind");
+    return parts.join(", ");
+  }
+  function sessionText(found) {
+    const top = ((found || {}).shown || [])[0];
+    return top ? `${found.total} sessions in the last 7 days. The largest context was ${number(top.largest_context_tokens)} tokens over ${top.turns} turns, `
+      + (top.cache_read_share == null ? "with no input recorded." : `and ${Math.round(top.cache_read_share * 100)} percent of its input was read from the cache.`) : "No session is recorded.";
+  }
   const probeText = (probe) => (probe ? (probe.passed ? "Passed" : "Failed") + " for version " + (probe.version || "unknown") + " on " + P.date(probe.probed_at)
     + ". Roles: " + probe.roles.join(" and ") + "." : "No probe is recorded on this machine.");
   function usageCard(item, data) {
@@ -707,9 +719,9 @@
     return h("article", { class: "card", dataset: { key: "usage-host-" + item.host, constrained: String(Boolean(room.constrained)) } },
       h("h3", null, h("span", null, hostName(item.host)), P.badge(room.constrained ? "review" : "ready", room.constrained ? "Constrained" : "Not constrained")),
       (data.configured_hosts || []).includes(item.host) ? h("div", { class: "row" }, P.chip("Configured for this project")) : null,
-      kv([...WINDOWS.map(([name, label]) => [label, measured.tokens ? number((windows[name] || {}).total_tokens) + " tokens" : "Unavailable"]),
+      kv([...WINDOWS.map(([name, label]) => [label, measured.tokens ? windowText(windows[name]) : "Unavailable"]), ["Sessions", sessionText(item.sessions)],
         ["Cost in the last 7 days", costText((windows.last_7_days || {}).cost, measured.cost)], ["Limit state", limitText(item)],
-        ["Load in the last 5 hours", room.relative_load == null ? "Not measured" : room.relative_load + " times the median of the last 7 days"],
+        ["Fresh work in the last 5 hours", room.relative_load == null ? "Not measured" : room.relative_load + " times the median of the last 7 days"],
         ["Probe", probeText((data.probes || {})[item.host])]]),
       h("div", { class: "row" }, Object.entries(measured).map(([name, yes]) => P.badge(yes ? "ready" : "backlog", P.words(name) + (yes ? " measured" : " unavailable")))),
       (item.unavailable || []).length ? h("ul", { class: "kn-plain muted" }, item.unavailable.map((text) => h("li", null, text))) : null);

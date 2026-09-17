@@ -36,8 +36,9 @@ USAGE_ALLOWANCE = {'views': 4_400}
 USAGE_LIMIT = 8_000
 # Allowance for the Sessions view (section 17.8): at most 8,000 code characters of JavaScript together with the changed
 # Usage view. Measured on 17 September 2026 against main at 88cccdb: views_knowledge.js grew by 2,944 with the Sessions
-# view, and forms.js by 1,719 with the session_flag and session_proposal forms. The allowance is 3,000 and 1,750.
-SESSIONS_ALLOWANCE = {'views': 3_000, 'forms.js': 1_750}
+# view, and forms.js by 1,719 with the session_flag and session_proposal forms. The Usage view then grew by 772 with the
+# separated fresh work, cache reads and session statistics. The allowance is 3,800 for the views and 1,750 for forms.js.
+SESSIONS_ALLOWANCE = {'views': 3_800, 'forms.js': 1_750}
 SESSIONS_LIMIT = 8_000
 # Allowance for reconciliation from the panel and the Now and board layout (sections 17.11 and 17.12). Measured on
 # 17 September 2026: views_work.js grew by 4,090 with the Needs reconciliation card, the now_list drawer and the paged
