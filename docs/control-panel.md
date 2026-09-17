@@ -11,13 +11,13 @@ The live service binds to `127.0.0.1`, uses a random capability in its address, 
 
 ## Layout
 
-A navigation rail on the left groups the eleven views in four sections. Below 900 pixels it collapses into a top menu. The top bar carries the project name, the live state, the phase of the project and a search box. Records open in a drawer on the right, which Escape closes and which returns focus to the control that opened it. The page stays usable down to 320 pixels; only graphs, tables and code blocks scroll inside their own container.
+A navigation rail on the left groups the fourteen views in four sections. Below 900 pixels it collapses into a top menu. The top bar carries the project name, the live state, the phase of the project and a search box. Records open in a drawer on the right, which Escape closes and which returns focus to the control that opened it. The page stays usable down to 320 pixels; only graphs, tables and code blocks scroll inside their own container.
 
 | Section | Views |
 | --- | --- |
 | Delivery | Now, Plan, Work |
 | Structure | Architecture, Dependencies |
-| Oversight | Decisions, Learning, Agents, Machine |
+| Oversight | Decisions, Learning, Agents, Machine, Hive, Usage, Sessions |
 | Reference | Records, Requirements |
 
 ## The phase of the project
@@ -120,6 +120,20 @@ Machine reads the memory of this computer, which sits above the projects on it. 
 The view states the isolation rule in place: effectiveness stays in each project, the adoption count reports how many projects promoted a rule, and no outcome is combined across projects. The registry stays on this computer, it is not part of an export, and no agent reads it. A snapshot carries no machine response at all, so the view says so instead of showing an empty list.
 
 A rule in force is not rewritten. Retire it and promote the corrected text, so the history of both stays readable. Only you write to the machine memory: an agent can propose a promotion and read the rules that were accepted.
+
+## Sessions
+
+Sessions reads the finished Claude Code and Codex sessions of this project. Collection runs when a session starts, for a few recent files within a short time limit, and in full with `project-memory sessions collect`. A session belongs to the project when its working folder is the project, when its identifier appears in the host receipts of the project, or when its tool calls name the project folder.
+
+| Part | Content |
+| --- | --- |
+| Flagged directions | A message worded as an approval, a refusal, a correction or a choice, or an answer to a question, that no plan, decision, progress, requirement or lesson record followed within ten turns or one hour. Each flag has low confidence. Confirm it when a record is missing and dismiss it otherwise. Both decisions are kept, and the view reports how many decided flags were confirmed. |
+| Proposals | What a host proposed from one digest after `project-memory sessions distill`: a decision, a requirement, a lesson, a next action or a correction, with its confidence and the transcript lines it rests on. Accept records it in the work item you select; reject records nothing. |
+| Session digests | One row per session with its last activity, messages, changed files, failed commands and open flags. The session opens its digest record. |
+
+A digest is a versioned source of at most 20,000 characters. It holds the user messages, each cut to 1,000 characters, the failed commands with their exit codes, the changed files, the memory records written and the commits made in the time of the session, and it names the transcript line of each item. Credentials are redacted before anything is stored. Transcripts are never changed, and session content never enters the machine memory. `project-memory sessions off` switches reading off for the project.
+
+An accepted lesson becomes a proposed lesson, which you then accept in Learning as any other. An accepted decision, requirement, next action or correction becomes a note of the selected work item that cites the digest, because those records carry fields and approvals that a digest cannot supply.
 
 ## Records
 

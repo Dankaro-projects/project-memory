@@ -276,6 +276,9 @@ class Memory(Workflow):
                 "Only the user saves that text, in the control panel, and Project Memory stores the text of a run "
                 "itself. Choose another source key.",
                 reserved_prefixes=list(RESERVED_SOURCE_PREFIXES))
+        if not internal and source_key.startswith("session-digest:"):
+            raise InvalidRecord("The source key " + source_key + " is reserved for the session digests that Project Memory "
+                                "collects itself. Choose another source key.")
         _text(body, "body", 5_000_000)
         if origin not in {"user", "tool", "document"}:
             raise InvalidRecord("Source origin must be user, tool or document.")

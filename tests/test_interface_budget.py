@@ -34,9 +34,20 @@ HIVE_LIMIT = 20_000
 # and the stylesheet are unchanged, and the allowance is 4,400 for the view files.
 USAGE_ALLOWANCE = {'views': 4_400}
 USAGE_LIMIT = 8_000
-TOTAL_SCRIPT_CHARACTERS = 196_000 + sum(FOCUS_ALLOWANCE.values()) + sum(HIVE_ALLOWANCE.values()) + sum(USAGE_ALLOWANCE.values())
-FILE_BUDGETS = {'core.js': 36_000, 'forms.js': 37_000 + FOCUS_ALLOWANCE['forms.js'] + HIVE_ALLOWANCE['forms.js'], 'graphs.js': 41_000}
-VIEW_CHARACTERS = 82_000 + FOCUS_ALLOWANCE['views'] + HIVE_ALLOWANCE['views'] + USAGE_ALLOWANCE['views']
+# Allowance for the Sessions view (section 17.8): at most 8,000 code characters of JavaScript together with the changed
+# Usage view. Measured on 17 September 2026 against main at 88cccdb: views_knowledge.js grew by 2,944 with the Sessions
+# view, and forms.js by 1,719 with the session_flag and session_proposal forms. The allowance is 3,000 and 1,750.
+SESSIONS_ALLOWANCE = {'views': 3_000, 'forms.js': 1_750}
+SESSIONS_LIMIT = 8_000
+# Allowance for reconciliation from the panel and the Now and board layout (sections 17.11 and 17.12). Measured on
+# 17 September 2026: views_work.js grew by 4,090 with the Needs reconciliation card, the now_list drawer and the paged
+# board columns, and forms.js by 1,672 with the reconcile and reconcile_read_only forms. The allowance is 4,100 and 1,700.
+PANEL_ACTIONS_ALLOWANCE = {'views': 4_100, 'forms.js': 1_700}
+PANEL_ACTIONS_LIMIT = 8_000
+ALLOWANCES = (FOCUS_ALLOWANCE, HIVE_ALLOWANCE, USAGE_ALLOWANCE, SESSIONS_ALLOWANCE, PANEL_ACTIONS_ALLOWANCE)
+TOTAL_SCRIPT_CHARACTERS = 196_000 + sum(sum(allowance.values()) for allowance in ALLOWANCES)
+FILE_BUDGETS = {'core.js': 36_000, 'forms.js': 37_000 + sum(allowance.get('forms.js', 0) for allowance in ALLOWANCES), 'graphs.js': 41_000}
+VIEW_CHARACTERS = 82_000 + sum(allowance.get('views', 0) for allowance in ALLOWANCES)
 STYLE_CHARACTERS = 27_000
 SHELL_CHARACTERS = 6_600
 
@@ -103,6 +114,19 @@ class InterfaceBudgetTests(unittest.TestCase):
         self.assertIn('P.registerView("usage"', views)
         self.assertIn('function usageCard(item, data)', views)
         self.assertIn('section("Routing decisions of recent runs"', views)
+
+    def test_the_budget_is_measured_with_the_sessions_view_and_reconciliation_in_place(self):
+        # These allowances pay for the Sessions view, the reconciliation card and the paged Now and board, so the budget
+        # may not be met by removing them.
+        self.assertLessEqual(sum(SESSIONS_ALLOWANCE.values()), SESSIONS_LIMIT)
+        self.assertLessEqual(sum(PANEL_ACTIONS_ALLOWANCE.values()), PANEL_ACTIONS_LIMIT)
+        forms = (UI / 'forms.js').read_text(encoding='utf-8')
+        for name in ('session_flag', 'session_proposal', 'reconcile', 'reconcile_read_only'):
+            self.assertIn(f'P.registerForm("{name}"', forms)
+        self.assertIn('P.registerView("sessions"', (UI / 'views_knowledge.js').read_text(encoding='utf-8'))
+        work = (UI / 'views_work.js').read_text(encoding='utf-8')
+        self.assertIn('P.registerDrawer("now_list"', work)
+        self.assertIn('async function unconfirmedCard(params)', work)
 
 
 if __name__ == '__main__':

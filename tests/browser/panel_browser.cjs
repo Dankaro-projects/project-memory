@@ -12,7 +12,7 @@ const { pathToFileURL } = require("node:url");
 
 const ROOT = path.resolve(__dirname, "../..");
 const PYTHON = process.env.MEMORY_PYTHON || "python";
-const RAIL = ["Now", "Plan", "Work", "Architecture", "Dependencies", "Decisions", "Learning", "Agents", "Machine", "Hive", "Usage", "Records", "Requirements"];
+const RAIL = ["Now", "Plan", "Work", "Architecture", "Dependencies", "Decisions", "Learning", "Agents", "Machine", "Hive", "Usage", "Sessions", "Records", "Requirements"];
 // nodes is the number of items the architecture graph shows before any filter or toggle is changed.
 const KINDS = {
   product: { template: "Software product template", architecture: "Components and packages", items: /2 code components/, nodes: 3 },
@@ -82,8 +82,11 @@ async function views(page, kind, expected) {
   assert.deepEqual(await page.locator(".nav-link").allTextContents(), RAIL);
   assert.equal(await text(page, "#main .sentence"), "1 work item is in progress, 2 are blocked and 1 needs review.");
   assert.match(await text(page, "#main .card.kickoff"), new RegExp(expected.template));
-  assert.equal(await page.locator("#main .now-grid > .card").count(), 6);
-  assert.equal(await page.locator('#main [data-key^="now-attention-"]').count(), 8);
+  // Section 17.12: four cards of at most five items each; decisions and scope blocks open from the view head.
+  assert.equal(await page.locator("#main .now-grid > .card").count(), 4);
+  assert.equal(await page.locator('#main [data-key^="now-attention-"]').count(), 5);
+  assert.equal(await page.locator("[data-key=now-open-decisions]").count(), 1);
+  assert.equal(await page.locator("[data-key=now-open-blocks]").count(), 1);
   assert.ok(await page.locator("#ledger .strip-part").count() >= 4, "the state ledger shows no work states");
   step(`${kind}: Now states the project position, the kickoff checklist and the attention list`);
 
@@ -92,9 +95,16 @@ async function views(page, kind, expected) {
   assert.ok(checklist.height <= 360, `${kind}: the kickoff card is ${Math.round(checklist.height)} pixels high and fills the first screen`);
   const firstEntry = await page.locator('#main [data-key^="now-attention-"]').first().boundingBox();
   assert.ok(firstEntry.y < 900, `${kind}: the attention list starts at ${Math.round(firstEntry.y)} pixels, below the first screen`);
-  assert.equal(await page.locator('#main [data-key^="now-attention-"] .item-action').count(), 8);
+  assert.equal(await page.locator('#main [data-key^="now-attention-"] .item-action').count(), 5);
   assert.match(await text(page, "#main .strip-legend"), /\d+ in progress/);
-  const nowText = await text(page, "#main");
+  await page.click("[data-key=now-all-attention]");
+  await page.waitForSelector("#drawer-body [data-key^='now-attention-']");
+  assert.equal(await page.locator('#drawer-body [data-key^="now-attention-"]').count(), 8);
+  const nowText = await text(page, "#drawer-body");
+  await closeDrawer(page);
+  await page.click("[data-key=now-open-decisions]");
+  await page.waitForSelector("#drawer-body a[href='#decisions']");
+  await closeDrawer(page);
   assert.match(nowText, /occurred once after the lesson was accepted/);
   assert.match(nowText, /changed 1 file and awaits a merge decision/);
   step(`${kind}: Now keeps the first screen, names each action and counts a single event in the singular`);

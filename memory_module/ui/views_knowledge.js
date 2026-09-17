@@ -6,7 +6,8 @@
  * A snapshot holds records {view, limit: 100} for each view, so the Records view filters and pages those in the
  * browser. A snapshot carries no machine response, because the machine memory stays on the computer that holds it.
  * The Hive view lists the swarms and shows one swarm as a timeline; it opens hive_post {swarm_id, move, target},
- * hive_close {swarm_id} and hive_purge {}. The Usage view reads usage {} and offers no action.
+ * hive_close {swarm_id} and hive_purge {}. The Usage view reads usage {} and offers no action. The Sessions view reads
+ * sessions {} and opens session_flag {flag_id, status} and session_proposal {proposal_id, status}.
  */
 (() => {
   "use strict";
@@ -734,5 +735,41 @@
           cell("Preferred host", hostName(item.preferred)), cell("Reason", P.chip(ROUTES[item.reason] || P.words(item.reason)), " ", h("span", null, item.sentence)),
           dateCell("Decided", item.decided_at || item.created_at))))
         : P.empty("No run of this project records a routing decision yet.")));
+  } });
+
+  // Sessions: the digests of finished sessions, the flagged directions that no record followed, and distilled proposals.
+  // Flags open session_flag {flag_id, status}; proposals open session_proposal {proposal_id, status}.
+  P.registerView("sessions", { title: "Sessions", section: "Oversight", async render(container, params, ctx) {
+      let data;
+      try {
+        data = await P.get("sessions");
+      } catch (error) {
+        put(container, failed(error));
+        return;
+      }
+      const counts = data.counts || {}, digests = data.digests || [], flags = data.flags || [], proposals = data.proposals || [];
+      const decided = counts.confirmed + counts.dismissed;
+      put(container, sentence(data.reading ? P.count(digests.length, "session digest") + " " + isAre(digests.length) + " shown, with "
+        + P.count(flags.length, "open flag") + " and " + P.count(proposals.length, "pending proposal") + "."
+        : "Session reading is switched off for this project. Run project-memory sessions on to switch it on."),
+      h("div", { class: "notice", dataset: { key: "sessions-note" } }, h("p", null, data.note),
+        h("p", { class: "muted" }, decided ? "Of " + decided + " decided flags, " + counts.confirmed + " were confirmed." : "No flag is decided yet."),
+        h("p", { class: "muted" }, "Run project-memory sessions distill to ask a host for proposals. Run project-memory handoff before a fresh session.")),
+      section("Flagged directions", counted(flags.length, "flag"), listOf(flags, (flag) => [
+        h("div", { class: "row" }, P.chip(P.words(flag.category)), P.badge("review", "Low confidence"), h("span", { class: "muted" }, flag.session_key + ", line " + flag.line + ", " + P.date(flag.at))),
+        h("p", null, flag.excerpt),
+        ctx.canEdit ? h("div", { class: "row" }, P.formButton("Confirm", "session_flag", { flag_id: flag.id, status: "confirmed" }, { class: "small" }),
+          P.formButton("Dismiss", "session_flag", { flag_id: flag.id, status: "dismissed" }, { class: "small quiet" })) : null], "No flag waits for a decision.")),
+      section("Proposals", counted(proposals.length, "proposal"), listOf(proposals, (item) => [
+        h("div", { class: "row" }, P.chip(P.words(item.slot)), P.chip(P.words(item.confidence) + " confidence"), h("span", { class: "muted" }, item.pointers.file + ", lines " + item.pointers.lines.join(", "))),
+        h("p", null, item.text),
+        ctx.canEdit ? h("div", { class: "row" }, P.formButton("Accept", "session_proposal", { proposal_id: item.id, status: "accepted" }, { class: "small" }),
+          P.formButton("Reject", "session_proposal", { proposal_id: item.id, status: "rejected" }, { class: "small quiet" })) : null], "No proposal is pending.")),
+      section("Session digests", counted(digests.length, "digest"), digests.length
+        ? table(["Session", "Last activity", "Messages", "Files", "Failed commands", "Open flags"], digests.map((item) => h("tr", { dataset: { key: "session-" + item.session_key } },
+          cell("Session", button(item.session_key, "session-open-" + item.source_id, (trigger) => P.openRecord(item.source_id, trigger), "quiet kn-link")),
+          dateCell("Last activity", item.last_at), cell("Messages", number(item.messages)), cell("Files", number(item.files)),
+          cell("Failed commands", number(item.failures)), cell("Open flags", number(item.open_flags)))))
+        : P.empty("No session of this project is collected yet.")));
   } });
 })();

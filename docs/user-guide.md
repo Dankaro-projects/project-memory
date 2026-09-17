@@ -43,6 +43,7 @@ You decide the things that need a person:
 | Widen the allowed paths of a work item | Work detail, Allow paths |
 | Grant autonomy for delegated work | Work detail, Edit plan |
 | Merge or discard delegated work | Agents view |
+| Confirm or dismiss a flagged direction, accept or reject a distilled proposal | Sessions view |
 
 Capturing a document does not approve its contents. A recorded plan does not authorise work. A hook records that something happened; only the assistant can record what it meant.
 
@@ -58,6 +59,20 @@ Use **Plan** for the hierarchy of phases and items, **Work** for the board and t
 - When an edit is blocked because it falls outside the recorded paths, decide whether the scope should grow. Use Allow paths to extend it with a reason, or leave the block in place and ask for a plan revision.
 - When a work item is blocked, open it and read the issues. A blocked chain is highlighted in the Dependencies view.
 - A failed outcome stays visible after a later success. Do not rewrite an earlier record to match a newer interpretation.
+
+## Start a fresh session
+
+A long session costs more with every prompt, because the whole context is read again. When the context of a session passes 250,000 tokens, the prompt hook says so once, and again after each further 50,000 tokens. Change the threshold with `project-memory sessions on --hint-tokens 400000`.
+
+Before you start a fresh session, run:
+
+```sh
+project-memory handoff
+```
+
+It reports `ready`, or it lists what is not yet recorded: work in progress whose next action is older than the latest activity of the session, decisions without an outcome, captured documents that changed, Markdown files the session changed that no record cites, and flagged directions that wait for you. Ask the assistant to record the gaps, then start the new session.
+
+A new session receives a short summary of the three latest earlier sessions of the project: the digest ids, the dates, the counts, the latest commit and the work items each session wrote to. The summary never quotes a message; the assistant reads a digest with `memory_get record` when it needs the content. To turn what a session decided into records, run `project-memory sessions distill` and decide the proposals in the Sessions view.
 
 ## Reopen the panel and read a snapshot
 

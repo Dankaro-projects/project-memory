@@ -4,7 +4,8 @@
  * allow_paths {episode_id, paths}, delegate, review {episode_id, role} and answer_kickoff {question_ids}. The drawers
  * draw the lineage with Panel.lineageGraph of graphs.js, and runs open the "run" drawer of views_knowledge.js. A work item
  * with a focused problem shows its check, its attempts side by side and its report, with the focus_check and
- * focus_start forms {episode_id}.
+ * focus_start forms {episode_id}. Now opens the "now_list" drawer {kind, offset} and the reconcile {receipt_id, resolution}
+ * and reconcile_read_only forms; a blocked work item lists its unconfirmed calls with the same forms.
  */
 (() => {
   "use strict";
@@ -182,28 +183,71 @@
   }
   const allLink = (href, text) => h("a", { href }, text);
 
+  // Now keeps each card short: five items, then a drawer with the rest. Decisions and scope blocks open from the view head.
+  const NOW_ITEMS = 5, BOARD_PAGE = 10;
+  const RESOLUTIONS = [["completed", "Completed"], ["failed", "Failed"], ["not_run", "Not run"], ["unknown", "Unknown"]];
+  const clip = (items) => (items || []).slice(0, NOW_ITEMS);
+  const showAll = (kind, total, shown) => (total > shown ? button(`Show all ${total}`, "now-all-" + kind, (t) => P.openDrawer("now_list", { kind }, t), "small quiet") : null);
+  function unconfirmedItem(item) {
+    const found = item.transcript || {}, suggested = found.suggested;
+    const text = !found.found ? "No transcript entry was found for this call. Check its effect yourself."
+      : found.result === "no_result" ? "The transcript holds the call but no result." : `The transcript reports the call as ${found.result}. ${found.excerpt || ""}`;
+    return h("div", { class: "stack", dataset: { key: "unconfirmed-" + item.id } },
+      h("span", { class: "row" }, chip(item.tool_name), item.read_only ? chip("Read only") : null, h("span", { class: "muted" }, P.date(item.created_at))),
+      item.work_title ? h("span", null, item.work_title) : null, h("p", { class: "muted" }, text),
+      P.canEdit() ? h("div", { class: "row" }, RESOLUTIONS.map(([value, label]) => P.formButton(label, "reconcile",
+        { receipt_id: item.id, resolution: value, suggested, tool: item.tool_name }, { class: "small" + (value === suggested ? " primary" : "") }))) : null);
+  }
+  async function unconfirmedCard(params) {
+    const data = await P.get("unconfirmed", params).catch(() => null);
+    const items = (data && data.items) || [];
+    if (!items.length) return null;
+    const bulk = items.filter((item) => item.read_only && (item.transcript || {}).found && item.transcript.result !== "no_result").length;
+    return h("section", { class: "card", dataset: { key: "now-unconfirmed" } }, heading("Needs reconciliation", data.total),
+      h("p", { class: "muted" }, "These tool calls started without a recorded result, so their work items stay blocked. The suggestion comes from the transcript of the session."),
+      bulk && P.canEdit() ? P.formButton(`Resolve ${bulk} read-only ${bulk === 1 ? "call" : "calls"}`, "reconcile_read_only", { count: bulk }, { class: "small" }) : null,
+      listOf(items, unconfirmedItem));
+  }
   P.registerView("now", { title: "Now", async render(container) {
       const now = await P.get("now");
       const counts = now.counts || {}, attention = now.attention || [], agents = now.agents || {}, detail = nowDetail(now);
+      const decisions = (now.latest_decisions || []).length, blocks = (now.scope_blocks || []).length;
       const stateCard = (title, state, items) => h("section", { class: "card" }, heading(title, counts[state] || 0),
-        listOf(items, (item) => workButton(item, "now-" + state + "-"), `No ${noun(1)} is ${state === "blocked" ? "blocked" : "in progress"}.`),
-        (counts[state] || 0) > (items || []).length ? allLink("#work/state=" + state, `Show all ${counts[state]} on the board`) : null);
+        listOf(clip(items), (item) => workButton(item, "now-" + state + "-"), `No ${noun(1)} is ${state === "blocked" ? "blocked" : "in progress"}.`),
+        (counts[state] || 0) > clip(items).length ? allLink("#work/state=" + state, `Show all ${counts[state]} on the board`) : null);
       put(container,
-        h("div", { class: "stack" }, h("p", { class: "sentence" }, nowSentence(now)), detail ? h("p", { class: "muted" }, detail) : null,
-          P.stateStrip(counts, { legend: true })),
+        h("div", { class: "view-head" }, h("div", { class: "stack" }, h("p", { class: "sentence" }, nowSentence(now)), detail ? h("p", { class: "muted" }, detail) : null),
+          h("div", { class: "row" }, button(`Decisions (${decisions})`, "now-open-decisions", (t) => P.openDrawer("now_list", { kind: "decisions" }, t), "small"),
+            button(`Scope blocks (${blocks})`, "now-open-blocks", (t) => P.openDrawer("now_list", { kind: "scope_blocks" }, t), "small"))),
+        P.stateStrip(counts, { legend: true }),
         await kickoffCard(now),
+        await unconfirmedCard({}),
         h("div", { class: "grid now-grid" },
           stateCard("In progress", "in_progress", now.in_progress),
           stateCard("Blocked", "blocked", now.blocked),
-          h("section", { class: "card" }, heading("Needs your decision", now.attention_total || 0), listOf(attention, attentionItem, "Nothing needs your decision."),
-            (now.attention_total || 0) > attention.length ? h("p", { class: "muted" }, `The list shows ${attention.length} of ${now.attention_total} items.`) : null),
+          h("section", { class: "card" }, heading("Needs your decision", now.attention_total || 0), listOf(clip(attention), attentionItem, "Nothing needs your decision."),
+            showAll("attention", now.attention_total || 0, clip(attention).length)),
           h("section", { class: "card" }, heading("Agents running", (agents.active || []).length),
-            listOf(agents.active, (run) => runButton(run, "now-active-"), "No agent run is active."),
-            (agents.recent || []).length ? h("details", null, h("summary", null, "Recent runs"), listOf(agents.recent, (run) => runButton(run, "now-recent-"))) : null),
-          h("section", { class: "card" }, heading("Latest decisions", (now.latest_decisions || []).length),
-            listOf(now.latest_decisions, (decision) => decisionItem(decision, "now-decision-"), "No decision is recorded."), allLink("#decisions", "Open all decisions")),
-          h("section", { class: "card" }, heading("Recent scope blocks", (now.scope_blocks || []).length),
-            listOf(now.scope_blocks, scopeBlock, "No edit was blocked for being outside the allowed paths."))));
+            listOf(clip(agents.active), (run) => runButton(run, "now-active-"), "No agent run is active."),
+            showAll("agents", (agents.active || []).length, clip(agents.active).length),
+            (agents.recent || []).length ? h("details", null, h("summary", null, "Recent runs"), listOf(agents.recent, (run) => runButton(run, "now-recent-"))) : null)));
+  } });
+  const NOW_LISTS = { decisions: "Latest decisions", scope_blocks: "Recent scope blocks", attention: "Needs your decision", agents: "Agents running" };
+  P.registerDrawer("now_list", { async render(body, params, ctx) {
+      const offset = Number(params.offset || 0), now = await P.get("now", offset ? { attention_offset: String(offset) } : {});
+      ctx.setTitle(NOW_LISTS[params.kind] || "List");
+      ctx.setKind("Now");
+      const page = (to) => (t) => P.openDrawer("now_list", { kind: params.kind, offset: String(to) }, t);
+      const lists = {
+        decisions: () => [listOf(now.latest_decisions, (decision) => decisionItem(decision, "now-decision-"), "No decision is recorded."), allLink("#decisions", "Open all decisions")],
+        scope_blocks: () => listOf(now.scope_blocks, scopeBlock, "No edit was blocked for being outside the allowed paths."),
+        agents: () => listOf((now.agents || {}).active, (run) => runButton(run, "now-list-active-"), "No agent run is active."),
+        attention: () => [h("p", { class: "muted" }, `Items ${offset + 1} to ${offset + (now.attention || []).length} of ${now.attention_total || 0}.`),
+          listOf(now.attention, attentionItem, "Nothing needs your decision."),
+          h("div", { class: "row" }, offset > 0 ? button("Previous 20", "now-list-previous", page(Math.max(0, offset - 20)), "small") : null,
+            offset + (now.attention || []).length < (now.attention_total || 0) ? button("Next 20", "now-list-next", page(offset + 20), "small") : null)],
+      };
+      put(body, (lists[params.kind] || lists.attention)());
   } });
 
   // Plan.
@@ -278,13 +322,17 @@
       && (!st.sprint || ((c.plan || {}).sprint_id || "unassigned") === st.sprint || (st.sprint !== "unassigned" && (c.plan || {}).sprint_id === st.sprint))
       && (!query || (c.title + " " + c.intent + " " + JSON.stringify(c.plan || {})).toLowerCase().includes(query)));
   }
+  // A column shows ten cards at a time; the number shown stays while the panel is open.
+  const columnShown = (state) => remembered.open.get("column-" + state) || BOARD_PAGE;
   function boardNode(cards, st) {
     const columns = STATES.map((state) => [state, cards.filter((c) => c.state === state)]);
     const shown = columns.filter(([state, items]) => items.length || (st.empty && !st.state) || st.state === state);
     const hidden = columns.length - shown.length;
     return [h("div", { class: "board" }, shown.map(([state, items]) => h("section", { class: "board-column", dataset: { tone: state }, "aria-label": P.words(state) },
       h("h3", null, P.badge(state), h("span", { class: "muted" }, String(items.length))),
-      items.length ? h("ul", { class: "list" }, items.map((c) => h("li", null, workButton(c, "work-card-")))) : P.empty(`No ${noun(1)} is in this state.`)))),
+      items.length ? h("ul", { class: "list" }, items.slice(0, columnShown(state)).map((c) => h("li", null, workButton(c, "work-card-")))) : P.empty(`No ${noun(1)} is in this state.`),
+      items.length > columnShown(state) ? button(`Show ${Math.min(BOARD_PAGE, items.length - columnShown(state))} more of ${items.length - columnShown(state)}`, "work-more-" + state,
+        () => { remembered.open.set("column-" + state, columnShown(state) + BOARD_PAGE); P.refresh(); }, "small quiet") : null))),
     hidden && !st.state ? h("p", { class: "muted" }, `${hidden} empty ${verb(hidden, "column is", "columns are")} hidden.`) : null];
   }
   function tableNode(cards, st, sort) {
@@ -352,7 +400,7 @@
     if (blocker.episode_id) return button("Open the prerequisite", "work-next", (t) => P.openWork(blocker.episode_id, t), "primary");
     if (read.view === "record" && read.id) return button("Open the record to review", "work-next", (t) => P.openRecord(read.id, t), "primary");
     if (detail.check_id) return button("Open the check", "work-next", (t) => openRun({ id: detail.check_id, episode_id: card.id }, t), "primary");
-    if (read.view === "coverage") return button("Open the captures", "work-next", () => P.go("records", { view: "captures" }), "primary");
+    if (read.view === "coverage") return h("p", { class: "muted" }, "Resolve the calls listed below under Needs reconciliation, or open the captures.");
     return null;
   }
   function checkReports(reviews) {
@@ -434,7 +482,7 @@
       const reviews = work.reviews || {}, runs = (work.runs || {}).runs || [], step = work.next || {};
       const dependencyIssues = new Set((card.issues || []).filter((issue) => issue.type === "dependency").map((issue) => issue.episode_id));
       const titles = new Map(((work.lineage || {}).nodes || []).map((node) => [node.id, node.title]));
-      const lineageHost = h("div", { class: "stack" }), focusHost = h("div", { class: "stack", dataset: { key: "work-focus" } });
+      const lineageHost = h("div", { class: "stack" }), focusHost = h("div", { class: "stack", dataset: { key: "work-focus" } }), callsHost = h("div");
       put(body,
         h("div", { class: "row" }, P.badge(card.state), card.recorded_state && card.recorded_state !== card.state ? chip("Recorded as " + lower(P.words(card.recorded_state))) : null,
           chip(P.words(card.subject)), plan && plan.priority && plan.priority !== "normal" ? chip(P.words(plan.priority) + " priority") : null,
@@ -465,7 +513,7 @@
           h("p", { class: "muted" }, reviews.configured === false ? "No agent host is configured, so agent checks and delegation cannot run."
             : reviews.current ? `The current ${P.words(reviews.current.role).toLowerCase()} check is ${P.words(reviews.current.state).toLowerCase()}.` : "No outcome check is required yet."),
           listOf(runs, (run) => runButton(run, "work-run-"), "No agent run is recorded."), checkReports(reviews)),
-        focusHost, lineageHost,
+        callsHost, focusHost, lineageHost,
         section("History", history.error ? P.errorState(history.error) : [
           h("p", { class: "muted" }, history.total ? `Records ${history.offset + 1} to ${history.offset + history.records.length} of ${history.total} are shown, oldest first.` : "No history is recorded."),
           listOf(history.records, (record) => openItem("work-history-" + record.id, (t) => openNode(record, t),
@@ -474,7 +522,9 @@
             history.offset > 0 ? button("Earlier records", "work-history-previous", () => { remembered.history.set(card.id, Math.max(0, history.offset - history.limit)); P.refresh(); }, "small") : null,
             history.more ? (P.live ? button("Later records", "work-history-next", () => { remembered.history.set(card.id, history.offset + history.limit); P.refresh(); }, "small")
               : h("p", { class: "muted" }, "This snapshot includes the first page of history only.")) : null)]));
-      await Promise.all([lineageBlock(lineageHost, card.id, work.lineage), focusSection(focusHost, card, ctx)]);
+      const unconfirmedIssue = (card.issues || []).some((issue) => issue.type === "execution_unconfirmed");
+      await Promise.all([lineageBlock(lineageHost, card.id, work.lineage), focusSection(focusHost, card, ctx),
+        unconfirmedIssue ? unconfirmedCard({ episode_id: card.id }).then((node) => node && put(callsHost, node)) : null]);
   } });
 
   // Decisions.

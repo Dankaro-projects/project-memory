@@ -18,7 +18,7 @@ def install_state(args):
 
 
 # Commands that read an existing project. setup and init create one; hook stays silent without one.
-NEEDS_DATABASE={'serve','doctor','view','backup','sync','check','review','instructions'}
+NEEDS_DATABASE={'serve','doctor','view','backup','sync','check','review','instructions','sessions','handoff'}
 
 
 def database(args):
@@ -64,6 +64,10 @@ def doctor(path, client=None, project=None, clients=None):
         try: health['host_discovery']=codex_hooks(project)
         except (OSError,ValueError,RuntimeError,TimeoutError) as exc:
             health['host_discovery']={'status':'unverified','error':str(exc)}
+    # The machine memory holds the usage ledger and the registry of projects, so a mode wider than its owner is reported.
+    from .machine import permissions
+    try: health['machine_permissions']=permissions()
+    except OSError as exc: health['machine_permissions']={'status':'unverified','wider':[],'error':str(exc)}
     return {**health,'database':str(path),'integrity':integrity,'mcp_process_verified':ok,'client':client or 'unknown','clients':clients or [],
             'expected_hook_events':sorted(expected),'observed_hooks':counts,
             'missing_hook_events':sorted(expected-counts.keys()),'unconfirmed_actions':pending,
@@ -202,6 +206,20 @@ def main(argv=None):
     hive_parser.add_argument('--closed-before',type=int,required=True,metavar='DAYS')
     hive_parser.add_argument('--project',default=os.environ.get('PROJECT_MEMORY_PROJECT',os.getcwd()))
     hive_parser.add_argument('--db')
+    sessions_parser=sub.add_parser('sessions',help='Read the finished sessions of this project into digests, flags and proposals.')
+    sessions_parser.add_argument('action',choices=['collect','list','flags','distill','on','off'],
+        help='collect reads new transcript lines, list shows the digests, flags shows possible unrecorded directions, '
+             'distill asks a host for proposals that you accept or reject in the control panel, on and off switch session reading.')
+    sessions_parser.add_argument('--project',default=os.environ.get('PROJECT_MEMORY_PROJECT',os.getcwd()))
+    sessions_parser.add_argument('--db')
+    sessions_parser.add_argument('--session',help='The session key, such as claude:<session id>. The latest session by default.')
+    sessions_parser.add_argument('--host',choices=['claude','codex'],help='The host that distills. The host with the most headroom by default.')
+    sessions_parser.add_argument('--timeout',type=int,default=600,help='The time limit of a distillation in seconds (default: 600).')
+    sessions_parser.add_argument('--hint-tokens',type=int,help='With on: the context size above which the prompt hook suggests a fresh session.')
+    handoff_parser=sub.add_parser('handoff',help='Report whether this project is ready for a fresh session, or list what is not yet recorded.')
+    handoff_parser.add_argument('--project',default=os.environ.get('PROJECT_MEMORY_PROJECT',os.getcwd()))
+    handoff_parser.add_argument('--db')
+    handoff_parser.add_argument('--session',help='The session key to check. The latest session by default.')
     hook=sub.add_parser('hook');hook.add_argument('--db');hook.add_argument('--host',choices=sorted(codex_host.HOSTS),default='codex')
     hook.add_argument('--if-unmanaged',action='store_true')
     hook.add_argument('--project',default=os.environ.get('PROJECT_MEMORY_PROJECT',os.getcwd()))
@@ -280,6 +298,15 @@ def main(argv=None):
                     result=reviews.request(memory,args.episode,args.role,request_key='cli:'+uuid.uuid4().hex,retry=args.retry,max_seconds=args.max_seconds if args.max_seconds is not None else 300)
                     reviews.launch(memory,result)
                 result.pop('snapshot',None)
+        elif args.command in {'sessions','handoff'}:
+            from . import sessions
+            with Memory(database(args)) as memory:
+                if args.command=='handoff':result=sessions.handoff(memory,session_key=args.session)
+                elif args.action=='collect':result=sessions.collect(memory)
+                elif args.action=='list':sessions.collect(memory);result={'sessions':sessions.digests(memory),'flags':sessions.precision(memory)}
+                elif args.action=='flags':result={'flags':sessions.flags(memory,session_key=args.session,status='open'),'counts':sessions.precision(memory)}
+                elif args.action=='distill':result=sessions.distill(memory,session_key=args.session,host=args.host,timeout=args.timeout)
+                else:result=sessions.configure(memory,reading=args.action=='on',hint_tokens=args.hint_tokens if args.action=='on' else None)
         elif args.command=='instructions':
             result=write_instructions(database(args),args.output)
         elif args.command=='view' and not args.output:

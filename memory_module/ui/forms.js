@@ -657,6 +657,61 @@
     },
     done: (result) => `The swarm is closed. Confirmed conclusions: ${Object.keys(result.confirmed).length} of ${result.conclusions}. Proposed lessons: ${result.proposals.length}.`,
   });
+  // A flagged session message and a distilled proposal. Only the user decides them.
+  P.registerForm("session_flag", { title: "Decide the flag", submitLabel: "Save the decision",
+    render(fields, context) {
+      fields.append(P.field("Decision", choices("status", [["confirmed", "Confirm", "A record is missing for this direction."], ["dismissed", "Dismiss", "Nothing is missing."]], context.status)),
+        reasonField(), hint("Both decisions are kept, so the precision of the flags can be measured."));
+    },
+    submit(values, context) {
+      needAll(values, { status: "Confirm or dismiss the flag.", reason: "Write the reason." });
+      return { operation: "session_flag", data: { flag_id: context.flag_id, status: values.status, reason: values.reason } };
+    },
+    done: (result) => "The flag is " + result.status + ".",
+  });
+  P.registerForm("session_proposal", { title: "Decide the proposal", submitLabel: "Save the decision",
+    async render(fields, context) {
+      const items = await workItems();
+      fields.append(P.field("Decision", choices("status", [["accepted", "Accept", "It is recorded in the selected work item."], ["rejected", "Reject", "Nothing is recorded."]], context.status)),
+        P.field("Work item", P.select("episode_id", [["", "Select a work item"], ...items.map((item) => [item.id, indent(item)])], "")),
+        reasonField(), hint("A lesson is recorded as a proposed lesson. Other slots are recorded as a note that cites the session digest."));
+    },
+    async submit(values, context) {
+      needAll(values, { status: "Accept or reject the proposal.", reason: "Write the reason." });
+      const data = { proposal_id: context.proposal_id, status: values.status, reason: values.reason };
+      if (values.status === "accepted") {
+        const card = await work(need(values.episode_id, "Select the work item that receives the proposal."));
+        Object.assign(data, { episode_id: card.id, expected_version: card.version });
+      }
+      return { operation: "session_proposal", data };
+    },
+    done: (result) => "The proposal is " + result.status + ".",
+  });
+  // An unconfirmed tool call. The transcript suggestion is preselected; the user's choice and reason are recorded.
+  P.registerForm("reconcile", { title: "Reconcile the tool call", submitLabel: "Record the resolution",
+    render(fields, context) {
+      fields.append(P.kv([["Tool", context.tool], ["Suggested by the transcript", context.suggested ? P.words(context.suggested) : "No suggestion"]]),
+        P.field("Resolution", choices("resolution", [["completed", "Completed", "It ran and did what it was meant to do."], ["failed", "Failed", "It ran and failed, or returned an error."],
+          ["not_run", "Not run", "It never ran."], ["unknown", "Unknown", "The effect cannot be established. The work item stays blocked."]], context.resolution)),
+        reasonField("2", "Reason", "Write what you checked."), hint("The transcript entry, when one exists, is stored as the evidence."));
+    },
+    submit(values, context) {
+      needAll(values, { resolution: "Select the resolution.", reason: "Write what you checked." });
+      return { operation: "reconcile", data: { receipt_id: context.receipt_id, resolution: values.resolution, reason: values.reason } };
+    },
+    done: (result) => "The call is recorded as " + P.lower(P.words(result.resolution)) + ".",
+  });
+  P.registerForm("reconcile_read_only", { title: "Resolve the read-only calls", submitLabel: "Resolve",
+    render(fields, context) {
+      fields.append(hint(`${context.count} read-only calls have a result in their transcript. Each is recorded as the transcript reports it, with that entry as evidence. Calls that can change something are left for you to check one by one.`),
+        reasonField("2", "Reason", "For example: read-only calls change nothing."));
+    },
+    submit(values) {
+      need(values.reason, "Write the reason.");
+      return { operation: "reconcile_read_only", data: { reason: values.reason } };
+    },
+    done: (result) => `${result.reconciled} calls are resolved. ${result.left_for_review} are left for you to check.`,
+  });
   P.registerForm("hive_purge", { title: "Purge closed swarms", submitLabel: "Purge",
     render(fields) {
       fields.append(P.field("Closed at least this many days ago", P.input("closed_before_days", "30", { type: "number", min: "0", step: "1", dataset: { number: "" } }),

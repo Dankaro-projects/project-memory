@@ -415,6 +415,14 @@ def capture(memory, event, host='codex'):
     if name == 'SessionStart':
         # Claude Code reads this at startup, resume and after automatic compaction. Codex ignores unknown output.
         started = session_context(memory, session, compacted) + setup_context(memory, refreshed) + (' ' + scope if scope else '')
+        from . import sessions
+        try:
+            earlier = sessions.start_summary(memory, session, room=HOOK_CHARACTERS - len(started) - 1)
+        except (OSError, ValueError, InvalidRecord, Conflict, sqlite3.Error):
+            # The summary of earlier sessions helps a new session; a failure to build it must not stop the session.
+            earlier = ''
+        if earlier:
+            started += ' ' + earlier
         base = assistant_base(memory, available=HOOK_CHARACTERS - len(started) - 1)
         return {'hookSpecificOutput':{'hookEventName':host_event,'additionalContext':started + (' ' + base if base else '')}}
     if name == 'UserPromptSubmit':
@@ -428,8 +436,13 @@ def capture(memory, event, host='codex'):
             text += ' Active decision '+state['active']['decision_id']+' awaits an outcome.'
         selected = re.fullmatch(r'\[memory:(code|writing|research|general)\] (.{1,2000})',
                                 event.get('prompt','').split('\n',1)[0])
+        from . import sessions
+        try:
+            hint = sessions.context_hint(memory, session, event.get('transcript_path'))
+        except (OSError, ValueError, InvalidRecord, Conflict, sqlite3.Error):
+            hint = ''
         def response(context):
-            complete = context + (' ' + scope if scope else '') + (' ' + reminder if reminder else '')
+            complete = context + (' ' + scope if scope else '') + (' ' + reminder if reminder else '') + (' ' + hint if hint else '')
             return {'hookSpecificOutput':{'hookEventName':host_event,'additionalContext':complete}}
         if host == 'claude' and not selected:
             # Claude Code keeps the SessionStart context until compaction, when SessionStart repeats it.

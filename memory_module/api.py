@@ -381,6 +381,8 @@ def now(memory, params):
     from . import guards
     from .capture_errors import summary as capture_summary
     from .coverage import sessions
+    # The attention list pages by ATTENTION_LIMIT, so the panel can show every item without one endless card.
+    offset = _int(params, 'attention_offset', 0, 0, 10**6)
     found = cards(memory)
     items = list(found['cards'].values())
     counts = dict.fromkeys(planning.STATES, 0)
@@ -445,7 +447,7 @@ def now(memory, params):
     result = {'project': memory.project, 'counts': counts, 'total': len(items), 'truncated': found['truncated'],
               'in_progress': _sorted_summaries(by_state['in_progress']), 'blocked': _sorted_summaries(by_state['blocked']),
               'review': _sorted_summaries(by_state['review']), 'ready': _sorted_summaries(by_state['ready']),
-              'attention': attention[:ATTENTION_LIMIT], 'attention_total': len(attention),
+              'attention': attention[offset:offset + ATTENTION_LIMIT], 'attention_total': len(attention), 'attention_offset': offset,
               'agents': {'active': runs, 'recent': recent},
               'latest_decisions': [_decision_summary(record) for record in latest_decisions(memory, limit=5)['records']],
               'scope_blocks': scope_blocks(memory, limit=5), 'scope_changes': guards.scope_changes(memory, limit=5),
@@ -761,6 +763,28 @@ def usage(memory, params):
     return value
 
 
+SESSION_LIMIT = 20
+
+
+def sessions(memory, params):
+    """The session digests of this project, the flagged directions that wait for the user and the pending proposals.
+
+    Nothing is collected here: collection runs at session start and with project-memory sessions collect.
+    """
+    from . import sessions as store
+    limit = _int(params, 'limit', SESSION_LIMIT, 1, 100)
+    return {'reading': store.enabled(memory), 'digests': store.digests(memory, limit=limit),
+            'flags': store.flags(memory, status='open', limit=limit), 'counts': store.precision(memory),
+            'proposals': store.proposals(memory, status='pending', limit=limit),
+            'note': store.LOW_CONFIDENCE}
+
+
+def unconfirmed(memory, params):
+    """Tool calls that started without a recorded result, with what the transcript of their session reports."""
+    from . import sessions as store
+    return store.unconfirmed(memory, episode_id=_text(params, 'episode_id') or None, limit=_int(params, 'limit', 50, 1, 100))
+
+
 HIVE_ENTRY_LIMIT = 500
 HIVE_ENTRY_FIELDS = ('id', 'seq', 'move', 'claim', 'detail', 'confidence', 'addressed_to', 'created_at', 'bases')
 
@@ -806,5 +830,5 @@ ENDPOINTS = {
     'health': health, 'now': now, 'board': board, 'sprints': sprints, 'work': work, 'records': page, 'record': record, 'run': run,
     'lineage': lineage, 'work_graph': work_graph, 'architecture': architecture, 'learning': learning,
     'agents': agents, 'requirements': requirements, 'coverage': coverage, 'kickoff': kickoff, 'plan': plan,
-    'components': components, 'machine': machine, 'focus': focus, 'hive': hive, 'usage': usage,
+    'components': components, 'machine': machine, 'focus': focus, 'hive': hive, 'usage': usage, 'sessions': sessions, 'unconfirmed': unconfirmed,
 }

@@ -18,9 +18,9 @@ from .shared import prior_result, run_summary, store_result
 
 KEY_REUSED = 'This action key was already used for different changes.'
 RECORD_OPERATIONS = ('plan', 'sprint', 'comment', 'requirements', 'lesson_review', 'allow_paths', 'link', 'component',
-                     'answer_kickoff', 'instructions', 'phase', 'reassess')
+                     'answer_kickoff', 'instructions', 'phase', 'reassess', 'session_flag', 'session_proposal')
 RUN_OPERATIONS = ('delegate', 'merge', 'discard', 'review', 'cancel_run', 'request_work_review', 'focus_check', 'focus_start',
-                  'hive_post', 'hive_close', 'hive_purge')
+                  'hive_post', 'hive_close', 'hive_purge', 'reconcile', 'reconcile_read_only')
 # Promotion actions write to the machine memory, which is a second database, so they run outside the
 # action transaction of this project, as the agent run actions do.
 MACHINE_OPERATIONS = ('promotion', 'machine_rule')
@@ -38,6 +38,10 @@ FIELDS = {
     'instructions': ({'role', 'text'}, {'reason', 'actor'}),
     'phase': ({'phase', 'reason'}, set()),
     'reassess': ({'decision_id', 'assessment', 'reason'}, {'outcome_id'}),
+    'session_flag': ({'flag_id', 'status', 'reason'}, set()),
+    'session_proposal': ({'proposal_id', 'status', 'reason'}, {'episode_id', 'expected_version'}),
+    'reconcile': ({'receipt_id', 'resolution', 'reason'}, set()),
+    'reconcile_read_only': ({'reason'}, set()),
     'delegate': ({'episode_id'}, {'host', 'max_seconds'}),
     'merge': ({'run_id'}, {'override_reason'}),
     'discard': ({'run_id', 'reason'}, set()),
@@ -63,6 +67,10 @@ MESSAGES = {
     'instructions': 'Select the role and write the base instructions. The reason is optional.',
     'phase': 'Select the phase of the project and write the reason for the change.',
     'reassess': 'Select the decision, the new assessment and the reason. The outcome you reviewed is optional.',
+    'session_flag': 'Select the flagged message, confirm or dismiss it, and give the reason.',
+    'session_proposal': 'Select the proposal, accept or reject it, and give the reason. Acceptance needs the work item and its current version.',
+    'reconcile': 'Select the tool call, its resolution and the reason.',
+    'reconcile_read_only': 'Write the reason for resolving the read-only calls.',
     'delegate': 'Select the work item to delegate. The host and time limit are optional.',
     'merge': 'Select the delegated run to merge. An override reason is optional.',
     'discard': 'Select the delegated run to discard and give the reason.',
@@ -413,9 +421,23 @@ def reassess(memory, data, request_key):
             'reassessed': target, 'assessment': assessment}
 
 
+def session_flag(memory, data, request_key):
+    """Confirm or dismiss a possible unrecorded direction. Both are kept, so the precision of the flags can be measured."""
+    from . import sessions
+    return sessions.decide_flag(memory, data['flag_id'], data['status'], data['reason'], actor=USER)
+
+
+def session_proposal(memory, data, request_key):
+    """Accept a distilled proposal into a work item, or reject it. Only this action writes a proposal as a record."""
+    from . import sessions
+    return sessions.decide_proposal(memory, data['proposal_id'], data['status'], data['reason'], actor=USER,
+                                    episode_id=data.get('episode_id'), expected_version=data.get('expected_version'))
+
+
 RECORD_HANDLERS = {'plan': plan, 'sprint': sprint, 'comment': comment, 'requirements': requirements,
                    'lesson_review': lesson_review, 'allow_paths': allow_paths, 'link': link, 'component': component,
-                   'answer_kickoff': answer_kickoff, 'instructions': instructions, 'phase': phase, 'reassess': reassess}
+                   'answer_kickoff': answer_kickoff, 'instructions': instructions, 'phase': phase, 'reassess': reassess,
+                   'session_flag': session_flag, 'session_proposal': session_proposal}
 
 
 # Agent run actions.
@@ -573,7 +595,21 @@ def machine_rule(memory, data, request_key, first):
     return machine.retire(memory, data['rule_id'], actor=USER, reason=data['reason'])
 
 
+# Reconciliation actions read transcripts, so they run outside the action transaction.
+
+def reconcile(memory, data, request_key, first):
+    """Resolve one unconfirmed tool call as the user, with its transcript entry as evidence when one exists."""
+    from . import sessions
+    return sessions.reconcile(memory, data['receipt_id'], data['resolution'], data['reason'], request_key, actor=USER)
+
+
+def reconcile_read_only(memory, data, request_key, first):
+    """Resolve every unconfirmed read-only call whose transcript shows its result."""
+    from . import sessions
+    return sessions.reconcile_read_only(memory, data['reason'], request_key, actor=USER)
+
+
 RUN_HANDLERS = {'delegate': delegate, 'merge': merge, 'discard': discard, 'review': review, 'cancel_run': cancel_run,
                 'request_work_review': request_work_review, 'promotion': promotion, 'machine_rule': machine_rule,
                 'focus_check': focus_check, 'focus_start': focus_start, 'hive_post': hive_post, 'hive_close': hive_close,
-                'hive_purge': hive_purge}
+                'hive_purge': hive_purge, 'reconcile': reconcile, 'reconcile_read_only': reconcile_read_only}
