@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.6.0b2 (17 September 2026)
 
 Finished sessions become memory. The Claude Code and Codex sessions of a project, including a session started in another folder that works on the project, are read into redacted digests of at most 20,000 characters: the user messages, failed commands, changed files, memory records written and commits, each with its transcript line. A message worded as an approval, a refusal, a correction or a choice that no record followed is flagged with low confidence, and the user confirms or dismisses it in the new Sessions view. `project-memory sessions distill` asks a host for proposed decisions, requirements, lessons, next actions and corrections, and nothing is recorded until the user accepts one. Transcripts are never changed, session content never enters the machine memory, and `project-memory sessions off` switches reading off for a project.
 
