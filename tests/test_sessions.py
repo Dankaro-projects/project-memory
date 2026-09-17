@@ -103,6 +103,22 @@ class SessionTests(Fixture):
         found = self.m.search('tokenizer')['records']
         self.assertIn(row['source_id'], [r['id'] for r in found])
 
+    def test_a_long_session_is_cut_to_the_digest_limit_and_says_what_is_left_out(self):
+        day = '2026-09-11'
+        lines = [claude_line('user', f'Message {index:03d}. ' + 'x' * sessions.MESSAGE_CHARACTERS,
+                             f'{day}T10:00:{index:02d}Z', cwd=str(self.root)) for index in range(60)]
+        self.transcript('s1', lines)
+        sessions.collect(self.m, found=self.found, now=f'{day}T12:00:00+00:00')
+        [row] = sessions.digests(self.m)
+        self.assertEqual(row['messages'], 60)
+        body = self.m.read(row['source_id'], detail=True)['body']
+        self.assertGreater(len(body), 10_000)
+        self.assertLessEqual(len(body), sessions.DIGEST_CHARACTERS)
+        self.assertIn('messages in the middle of the session are left out', body)
+        self.assertIn('Message 000.', body)
+        self.assertIn('Message 059.', body)
+        self.assertIn('Session digest of the claude session', body)
+
     def test_collection_is_incremental_and_idempotent(self):
         path = self.transcript('s1', self.basic())
         sessions.collect(self.m, found=self.found)
