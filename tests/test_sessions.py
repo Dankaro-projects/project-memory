@@ -319,6 +319,15 @@ class SessionTests(Fixture):
         with self.assertRaises(InvalidRecord):
             self.m.source('session-digest:abc', 'Forged', 'Forged', 'Forged', 'tool')
 
+    def test_a_windows_project_folder_is_found_in_json_escaped_tool_arguments(self):
+        folder = 'C:\\Users\\someone\\project'
+        path = self.base / 'escaped.jsonl'
+        path.write_text(json.dumps({'command': 'python pm.py --db ' + folder + '\\.memory'}) + '\n', encoding='utf-8')
+        self.assertTrue(sessions._mentions(path, folder))
+        reader = sessions.ClaudeReader(folder, {})
+        reader.mention(json.dumps({'command': 'cd ' + folder}))
+        self.assertTrue(reader.data['mentions'])
+
     def test_redaction_covers_the_common_credential_formats(self):
         for secret in (SECRET, 'sk-ant-' + 'b' * 30, 'AKIA' + 'C' * 16, 'Bearer ' + 'd' * 30, 'api_key=' + 'e' * 20,
                        '-----BEGIN OPENSSH ' + 'PRIVATE KEY-----\nabc\n-----END OPENSSH ' + 'PRIVATE KEY-----'):

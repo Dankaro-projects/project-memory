@@ -273,7 +273,8 @@ class Reader:
         return value
 
     def mention(self, text):
-        if isinstance(text, str) and self.root in text:
+        # Tool arguments arrive as JSON text, where a Windows path has doubled backslashes.
+        if isinstance(text, str) and any(needle in text for needle in _needles(self.root)):
             self.data['mentions'] = True
 
     def message(self, text, line, at, kind='message'):
@@ -500,7 +501,7 @@ def collect(memory, *, found=None, limit=None, seconds=None, mentions=True, now=
             # A transcript of another folder is read only when it names the project folder. One that changed and names
             # it now is read again from its start, so the digest holds the whole session.
             try:
-                named = _mentions(path, str(_root(memory)).encode())
+                named = _mentions(path, _root(memory))
             except OSError:
                 continue
             if named and prior:
@@ -528,17 +529,24 @@ def collect(memory, *, found=None, limit=None, seconds=None, mentions=True, now=
             'seconds': round(time.monotonic() - started, 3)}
 
 
-def _mentions(path, needle, chunk=4 * 1024 * 1024):
-    """True when a file contains the needle, read in chunks that overlap by the length of the needle."""
+def _needles(root):
+    """The project folder as written in a transcript: plain, and escaped as a JSON string."""
+    return list(dict.fromkeys((str(root), json.dumps(str(root))[1:-1])))
+
+
+def _mentions(path, root, chunk=4 * 1024 * 1024):
+    """True when a file names the project folder, read in chunks that overlap by the length of the longest needle."""
+    needles = [needle.encode() for needle in _needles(root)]
+    overlap = max(len(needle) for needle in needles)
     tail = b''
     with path.open('rb') as handle:
         while True:
             block = handle.read(chunk)
             if not block:
                 return False
-            if needle in tail + block:
+            if any(needle in tail + block for needle in needles):
                 return True
-            tail = block[-len(needle):]
+            tail = block[-overlap:]
 
 
 # Digests.

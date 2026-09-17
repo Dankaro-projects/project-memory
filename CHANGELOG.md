@@ -10,6 +10,8 @@ Unconfirmed tool calls can be reconciled from the control panel. Now and a block
 
 Agent checks read the worktree of the work. A work plan can record `worktree`, the git worktree where the work is done, and outcome, intent and recovery checks then read that folder instead of the project folder. Before, a check of work committed on a branch in another worktree could not see the code and returned uncertain for every criterion. A missing or foreign worktree is refused, and a check without one reports the branch it read.
 
+The Grok profile follows Grok 1.0. The removed `--no-memory` option is no longer passed, which made every Grok run of 0.6.0b1 fail after an update of Grok; memory stays off through `GROK_MEMORY=0` and the run configuration. Each Grok run has its own Grok home that links to the sign in and ignores the skills of the user, which Grok 1.0 offers no switch for. Token usage is read from the Grok 1.0 result, including cache reads and cache writes. A probe run that a host refuses because of a command line option names that option.
+
 The Now view keeps its first screen: Latest decisions and Recent scope blocks open from buttons in the view head, each card shows at most five items and opens the rest in a drawer, and board columns show ten cards at a time.
 
 The usage ledger separates fresh input, cache writes, cache reads, output and reasoning, and labels fresh work as fresh input plus cache writes plus output. Cache reads are never added into one total, routing by headroom compares fresh work, each Claude message counts once, and per session statistics report turns, the largest context and the cache read share. The machine memory folder and its database files are readable by their owner only, and doctor reports a wider mode.

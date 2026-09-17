@@ -61,6 +61,8 @@ GROK_WORK_TURNS = '200'
 # The repository configuration that Grok loads from the working directory up to the git root and that no setting
 # switches off, relative to each of those folders.
 GROK_REPOSITORY_CONFIGURATION = ('.grok', '.agents/skills')
+GROK_RUN_HOME = 'grok-home'
+GROK_SIGN_IN = 'auth.json'
 GROK_REPOSITORY_REFUSED = ('The {host} host would load the repository configuration in {names}, and no Grok setting '
                            'switches that off. Remove that configuration from the repository or use another host.')
 GROK_COMPATIBILITY = tuple(f'GROK_{vendor}_{surface}_ENABLED' for vendor in ('CLAUDE', 'CURSOR')
@@ -199,9 +201,29 @@ def claude_answer(folder, log):
 # Grok.
 
 def grok_environment(project, folder, prompt):
-    """Switch off every harness compatibility cell and cross session memory for one run."""
+    """Switch off every harness compatibility cell and cross session memory for one run, and give the run its own
+    Grok home folder.
+
+    Grok 1.0 has no switch for the skills of the user in ~/.grok/skills and ~/.agents/skills, and --no-memory was
+    removed. The run home holds a link to the sign in of the user, never a copy, and a configuration that ignores every
+    skill under the home folder of the user and switches memory off. The configuration, MCP servers and hooks of
+    ~/.grok are therefore not loaded either. Where a link cannot be made, as on Windows without the right, the run keeps
+    the default home and the probe reports what stays visible.
+    """
     values = {name: 'false' for name in GROK_COMPATIBILITY}
     values['GROK_MEMORY'] = '0'
+    home = Path(folder) / GROK_RUN_HOME
+    try:
+        home.mkdir(parents=True, exist_ok=True)
+        credential = grok_home() / GROK_SIGN_IN
+        link = home / GROK_SIGN_IN
+        if credential.exists() and not link.is_symlink():
+            link.symlink_to(credential)
+        (home / 'config.toml').write_text('[skills]\nignore = [' + json.dumps(str(Path.home())) + ']\n\n[memory]\nenabled = false\n',
+                                          encoding='utf-8')
+    except OSError:
+        return values
+    values['GROK_HOME'] = str(home)
     return values
 
 
@@ -244,7 +266,7 @@ def grok_review(project, folder, prompt):
     return ['grok', '--prompt-file', str(folder / 'prompt.txt'), '--output-format', 'streaming-json',
             '--json-schema', (folder / 'schema.json').read_text(), '--cwd', str(project), '--sandbox', 'read-only',
             '--permission-mode', 'dontAsk', '--tools', GROK_REVIEW_TOOLS, '--deny', 'MCPTool', '--deny', 'Bash',
-            '--deny', 'Edit', '--deny', 'Write', '--deny', 'WebFetch', '--no-subagents', '--no-memory',
+            '--deny', 'Edit', '--deny', 'Write', '--deny', 'WebFetch', '--no-subagents',
             '--disable-web-search', '--max-turns', GROK_REVIEW_TURNS, '--verbatim', '--rules=' + prompt]
 
 
@@ -256,7 +278,7 @@ def grok_work(worktree, folder, prompt, hive=None):
             '--json-schema', (folder / 'schema.json').read_text(), '--cwd', str(worktree), '--sandbox', 'workspace',
             '--permission-mode', 'dontAsk', '--tools', GROK_WORK_TOOLS, '--allow', 'Read', '--allow', 'Grep',
             '--allow', 'Edit', '--allow', 'Write', '--allow', 'Bash', '--deny', 'MCPTool', '--deny', 'WebFetch',
-            '--no-subagents', '--no-memory', '--disable-web-search', '--max-turns', GROK_WORK_TURNS, '--verbatim',
+            '--no-subagents', '--disable-web-search', '--max-turns', GROK_WORK_TURNS, '--verbatim',
             '--rules=' + prompt]
 
 
@@ -474,7 +496,7 @@ def claude_usage(provider_usage):
 
 GROK_USAGE_KEYS = {'inputtokens': 'input', 'prompttokens': 'input', 'outputtokens': 'output', 'completiontokens': 'output',
                    'reasoningtokens': 'reasoning', 'cachedtokens': 'cache_read', 'cachereadtokens': 'cache_read',
-                   'totaltokens': 'total'}
+                   'cachereadinputtokens': 'cache_read', 'cachecreationinputtokens': 'cache_write', 'totaltokens': 'total'}
 
 
 def grok_usage(provider_usage):
@@ -552,12 +574,13 @@ PROFILES = {
         roles_before_probe=(REVIEW,), roles_after_probe=(REVIEW, WORK),
         answer='schema_flag', packet_in_input=False,
         isolation=('The ten harness compatibility variables switch off Claude Code and Cursor skills, rules, agents, MCP '
-                   'servers and hooks, GROK_MEMORY=0 and --no-memory switch off cross session memory, --no-subagents and '
-                   '--disable-web-search remove delegation and the network tools, --tools allows only the listed built-in '
-                   'tools and --deny MCPTool refuses every MCP tool. The user skills in ~/.grok/skills and ~/.agents/skills, '
-                   'the MCP servers and hooks of ~/.grok and AGENTS.md project rules have no switch. A folder whose '
-                   'repository holds .grok or .agents/skills is refused. Every Grok sandbox allows writes to ~/.grok, so '
-                   'the probe of the work role must show that a worker cannot write there.'),
+                   'servers and hooks, and GROK_MEMORY=0 switches off cross session memory. Each run has its own GROK_HOME '
+                   'that links to the sign in and ignores every skill under the home folder of the user, so the skills, '
+                   'configuration, MCP servers and hooks of ~/.grok and ~/.agents/skills are not loaded. --no-subagents '
+                   'and --disable-web-search remove delegation and the network tools, --tools allows only the listed '
+                   'built-in tools and --deny MCPTool refuses every MCP tool. AGENTS.md project rules have no switch, and '
+                   'a folder whose repository holds .grok or .agents/skills is refused. The probe of the work role must '
+                   'show that a worker cannot write into ~/.grok.'),
         review=grok_review, work=grok_work, environment=grok_environment, read_answer=grok_answer, event=grok_event,
         usage=grok_usage,
         install_paths=('.grok/bin/grok',),

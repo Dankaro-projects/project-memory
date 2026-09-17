@@ -207,9 +207,9 @@ def permissions(path=None):
 
     Doctor reports this. Nothing is changed here; the next write to the machine memory corrects a wider mode.
     """
-    target = database_path(path)
     if os.name == 'nt':
         return {'status': 'not_checked', 'wider': [], 'note': 'File modes are not checked on Windows.'}
+    target = database_path(path)
     wider = []
     for name, item, mode in _mode_targets(target):
         try:

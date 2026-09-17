@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import tomllib
 import unittest
 from unittest.mock import patch
 
@@ -258,7 +259,10 @@ class NewHostCommandTests(unittest.TestCase):
         self.xdg = self.root / 'xdg'
         (self.xdg / 'opencode').mkdir(parents=True)
         clean = {name: '' for name in hosts.ENVIRONMENT.values()}
-        self.env = patch.dict(os.environ, {'XDG_CONFIG_HOME': str(self.xdg), **clean})
+        self.grok_home = self.root / 'grok-user-home'
+        self.grok_home.mkdir()
+        (self.grok_home / 'auth.json').write_text('{"invented": "sign in"}')
+        self.env = patch.dict(os.environ, {'XDG_CONFIG_HOME': str(self.xdg), 'GROK_HOME': str(self.grok_home), **clean})
         self.env.start()
         self.which = patch.object(hosts.shutil, 'which', side_effect=lambda name: '/usr/bin/' + name)
         self.which.start()
@@ -274,9 +278,10 @@ class NewHostCommandTests(unittest.TestCase):
             'grok', '--prompt-file', str(self.folder / 'prompt.txt'), '--output-format', 'streaming-json',
             '--json-schema', SCHEMA_TEXT, '--cwd', str(self.project), '--sandbox', 'read-only',
             '--permission-mode', 'dontAsk', '--tools', 'read_file,grep,list_dir', '--deny', 'MCPTool', '--deny', 'Bash',
-            '--deny', 'Edit', '--deny', 'Write', '--deny', 'WebFetch', '--no-subagents', '--no-memory',
+            '--deny', 'Edit', '--deny', 'Write', '--deny', 'WebFetch', '--no-subagents',
             '--disable-web-search', '--max-turns', '50', '--verbatim', '--rules=-starts with a dash'])
-        self.assertEqual(hosts.review_environment('grok', str(self.project), self.folder, PROMPT), GROK_ENVIRONMENT)
+        self.assertEqual(hosts.review_environment('grok', str(self.project), self.folder, PROMPT),
+                         {**GROK_ENVIRONMENT, 'GROK_HOME': str(self.folder / 'grok-home')})
         with patch.dict(os.environ, {'PROJECT_MEMORY_GROK_BIN': '/opt/fake/grok'}):
             self.assertEqual(hosts.review_command('grok', str(self.project), self.folder, PROMPT)[0], '/opt/fake/grok')
 
@@ -288,14 +293,41 @@ class NewHostCommandTests(unittest.TestCase):
             '--json-schema', SCHEMA_TEXT, '--cwd', str(worktree), '--sandbox', 'workspace',
             '--permission-mode', 'dontAsk', '--tools', 'read_file,grep,list_dir,search_replace,write_file,run_terminal_cmd',
             '--allow', 'Read', '--allow', 'Grep', '--allow', 'Edit', '--allow', 'Write', '--allow', 'Bash',
-            '--deny', 'MCPTool', '--deny', 'WebFetch', '--no-subagents', '--no-memory', '--disable-web-search',
+            '--deny', 'MCPTool', '--deny', 'WebFetch', '--no-subagents', '--disable-web-search',
             '--max-turns', '200', '--verbatim', '--rules=' + PROMPT])
-        self.assertEqual(hosts.work_environment('grok', str(worktree), self.folder, PROMPT), GROK_ENVIRONMENT)
+        self.assertEqual(hosts.work_environment('grok', str(worktree), self.folder, PROMPT),
+                         {**GROK_ENVIRONMENT, 'GROK_HOME': str(self.folder / 'grok-home')})
         binding = {'hive': 'h', 'db': 'd', 'swarm_id': 's', 'agent_id': 'a', 'role': 'worker'}
         with self.assertRaises(InvalidRecord) as caught:
             hosts.work_command('grok', worktree, self.folder, PROMPT, hive=binding)
         self.assertEqual(str(caught.exception), 'The grok host cannot receive the hive server on its command line. '
                                                 'Delegate work of a swarm to Codex or Claude.')
+
+    def test_a_grok_run_home_links_the_sign_in_and_ignores_the_skills_of_the_user(self):
+        # Grok 1.0 has no switch for user skills and removed --no-memory, so each run gets its own home (Grok 1.0.34).
+        environment = hosts.review_environment('grok', str(self.project), self.folder, PROMPT)
+        home = Path(environment['GROK_HOME'])
+        self.assertTrue((home / 'auth.json').is_symlink(), 'The sign in is linked, never copied.')
+        self.assertEqual((home / 'auth.json').resolve(), (self.grok_home / 'auth.json').resolve())
+        configuration = tomllib.loads((home / 'config.toml').read_text(encoding='utf-8'))
+        self.assertEqual(configuration, {'skills': {'ignore': [str(Path.home())]}, 'memory': {'enabled': False}})
+        self.assertEqual(environment['GROK_MEMORY'], '0')
+        self.assertEqual(hosts.review_environment('grok', str(self.project), self.folder, PROMPT), environment)
+
+    def test_a_grok_run_keeps_the_default_home_when_no_link_can_be_made(self):
+        with patch.object(Path, 'symlink_to', side_effect=OSError('no right to create links')):
+            self.assertEqual(hosts.review_environment('grok', str(self.project), self.root / 'other-run', PROMPT), GROK_ENVIRONMENT)
+
+    def test_grok_1_usage_reads_uncached_input_cache_reads_and_cache_writes(self):
+        usage = {'input_tokens': 7210, 'cache_read_input_tokens': 41000, 'cache_creation_input_tokens': 5,
+                 'output_tokens': 1893, 'reasoning_tokens': 412, 'total_tokens': 50108}
+        totals = host_profiles.grok_usage(usage)
+        self.assertEqual((totals['input'], totals['cache_read'], totals['cache_write'], totals['output'], totals['reasoning']),
+                         (7210, 41000, 5, 1893, 412))
+
+    def test_a_refused_option_is_named_without_storing_the_output_of_the_host(self):
+        self.assertEqual(hosts._refused_option("error: unexpected argument '--no-memory' found\n\nUsage: grok"), '--no-memory')
+        self.assertIsNone(hosts._refused_option('Some other failure with a secret value'))
 
     def test_grok_refuses_a_folder_whose_repository_holds_grok_configuration(self):
         worktree = self.project / '.memory/worktrees/run1'

@@ -851,7 +851,19 @@ def _probe_run(host, args, *, cwd, folder, env, timeout):
                       exit_message='The host process exited unsuccessfully.')
     if found and found[0] != 'completed':
         error = error or found[1]
+        refused = _refused_option(log.read_stderr_tail())
+        if refused:
+            error += f' The host refused the command line option {refused}, so the profile does not match the installed version.'
     return metrics, (answer if isinstance(answer, dict) else None), error
+
+
+REFUSED_OPTION = re.compile(r"(?:unexpected|unrecognized|unknown) (?:argument|option|flag)[\s'`:]+(--?[A-Za-z][\w-]{0,40})", re.IGNORECASE)
+
+
+def _refused_option(text):
+    """The command line option a host refused, named in its standard error, or None. The receipt stores only this name."""
+    found = REFUSED_OPTION.search(text or '')
+    return found.group(1) if found else None
 
 
 def _prompt_file(found, folder, prompt):
