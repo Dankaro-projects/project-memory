@@ -4,15 +4,15 @@ The canonical repository is `Dankaro-projects/project-memory`. There are two dis
 
 ## Version locations
 
-Python uses `0.6.0b5` and plugin metadata uses the equivalent `0.6.0-beta.5`. Update these together:
+Python uses `0.6.0b6` and plugin metadata uses the equivalent `0.6.0-beta.6`. Update these together:
 
 | File | Form |
 | --- | --- |
-| `pyproject.toml` | `0.6.0b5` |
-| `memory_module/__init__.py` | `0.6.0b5` |
-| `plugins/project-memory/.claude-plugin/plugin.json` | `0.6.0-beta.5` |
-| `plugins/project-memory/.codex-plugin/plugin.json` | `0.6.0-beta.5` |
-| `.claude-plugin/marketplace.json` | `0.6.0-beta.5` |
+| `pyproject.toml` | `0.6.0b6` |
+| `memory_module/__init__.py` | `0.6.0b6` |
+| `plugins/project-memory/.claude-plugin/plugin.json` | `0.6.0-beta.6` |
+| `plugins/project-memory/.codex-plugin/plugin.json` | `0.6.0-beta.6` |
+| `.claude-plugin/marketplace.json` | `0.6.0-beta.6` |
 | `plugins/project-memory/.mcp.json` | the release wheel URL |
 | `plugins/project-memory/claude-hooks.json` | the release wheel URL |
 | `README.md`, `docs/setup.md`, `docs/user-guide.md` | the install and upgrade commands |

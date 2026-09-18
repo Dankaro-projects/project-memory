@@ -83,7 +83,7 @@ project-memory view
 If you used the published command without installing the CLI permanently, use the same version:
 
 ```sh
-uvx project-memory-mcp@0.6.0b5 view
+uvx project-memory-mcp@0.6.0b6 view
 ```
 
 Opening `memory_module/viewer.html` directly shows an internal template with the launch command, not your records.
