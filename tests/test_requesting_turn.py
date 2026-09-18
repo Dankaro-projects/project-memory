@@ -10,8 +10,9 @@ from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+from unittest import mock
 
-from memory_module import Memory, codex_host, reviews
+from memory_module import Memory, cli, codex_host, reviews
 from memory_module.install import setup
 from memory_module.workspace import action
 
@@ -34,11 +35,14 @@ class RequestingTurnTests(unittest.TestCase):
         info = setup(self.root, requirements=['Keep the parser small.'])
         self.m = Memory(info['database'])
         reviews.configure(self.m, self.root, 'codex')
-        self.episode = action(self.m, 'plan', {
+        self.episode = self.item('fixture')
+
+    def item(self, key):
+        return action(self.m, 'plan', {
             'title': 'Change the parser', 'objective': 'Set the value to 2.', 'criterion': 'parser.py sets VALUE to 2.',
             'subject': 'code', 'payload': {'state': 'ready', 'next_action': 'Check the parser.', 'autonomy': 'act',
                                            'scope': 'Change the parser only.', 'reason': 'The user requests the change.'}},
-            'fixture')['episode_id']
+            key)['episode_id']
 
     def tearDown(self):
         self.m.close()
@@ -117,6 +121,29 @@ class RequestingTurnTests(unittest.TestCase):
         self.assertNotIn('requesting_turn', legacy)
         self.assertIn('unknown rather than unmet', ''.join(reviews.snapshot_notes(older)))
         self.assertIn('omit constraint_checks', ''.join(reviews.snapshot_notes({})))
+
+
+    def review(self, episode, *arguments):
+        """Run the review command as a user would, without launching a host process."""
+        with mock.patch.object(reviews, 'launch'):
+            code = cli.main(['review', '--db', str(self.m.path), '--project', str(self.root),
+                             '--episode', episode, '--retry', *arguments])
+        self.assertEqual(code, 0)
+        latest = self.m.db.execute('SELECT id FROM review_runs ORDER BY rowid DESC LIMIT 1').fetchone()[0]
+        return reviews.read(self.m, latest)
+
+    def test_the_review_command_names_the_session_that_requested_the_check(self):
+        self.call('session-command-line', 'Bash')
+        self.call('session-command-line', 'Bash', event='PostToolUse')
+        turn = self.review(self.episode, '--session', 'session-command-line')['snapshot']['requesting_turn']
+        self.assertEqual(turn['session_id'], 'session-command-line')
+        self.assertEqual((turn['tool_calls_total'], turn['tools_used']), (2, {'Bash': 2}))
+
+    def test_the_review_command_still_works_without_a_session(self):
+        turn = self.review(self.item('second'))['snapshot']['requesting_turn']
+        self.assertIsNone(turn['session_id'])
+        self.assertEqual(turn['tool_calls_total'], 0)
+        self.assertTrue(turn['working_tree']['read'])
 
 
 if __name__ == '__main__':

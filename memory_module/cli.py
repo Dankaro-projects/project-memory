@@ -171,6 +171,7 @@ def main(argv=None):
         elif name=='review':
             p.add_argument('--wait');p.add_argument('--episode');p.add_argument('--role',choices=['outcome','intent','recovery'],default='outcome')
             p.add_argument('--cancel');p.add_argument('--retry',action='store_true')
+            p.add_argument('--session',default='',help='The session that requests the check. Its tool calls reach the reviewer as evidence about the requesting turn.')
             p.add_argument('--max-seconds',type=int,help='Execution limit; with --wait, legacy alias for --wait-seconds.')
             p.add_argument('--wait-seconds',type=int,help='Stop waiting after this many seconds without cancelling the review (default: 60).')
         elif name=='instructions':
@@ -295,7 +296,7 @@ def main(argv=None):
                     result=reviews.wait(memory,args.wait,seconds)
                 else:
                     if not args.episode:raise ValueError('Select --episode, --wait or --cancel.')
-                    result=reviews.request(memory,args.episode,args.role,request_key='cli:'+uuid.uuid4().hex,retry=args.retry,max_seconds=args.max_seconds if args.max_seconds is not None else 300)
+                    result=reviews.request(memory,args.episode,args.role,request_key='cli:'+uuid.uuid4().hex,session_id=args.session,retry=args.retry,max_seconds=args.max_seconds if args.max_seconds is not None else 300)
                     reviews.launch(memory,result)
                 result.pop('snapshot',None)
         elif args.command in {'sessions','handoff'}:
