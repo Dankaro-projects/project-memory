@@ -23,7 +23,7 @@ import uuid
 from .core import Memory, InvalidRecord, Conflict, dumps, _digest, _text
 from . import codex_host, hosts
 from .reports import REPORT_MAX_CHARACTERS, REPORT_SCHEMA, report_schema, validate_lesson_proposals, validate_report
-from .shared import git, latest_source, project_paths, run_summary, tree_signature
+from .shared import git, git_message, latest_source, project_paths, run_summary, tree_signature
 
 ROLES = ('outcome', 'intent', 'recovery')
 ACTIVE = ('queued', 'running', 'cancelling')
@@ -363,6 +363,71 @@ def snapshot(memory, episode_id, role):
     return value, signature
 
 
+# The requesting turn is bounded, so that a long session does not enlarge the prompt without limit.
+REQUESTING_TURN_CALLS = 40
+REQUESTING_TURN_PATHS = 200
+
+
+def working_tree(folder):
+    """What the checked folder holds uncommitted, so that a criterion about changed files can be confirmed."""
+    try:
+        result = git(folder, 'status', '--porcelain', check=False, timeout=10)
+    except (InvalidRecord, OSError, subprocess.SubprocessError) as exc:
+        return {'read': False, 'reason': str(exc)}
+    if result.returncode != 0:
+        return {'read': False, 'reason': git_message(result)[:500]}
+    changed = [line for line in result.stdout.splitlines() if line.strip()]
+    value = {'read': True, 'clean': not changed, 'changed_total': len(changed),
+             'changed_paths': changed[:REQUESTING_TURN_PATHS]}
+    if len(changed) > REQUESTING_TURN_PATHS:
+        value['changed_paths_omitted'] = len(changed) - REQUESTING_TURN_PATHS
+    return value
+
+
+def snapshot_notes(snapshot):
+    """What a reviewer has to be told about evidence that a stored snapshot does not carry.
+
+    A run keeps the snapshot it was requested with, so a check can execute against a snapshot written before a
+    field existed. Silence would let the reviewer read the absence as a failure of the work.
+    """
+    notes = []
+    if 'constraints' not in snapshot:
+        notes.append('This legacy snapshot has no separate constraints; omit constraint_checks. ')
+    if 'requesting_turn' not in snapshot:
+        notes.append('This snapshot carries nothing about the turn that requested the check, so a criterion about '
+                     'that turn is unknown rather than unmet. ')
+    return notes
+
+
+def requesting_turn(memory, session_id, folder):
+    """What the session that requested a check did, and what the checked folder holds uncommitted.
+
+    The receipts of a snapshot belong to the work under review, and they come from the sessions that built it,
+    so a criterion about the turn that asked for the check had no evidence at all. This is read when the check
+    is requested and stays outside the snapshot signature, because it changes with every tool call and would
+    otherwise make a check stale as soon as it was requested.
+    """
+    calls = [dict(row) for row in memory.db.execute(
+        "SELECT id,event_name,tool_name,turn_id,created_at FROM host_receipts WHERE session_id=? "
+        "AND event_name IN ('PreToolUse','PostToolUse','Interrupt','Reconciled') ORDER BY rowid",
+        (session_id,)).fetchall()] if session_id and codex_host.exists(memory) else []
+    value = {'session_id': session_id or None, 'tool_calls_total': len(calls),
+             'tools_used': dict(Counter(call['tool_name'] for call in calls if call['tool_name'])),
+             'tool_calls': calls[-REQUESTING_TURN_CALLS:], 'working_tree': working_tree(folder),
+             'meaning': 'This describes the session that requested this check, not the work under review. Its tool '
+                        'calls and its working tree are evidence for a criterion about that session, and the turn '
+                        'identifier separates one turn from another. A clean working tree shows that nothing is left '
+                        'uncommitted; a commit is shown by the git history instead.'}
+    if len(calls) > REQUESTING_TURN_CALLS:
+        value['tool_calls_omitted'] = len(calls) - REQUESTING_TURN_CALLS
+    if not calls:
+        value['meaning'] = ('No tool calls of a requesting session are recorded, because the check was requested '
+                            'without a session identifier or before any call of that session was observed. A '
+                            'criterion about the requesting turn is unknown rather than unmet. The working tree of '
+                            'the checked folder is reported below.')
+    return value
+
+
 def read(memory, run_id):
     row = memory.db.execute('SELECT * FROM review_runs WHERE id=?', (run_id,)).fetchone() if exists(memory) else None
     if not row:
@@ -440,6 +505,8 @@ def request(memory, episode_id, role='outcome', *, request_key, session_id='', r
     if type(max_seconds) is not int or not 30<=max_seconds<=900:raise InvalidRecord('Review time must be between 30 and 900 seconds.')
     value, signature = snapshot(memory, episode_id, role)
     value['execution_limit_seconds']=max_seconds
+    # Outside the signature: the requesting turn changes with every tool call, and staleness follows the evidence.
+    value['requesting_turn'] = requesting_turn(memory, session_id, value['project'])
     config = configured(memory)
     ensure_run_columns(memory)
     with memory._write():
@@ -741,8 +808,7 @@ def execute(memory, run_id, timeout=None):
                    'Start with the supplied records, then read relevant manifest files and actual artifacts. Keep tool output bounded and reuse evidence already read. '
                    'Missing proof means unknown, not an indefinite search. Return only the requested JSON. ')
         prompt += schema['description'] + '\n'
-        if 'constraints' not in run['snapshot']:
-            prompt += 'This legacy snapshot has no separate constraints; omit constraint_checks. '
+        prompt += ''.join(snapshot_notes(run['snapshot']))
         prompt += f'The hard deadline is {deadline.isoformat()} ({timeout} seconds total). Reserve the final {min(30,timeout/4):g} seconds to return the report, using unknown for unresolved checks.\n'
         evidence = evidence_manifest(run['snapshot'],folder)
         packet = prompt+dumps(evidence)
