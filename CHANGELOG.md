@@ -1,6 +1,8 @@
 # Changelog
 
-## 0.6.0b6 (18 September 2026)
+## 0.6.0b7 (18 September 2026)
+
+Version 0.6.0b6 was tagged but not published. Its release run failed on Windows, because the guidance added for receipt evidence made the review prompt longer than the command line limit of cmd.exe. The guidance now travels in the evidence packet. This release carries the changes below.
 
 A check can confirm a fact outside the repository. A release could not reach Done through a passing check, because a workflow run, a published artefact or an installed version lies outside the checked folder, and a receipt keeps only the hash of a tool result. The check of 0.6.0b5 ended uncertain for that reason. The new `evidence` operation takes the receipt IDs of completed tool calls, reads their output from the session transcript, and stores it only when its sha256 matches the receipt. A changed output, or a call with no result in the transcript, is refused and nothing is stored. The output is stored under the reserved source key `receipt-evidence:`, which an agent cannot write, and a check snapshot states which receipt verified it. Receipts still keep only hashes and sizes.
 

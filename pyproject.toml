@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "project-memory-mcp"
-version = "0.6.0b6"
+version = "0.6.0b7"
 description = "Local project memory for decisions, evidence and outcomes, with bounded MCP retrieval."
 readme = "README.md"
 requires-python = ">=3.11"
