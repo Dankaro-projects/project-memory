@@ -513,6 +513,11 @@
           h("p", { class: "muted" }, reviews.configured === false ? "No agent host is configured, so agent checks and delegation cannot run."
             : reviews.current ? `The current ${P.words(reviews.current.role).toLowerCase()} check is ${P.words(reviews.current.state).toLowerCase()}.` : "No outcome check is required yet."),
           listOf(runs, (run) => runButton(run, "work-run-"), "No agent run is recorded."), checkReports(reviews)),
+        (reviews.awaiting_user || []).length ? section("Needs your confirmation",
+          h("p", { class: "muted" }, "The latest check found no evidence that a machine can use to confirm these criteria. Each is offered to you once, and your statement is recorded as your confirmation."),
+          listOf(reviews.awaiting_user, (item) => h("div", { class: "stack", dataset: { key: "confirm-" + item.criterion } },
+            h("span", { class: "row" }, chip(item.criterion)), h("strong", null, item.condition), h("span", { class: "muted" }, item.evidence),
+            P.canEdit() ? P.formButton("Confirm", "confirm_criterion", { episode_id: card.id, criterion: item.criterion, condition: item.condition }, { class: "small primary" }) : null))) : null,
         callsHost, focusHost, lineageHost,
         section("History", history.error ? P.errorState(history.error) : [
           h("p", { class: "muted" }, history.total ? `Records ${history.offset + 1} to ${history.offset + history.records.length} of ${history.total} are shown, oldest first.` : "No history is recorded."),

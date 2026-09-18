@@ -60,6 +60,8 @@ Work offers a board with one column per state and a sortable list, with filters 
 
 A work item opens in the drawer with the intended result, the completion criterion, the next step and its reason, the plan scope and the allowed paths, the dependencies and their reasons, the recorded issues, the agent checks and delegated runs, a compact lineage graph and the paged history. Its actions are Edit plan, Allow paths, Delegate, Request check and Comment.
 
+When the latest outcome check reports a criterion that no machine can confirm, the work item lists it under Needs your confirmation. Confirm writes your statement with user origin, and the next outcome check reads it as the evidence for that criterion. Each criterion is offered once.
+
 Moving a card cannot manufacture a result. Done requires an evidenced good outcome with complete completion, current supporting evidence, no unresolved execution and, where agent checks are configured, a current passing outcome check.
 
 ## Architecture

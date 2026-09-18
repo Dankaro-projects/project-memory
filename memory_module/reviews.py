@@ -20,12 +20,15 @@ import subprocess
 import time
 import uuid
 
-from .core import Memory, InvalidRecord, Conflict, dumps, _digest, _text
+from .core import Memory, InvalidRecord, Conflict, USER_ACTOR, VERIFIED_SOURCE_PREFIXES, dumps, _digest, _text
 from . import codex_host, hosts
 from .reports import REPORT_MAX_CHARACTERS, REPORT_SCHEMA, report_schema, validate_lesson_proposals, validate_report
 from .shared import git, git_message, latest_source, project_paths, run_summary, tree_signature
 
 ROLES = ('outcome', 'intent', 'recovery')
+RECEIPT_PREFIX, CONFIRMATION_PREFIX = VERIFIED_SOURCE_PREFIXES
+RECEIPT_STATEMENT = ('Project Memory verified this output against the sha256 of its host receipt before storing it. It is the '
+                     'recorded tool output, not text written by the implementer.')
 ACTIVE = ('queued', 'running', 'cancelling')
 # Delegated roles live in delegation.py; they share the run table and the worker entry point.
 DELEGATED_ROLES = ('work', 'work_review')
@@ -334,6 +337,9 @@ def snapshot(memory, episode_id, role, *, tree=None):
     source_ids = {e['source_id'] for record in records for e in record.get('evidence', [])}
     source_ids |= {latest_source(memory, source_id) for source_id in tuple(source_ids)}
     sources = [memory.read(rid, detail=True) for rid in sorted(source_ids)]
+    for source in sources:
+        if source['source_key'].startswith(RECEIPT_PREFIX):
+            source['verification'] = {'receipt_id': source['source_key'][len(RECEIPT_PREFIX):], 'statement': RECEIPT_STATEMENT}
     for record in records:
         if record['kind'] == 'work_plan':
             # A progress update does not change the intent reviewed by the agent.
@@ -350,6 +356,10 @@ def snapshot(memory, episode_id, role, *, tree=None):
             if folder == config['project'] else tree_signature(folder)
     value = {**task_snapshot(memory, ep, role, project=folder, scope=plan['scope']),
              'records': records, 'sources': sources, 'receipts': receipts, 'tree_signature': tree}
+    confirmed = user_confirmations(memory, episode_id, value['checklist'])
+    if confirmed:
+        # Left out when empty, so that a check made before this field existed stays current.
+        value['user_confirmations'] = confirmed
     signature=hashlib.sha256(dumps(value).encode()).hexdigest()
     # Named after the signature, so a check made before this field existed stays current.
     try:
@@ -363,6 +373,65 @@ def snapshot(memory, episode_id, role, *, tree=None):
         history=memory.db.execute("SELECT id,role,state,report,error FROM review_runs WHERE episode_id=? AND role=? AND state NOT IN ('queued','running','cancelling') ORDER BY rowid DESC LIMIT 2",(episode_id,role)).fetchall()
         value['previous_checks']=[{**dict(r),'report':json.loads(r['report']) if r['report'] else None} for r in history]
     return value, signature
+
+
+def _confirmation_key(episode_id, condition):
+    """A confirmation belongs to the text of its condition, so it does not carry over to a changed criterion."""
+    return CONFIRMATION_PREFIX + episode_id + ':' + hashlib.sha256(condition.encode('utf-8')).hexdigest()[:24]
+
+
+def user_confirmations(memory, episode_id, checklist):
+    """The criteria of the checklist that the user confirmed in the control panel, with the statement of the user."""
+    confirmed = []
+    for item in checklist:
+        row = memory.db.execute('SELECT id,body,checked_at FROM sources WHERE source_key=? AND origin=? ORDER BY version DESC LIMIT 1',
+                                (_confirmation_key(episode_id, item['condition']), 'user')).fetchone()
+        if row:
+            body = json.loads(row['body'])
+            confirmed.append({'criterion': item['id'], 'condition': item['condition'], 'statement': body['statement'],
+                              'origin': 'user', 'source_id': row['id'], 'confirmed_at': row['checked_at'],
+                              'meaning': 'The user confirmed this criterion in the control panel. Treat it as met on this evidence.'})
+    return confirmed
+
+
+def awaiting_user(memory, episode_id):
+    """The criteria that the latest finished outcome check could not confirm by any machine, not yet confirmed by the user."""
+    if not exists(memory):
+        return []
+    row = memory.db.execute("SELECT id,snapshot,report FROM review_runs WHERE episode_id=? AND role='outcome' AND report IS NOT NULL "
+                            "AND state NOT IN ('queued','running','cancelling') ORDER BY rowid DESC LIMIT 1", (episode_id,)).fetchone()
+    if not row:
+        return []
+    conditions = {item['id']: item['condition'] for item in json.loads(row['snapshot']).get('checklist', [])}
+    offered = []
+    for check in json.loads(row['report']).get('checks', []):
+        condition = conditions.get(check.get('criterion'))
+        if check.get('result') != 'needs_user' or not condition:
+            continue
+        if memory.db.execute('SELECT 1 FROM sources WHERE source_key=?', (_confirmation_key(episode_id, condition),)).fetchone():
+            continue
+        offered.append({'criterion': check['criterion'], 'condition': condition, 'run_id': row['id'], 'evidence': check.get('evidence', '')})
+    return offered
+
+
+def confirm_criterion(memory, episode_id, criterion, statement, request_key):
+    """Record the confirmation of the user for a criterion that no machine can confirm. Each criterion is offered once."""
+    _text(statement, 'statement', 2000)
+    offered = next((item for item in awaiting_user(memory, episode_id) if item['criterion'] == criterion), None)
+    if not offered:
+        raise InvalidRecord('This criterion is not awaiting a confirmation of the user. Only a criterion that the latest check '
+                            'reported as needs_user, and that the user has not confirmed yet, can be confirmed.',
+                            awaiting=[item['criterion'] for item in awaiting_user(memory, episode_id)])
+    episode = memory.episode(episode_id)
+    body = {'episode_id': episode_id, 'criterion': criterion, 'condition': offered['condition'], 'statement': statement,
+            'run_id': offered['run_id'], 'actor': USER_ACTOR}
+    source = memory.source(_confirmation_key(episode_id, offered['condition']), 'User confirmation of ' + criterion + ' for ' + episode['title'],
+                           'The user confirms: ' + offered['condition'], dumps(body), 'user', subject=episode['subject'], internal=True)
+    evidence = [{'source_id': source['id'], 'reason': 'The user confirmed this criterion in the control panel.'}]
+    note = memory.record(episode_id, 'note', {'text': 'The user confirmed criterion ' + criterion + ': ' + offered['condition'] +
+                                              ' The user wrote: ' + statement},
+                         expected_version=episode['version'], actor=USER_ACTOR, evidence=evidence, request_key=request_key + ':note')
+    return {'id': note['id'], 'episode_id': episode_id, 'criterion': criterion, 'evidence': evidence}
 
 
 # The requesting turn is bounded, so that a long session does not enlarge the prompt without limit.
@@ -544,7 +613,7 @@ def listing(memory, episode_id, limit=10, offset=0):
                              (episode_id, limit+1, offset)).fetchall()
     runs = [{key: value for key, value in read(memory, row[0]).items() if key != 'snapshot'} for row in rows[:limit]]
     return {'runs': runs, 'more': len(rows)>limit, 'next_offset': offset+len(runs), 'configured': bool(configured(memory)),
-            'current':current(memory,episode_id)}
+            'current':current(memory,episode_id), 'awaiting_user':awaiting_user(memory,episode_id)}
 
 
 def current(memory, episode_id, role='outcome'):
@@ -913,7 +982,10 @@ def execute(memory, run_id, timeout=None):
                    'Do not delegate, use the network, repeat effects, run tests or modify anything. '
                    'This is a check of task acceptance and applicable constraints, not a general quality review or a reimplementation of the work. '
                    'The work can be code, documents, spreadsheets, presentations or workflow exports; judge each against its own criteria. '
-                   'Use every checklist ID exactly once with result met, unmet or unknown and cite evidence. ID fields contain only the ID, without condition text. Preserve all conditions and exceptions. '
+                   'Use every checklist ID exactly once with result met, unmet, unknown or needs_user and cite evidence. ID fields contain only the ID, without condition text. Preserve all conditions and exceptions. '
+                   'Use needs_user only for a criterion that no evidence available to any machine can confirm, such as an approval or a judgement of the user; the user is then asked once. '
+                   'A criterion listed in user_confirmations is met on that statement of the user. '
+                   'A source with a verification field holds tool output that Project Memory matched to the hash of its host receipt; it can establish a run, an artefact or an installed version that lies outside the repository. '
                    'The work scope bounds the task; progress descriptions and the review gate are not extra deliverables. '
                    'Assess every project constraint once in constraint_checks: applicability applies, not_applicable or uncertain; '
                    'explain the reason and cite evidence for that mapping. For applies use result met, unmet or unknown; '
@@ -1071,12 +1143,17 @@ def hook(memory, event, host):
             reason += 'Wait for this existing check using '+wait_command(memory,run['id'])+'. '
         else:
             reason += 'This check is no longer running. Inspect its result before requesting another check. '
+            waiting = awaiting_user(memory, ep)
+            if waiting:
+                reason += (f'{len(waiting)} criteria ({", ".join(item["criterion"] for item in waiting)}) need the confirmation of the user, '
+                           'because no machine can confirm them. Ask the user to confirm them in the control panel; do not request another check before that. ')
         reason += (f'Read memory_get next with id {ep} for current completion blockers. '
                    'A missing, failed or stale check cannot establish completion. Do not repeat completed implementation work.')
         prompt = memory.db.execute("SELECT id FROM host_receipts WHERE session_id=? AND event_name='UserPromptSubmit' ORDER BY rowid DESC LIMIT 1", (session,)).fetchone()
         coverage_blocked = prompt and memory.db.execute("SELECT 1 FROM host_receipts WHERE session_id=? AND event_name='CoverageBlockIssued' AND json_extract(payload,'$.prompt_id')=?", (session,prompt[0])).fetchone()
         if name=='Stop' and run['state']!='pass' and not event.get('stop_hook_active') and not coverage_blocked:
-            key='review-block:'+session+':'+str(event.get('turn_id') or event.get('prompt_id') or '')+':'+run['id']
+            # One notice per result: a new turn does not repeat it, and a changed state of the run reports it again.
+            key='review-block:'+session+':'+run['id']+':'+run['state']
             if not memory.db.execute("SELECT 1 FROM host_receipts WHERE id=?",('host_'+hashlib.sha256(key.encode()).hexdigest()[:32],)).fetchone():
                 with memory._write():
                     codex_host.receipt(memory,session_id=session,event_name='ReviewBlockIssued',episode_id=ep,payload={'run_id':run['id']},key=key)

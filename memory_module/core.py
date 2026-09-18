@@ -26,6 +26,9 @@ ASSESSMENTS = {"pending", "good", "bad", "unknown"}
 # in the control panel and the composed text of a run is written by Project Memory itself, so an
 # agent may not store a source under these keys and replace the instructions it is judged against.
 RESERVED_SOURCE_PREFIXES = ("instructions-base:", "instructions:")
+# Tool output verified against its receipt hash, and a criterion confirmed by the user in the control panel.
+# Project Memory writes both itself, so an agent cannot present its own text as either.
+VERIFIED_SOURCE_PREFIXES = ("receipt-evidence:", "criterion-confirmation:")
 # The phase of the project decides who may merge delegated work, so only the user changes it, in the
 # control panel. Project Memory writes this versioned source itself, through planning.set_phase.
 PHASE_SOURCE_KEY = "project-phase"
@@ -276,6 +279,10 @@ class Memory(Workflow):
                 "Only the user saves that text, in the control panel, and Project Memory stores the text of a run "
                 "itself. Choose another source key.",
                 reserved_prefixes=list(RESERVED_SOURCE_PREFIXES))
+        if not internal and source_key.startswith(VERIFIED_SOURCE_PREFIXES):
+            raise InvalidRecord("The source key " + source_key + " is reserved for evidence that Project Memory verifies "
+                                "itself: tool output checked against its receipt, stored through the evidence operation, "
+                                "and criteria the user confirms in the control panel. Choose another source key.")
         if not internal and source_key.startswith("session-digest:"):
             raise InvalidRecord("The source key " + source_key + " is reserved for the session digests that Project Memory "
                                 "collects itself. Choose another source key.")

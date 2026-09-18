@@ -10,6 +10,7 @@ Transcripts are opened read only and never changed. Session content never enters
 redacted before anything is stored. Distilled proposals are written as records only when the user accepts them.
 """
 from datetime import datetime, timedelta, timezone
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -1054,6 +1055,36 @@ def start_summary(memory, session_id, *, room, found=None):
     return result
 
 
+START_WORK = 3
+
+
+def work_to_continue(memory, *, room):
+    """The part "Work to continue" of the session start context: open work, most recent activity first.
+
+    A resume should lead to the work an earlier session planned next, not only to the work that session touched.
+    """
+    from .planning import board
+    if room < 80:
+        return ''
+    cards = []
+    for state in ('in_progress', 'review', 'ready'):
+        cards += board(memory, state=state, limit=100)['cards']
+    cards.sort(key=lambda card: card.get('date') or '', reverse=True)
+    lines = []
+    for card in cards[:START_WORK]:
+        plan = card.get('plan') or {}
+        line = f' {card["title"][:80]} ({card["id"]}, {card["state"].replace("_", " ")}, {plan.get("priority", "normal")} priority)'
+        if plan.get('next_action'):
+            line += ': ' + _cut(plan['next_action'], 160)
+        lines.append(line if line.endswith(('.', '…')) else line + '.')
+    if not lines:
+        return ''
+    head, tail = 'Work to continue:', ' Read memory_get next with its id before starting.'
+    while lines and len(head + ''.join(lines) + tail) > room:
+        lines.pop()
+    return head + ''.join(lines) + tail if lines else ''
+
+
 def context_tokens(transcript_path):
     """The context size of the latest model call in a transcript, read from its tail, or None."""
     try:
@@ -1182,6 +1213,107 @@ def find_call(session_id, tool_use_id, *, found=None):
                 answer.update(line=called, suggested='unknown', result='no_result', excerpt='')
             return answer
     return {'found': False}
+
+
+RECEIPT_EVIDENCE_LIMIT = 20
+RECEIPT_EVIDENCE_CHARACTERS = 1_000_000
+
+
+def _tool_outputs(session_id, tool_use_id, found):
+    """The structured results a transcript holds for one tool call, each with its transcript and line.
+
+    Claude Code keeps the value its PostToolUse hook received in toolUseResult; Codex keeps the output of a call
+    in its payload. The caller compares each candidate with the receipt hash, so an unknown field only fails to match.
+    """
+    needle = (tool_use_id or '').encode()
+    if len(needle) < 6:
+        return []
+    candidates = []
+    for path, host in _transcripts(session_id, found):
+        try:
+            with path.open('rb') as handle:
+                for number, raw in enumerate(handle, 1):
+                    if needle not in raw:
+                        continue
+                    try:
+                        value = json.loads(raw)
+                    except ValueError:
+                        continue
+                    message = value.get('message') if isinstance(value.get('message'), dict) else {}
+                    parts = message.get('content') if isinstance(message.get('content'), list) else []
+                    if any(isinstance(p, dict) and p.get('type') == 'tool_result' and p.get('tool_use_id') == tool_use_id for p in parts):
+                        if 'toolUseResult' in value:
+                            candidates.append((value['toolUseResult'], path.name, number))
+                    payload = value.get('payload') if isinstance(value.get('payload'), dict) else {}
+                    item = payload.get('item') if isinstance(payload.get('item'), dict) else None
+                    if payload.get('call_id') == tool_use_id and payload.get('type', '').endswith('_output'):
+                        candidates.append((payload.get('output'), path.name, number))
+                    elif item and item.get('id') == tool_use_id and 'result' in item:
+                        candidates.append((item['result'], path.name, number))
+        except OSError:
+            continue
+    return candidates
+
+
+def _output_text(value):
+    """The readable text of a tool result: the streams of a command, or the canonical value."""
+    if isinstance(value, dict) and isinstance(value.get('stdout'), str):
+        text = value['stdout'] + ('\n[stderr]\n' + value['stderr'] if value.get('stderr') else '')
+        return text
+    return value if isinstance(value, str) else dumps(value)
+
+
+def receipt_evidence(memory, receipt_ids, request_key, *, found=None):
+    """Store the exact output of completed tool calls as evidence after it matches the hash of its receipt.
+
+    Receipts keep only the hash of a tool result. The output itself is read from the transcript of the receipt's
+    session and stored only when the sha256 of its canonical form equals that hash. Every receipt is verified before
+    anything is stored, so one mismatch or one missing transcript entry refuses the whole request.
+    """
+    from . import codex_host
+    from .core import VERIFIED_SOURCE_PREFIXES
+    if not isinstance(receipt_ids, list) or not receipt_ids or len(receipt_ids) > RECEIPT_EVIDENCE_LIMIT:
+        raise InvalidRecord(f'Name 1 to {RECEIPT_EVIDENCE_LIMIT} receipt IDs of completed tool calls in receipt_ids.')
+    found = folders() if found is None else found
+    verified = []
+    for receipt_id in dict.fromkeys(receipt_ids):
+        receipt = codex_host.read_receipt(memory, receipt_id)
+        expected = (receipt['payload'].get('tool_response') or {}).get('sha256')
+        if receipt['event_name'] != 'PostToolUse' or not expected:
+            raise InvalidRecord(f'Receipt {receipt_id} is not the result of a completed tool call. Name a PostToolUse receipt.',
+                                receipt_id=receipt_id)
+        candidates = _tool_outputs(receipt['session_id'], receipt['tool_use_id'], found)
+        if not candidates:
+            raise InvalidRecord(f'The transcript of session {receipt["session_id"]} holds no result of tool call '
+                                f'{receipt["tool_use_id"]}, so receipt {receipt_id} cannot be verified.', receipt_id=receipt_id)
+        match = next((c for c in candidates if hashlib.sha256(dumps(c[0]).encode('utf-8')).hexdigest() == expected), None)
+        if match is None:
+            raise InvalidRecord(f'The transcript output of tool call {receipt["tool_use_id"]} does not match the hash of receipt '
+                                f'{receipt_id}. It was changed after the call or belongs to another call. Nothing was stored.',
+                                receipt_id=receipt_id)
+        verified.append((receipt, expected, match))
+    evidence = []
+    with memory._write():
+        for receipt, expected, (output, transcript, line) in verified:
+            key = VERIFIED_SOURCE_PREFIXES[0] + receipt['id']
+            existing = memory.db.execute('SELECT id FROM sources WHERE source_key=? ORDER BY version DESC LIMIT 1', (key,)).fetchone()
+            if existing:
+                source_id = existing[0]
+            else:
+                text = _output_text(output)
+                body = (f'Project Memory verified this output against host receipt {receipt["id"]}. The receipt records that the '
+                        f'tool {receipt["tool_name"]} completed in session {receipt["session_id"]} at {receipt["created_at"]} with a '
+                        f'result of sha256 {expected}. The transcript {transcript} holds that result at line {line}, and the sha256 of '
+                        f'its canonical form matches the receipt.\n\nOutput:\n{text}\n\nCanonical result:\n{dumps(output)}')
+                if len(body) > RECEIPT_EVIDENCE_CHARACTERS:
+                    raise InvalidRecord(f'The output of receipt {receipt["id"]} exceeds {RECEIPT_EVIDENCE_CHARACTERS:,} characters. '
+                                        'Run a command with shorter output and name its receipt.', receipt_id=receipt['id'])
+                source_id = memory.source(key, f'Verified output of tool call {receipt["tool_use_id"]}',
+                                          f'The output of {receipt["tool_name"]} matches the hash of receipt {receipt["id"]}.',
+                                          body, 'tool', subject='general', internal=True)['id']
+            evidence.append({'source_id': source_id,
+                             'reason': f'Tool output verified against receipt {receipt["id"]} by its sha256.'})
+    return {'evidence': evidence, 'receipt_ids': [r['id'] for r, _, _ in verified]}
 
 
 def read_only(tool_name, lookup):

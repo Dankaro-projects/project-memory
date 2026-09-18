@@ -266,6 +266,7 @@ OPERATION_SCHEMAS = {
     'approve_requirements': {'operation': 'approve_requirements', 'required': ['requirements', 'reason', 'actor', 'evidence', 'expected_version'], 'types': {'requirements': 'List of 1–100 complete requirements.', 'reason': 'Text.', 'actor': 'Text.', 'evidence': '[{source_id, reason}]', 'expected_version': 'Current nonnegative direction version.'}, 'rules': 'Read memory_get direction first. Append only explicitly approved requirements with current approval evidence; this schema does not grant approval.'},
     'progress': {'operation': 'progress', 'required': ['episode_id', 'expected_version', 'payload', 'actor'], 'payload': {'state': 'Optional work state.', 'next_action': 'Optional complete sentence.', 'reason': 'Required explanation.'}, 'rules': 'Provide state or next_action. This preserves scope, autonomy, dependencies and evidence. Pass session_id when claiming agent work. Use plan for intentional scope changes; progress cannot waive completion checks. When Done is rejected only because the required outcome check is missing, the rejection starts that check and reports it under agent_check.'},
     'reconcile': {'operation': 'reconcile', 'required': ['receipt_id', 'resolution', 'reason', 'evidence'], 'resolutions': ['completed', 'failed', 'not_run', 'unknown'], 'evidence': 'Every resolution needs [{source_id, reason}] from inspecting actual effects. Record a source first. Unknown preserves uncertainty; it does not establish success or permit a retry.'},
+    'evidence': {'operation': 'evidence', 'required': ['receipt_ids'], 'rules': 'Pass 1 to 20 PostToolUse receipt IDs in the top level receipt_ids and an empty data object. Project Memory reads the output of each call from its session transcript and stores it only when its sha256 matches the receipt; a mismatch or a missing transcript entry refuses the whole request and stores nothing. Cite the returned [{source_id, reason}] as evidence on an outcome, so that a check can confirm a run, an artefact or an installed version. Calls without a PostToolUse receipt, such as calls the hooks did not observe, cannot be verified.'},
     'checkpoint': {'operation': 'checkpoint', 'required': ['prompt_ids', 'effect', 'reason'], 'optional': ['episode_id', 'plan_id', 'requirements', 'gap_ids'], 'effects': ['new_work', 'changed', 'unchanged', 'informational', 'deferred'], 'rules': 'Pass session_id. prompt_ids contains 1–20 observed user prompt receipt IDs including the newest prompt. Work assessments require episode_id and the current plan_id. New or changed work requires requirements: a list of complete conditions and exceptions. Changed intent requires a revised plan. Informational or deferred turns require a reason but no new episode. A checkpoint declares interpretation; it never establishes success, approves source instructions or reconciles uncertain effects.', 'bundling': 'Place these fields in data.checkpoint on a plan or record write; episode_id is inferred from that record. Both writes commit atomically.'},
     'agent_check': {'operation': 'review', 'required': ['episode_id'], 'optional': {'role': ['outcome', 'intent', 'recovery'], 'max_seconds': '30 to 900; default 300. A longer explicit review preserves the same criteria.', 'retry': 'Use true only to request a new check after inspecting the earlier result.'}, 'result': 'A read-only agent checks the current work. Read memory_get reviews and wait using project-memory review --wait CHECK_ID.'},
     'delegate': {'operation': 'delegate', 'required': ['episode_id'], 'optional': {'host': ['codex', 'claude'], 'max_seconds': '60 to 14400; default 1800.'}, 'rules': 'Pass session_id. The work item needs a current plan that is not done or cancelled, autonomy act granted by the user, and paths that limit which files may change. The project must be a git repository without uncommitted changes inside those paths. The worker runs in a separate worktree, and another host reviews its changes. Read memory_get agents with the work item id to follow the run.'},
@@ -697,6 +698,12 @@ def refuse_production_merge(memory):
                                              'prepared and waiting, and do not attempt the merge again.'})
 
 
+def write_evidence(call, memory, request_key, data, session_id, receipt_ids):
+    if data:
+        raise InvalidRecord('Pass the receipts in the top level receipt_ids and leave data empty.')
+    return call(memory, list(receipt_ids or []), request_key)
+
+
 def write_work_review(call, memory, request_key, data, session_id, receipt_ids):
     return queued_run(memory, call(memory, data.pop('run_id'), request_key=request_key, **data))
 
@@ -709,19 +716,20 @@ OPERATIONS = {
     'sync': ('Refresh captured Markdown documents.', Operation('documents:sync', key=False), 'sync'),
     'record': ('Append a record kind; decisions need evidence, uncertainty and alternatives.', Operation('core:Memory.record', special=write_record), 'record'),
     'reconcile': ('Resolve an uncertain tool receipt with evidence.', Operation('codex_host:reconcile'), 'reconcile'),
+    'evidence': ('Store tool output verified by receipt_ids.', Operation('sessions:receipt_evidence', special=write_evidence), 'evidence'),
     'approve_requirements': ('Append requirements the user explicitly approved.', Operation('direction:approve'), 'approve_requirements'),
     'plan': ('Create a work item and plan, or revise a plan at expected_version.', Operation('planning:save', session=True, first='work_plan'), 'plan'),
     'sprint': ('Create or revise a sprint.', Operation('planning:save', session=True, first='sprint'), 'sprint'),
     'progress': ('Change state or next_action with a reason, keeping scope.', Operation('planning:progress', session=True), 'progress'),
-    'checkpoint': ('Assess observed prompts; bundle as data.checkpoint on plan or record.', Operation('coverage:assess', session=True), 'checkpoint'),
+    'checkpoint': ('Assess observed prompts; bundle as data.checkpoint on a write.', Operation('coverage:assess', session=True), 'checkpoint'),
     'review': ('Request a read only agent check of a work item.', Operation('reviews:request', special=write_review), 'agent_check'),
     'link': ('Add a typed link between two ids, with a reason.', Operation('graph:link'), 'link'),
-    'component': ('Propose a component, such as a system, stakeholder or deliverable.', Operation('architecture:save_component'), 'component'),
+    'component': ('Propose a component: a system, stakeholder or deliverable.', Operation('architecture:save_component'), 'component'),
     'answer_kickoff': ('Record user answers to kickoff questions.', Operation('templates:answer_kickoff'), 'answer_kickoff'),
     'delegate': ('Run a work item with autonomy act and paths in a git worktree.', Operation('delegation:request_work', special=write_delegate), 'delegate'),
     'merge': ('Merge a delegated run after its work review passed.', Operation('delegation:merge', special=write_merge), 'merge'),
-    'request_work_review': ('Review a completed delegated run again after its review did not finish.', Operation('delegation:retry_review', special=write_work_review), 'request_work_review'),
-    'promote_rule': ('Propose a rule of this project as a rule of this machine, for the user to accept in the control panel.', Operation('machine:propose'), 'promote_rule'),
+    'request_work_review': ('Review a delegated run again after an unfinished review.', Operation('delegation:retry_review', special=write_work_review), 'request_work_review'),
+    'promote_rule': ('Propose a project rule as a machine rule, for the user to accept.', Operation('machine:propose'), 'promote_rule'),
     'hive': ('Open, join, log to or close a swarm of agents.', Operation('hive:session_write', session=True), 'hive'),
 }
 

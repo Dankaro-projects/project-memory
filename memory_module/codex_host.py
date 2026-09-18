@@ -494,6 +494,12 @@ def capture(memory, event, host='codex'):
         started = session_context(memory, session, compacted) + setup_context(memory, refreshed) + (' ' + scope if scope else '')
         from . import sessions
         try:
+            work = sessions.work_to_continue(memory, room=HOOK_CHARACTERS - len(started) - 1)
+        except (OSError, ValueError, InvalidRecord, Conflict, sqlite3.Error):
+            work = ''
+        if work:
+            started += ' ' + work
+        try:
             earlier = sessions.start_summary(memory, session, room=HOOK_CHARACTERS - len(started) - 1)
         except (OSError, ValueError, InvalidRecord, Conflict, sqlite3.Error):
             # The summary of earlier sessions helps a new session; a failure to build it must not stop the session.

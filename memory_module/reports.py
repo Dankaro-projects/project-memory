@@ -65,6 +65,10 @@ def validate_lesson_proposals(items):
                    item_message='A lesson proposal needs its basis, conditions and exceptions.')
 
 
+# needs_user marks a criterion that no evidence available to a machine can confirm, such as a judgement of the user.
+CHECK_RESULTS = ('met', 'unmet', 'unknown', 'needs_user')
+
+
 def report_schema(snapshot):
     """The review report schema for one snapshot, with the identifiers and the text budget of that check."""
     schema = json.loads(dumps(REPORT_SCHEMA))
@@ -83,7 +87,7 @@ def report_schema(snapshot):
     schema['properties']['summary']['maxLength'] = 600
     checks = schema['properties']['checks']
     checks['items']['properties']['evidence']['maxLength'] = evidence_limit
-    checks['items']['properties']['result']['enum'] = ['met','unmet','unknown']
+    checks['items']['properties']['result']['enum'] = list(CHECK_RESULTS)
     if snapshot.get('checklist'):
         checks['items']['properties']['criterion']['enum'] = [item['id'] for item in snapshot['checklist']]
         checks.update(minItems=len(snapshot['checklist']),maxItems=len(snapshot['checklist']))
@@ -115,8 +119,8 @@ def validate_report(report, checklist=None, constraints=None):
             list_message='The reviewer must provide explicit criterion checks.',
             item_message='Each check needs a criterion, evidence and result.')
     for item in report['checks']:
-        if item['result'] not in {'met','unmet','unknown'}:
-            raise InvalidRecord('A check result must be met, unmet or unknown.')
+        if item['result'] not in CHECK_RESULTS:
+            raise InvalidRecord('A check result must be met, unmet, unknown or needs_user.')
     if report['verdict']=='pass' and any(x['result']!='met' for x in report['checks']):
         raise InvalidRecord('A passing report cannot contain unmet or unknown checks.')
     if checklist is not None:

@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+A check can confirm a fact outside the repository. A release could not reach Done through a passing check, because a workflow run, a published artefact or an installed version lies outside the checked folder, and a receipt keeps only the hash of a tool result. The check of 0.6.0b5 ended uncertain for that reason. The new `evidence` operation takes the receipt IDs of completed tool calls, reads their output from the session transcript, and stores it only when its sha256 matches the receipt. A changed output, or a call with no result in the transcript, is refused and nothing is stored. The output is stored under the reserved source key `receipt-evidence:`, which an agent cannot write, and a check snapshot states which receipt verified it. Receipts still keep only hashes and sizes.
+
+A criterion that no machine can confirm goes to the user once. A check reports it as `needs_user`, the work item shows it under Needs your confirmation in the control panel, and the statement of the user is stored with user origin and read by the next check. The confirmation belongs to the text of the criterion and does not carry over when that text changes.
+
+A resume leads to the work to continue. The session start context named only the work items that earlier sessions touched, so a ready item planned as next was not named, and on 18 September 2026 the user had to point to it. The context now names up to three open items, in progress, in review or ready, with the most recent activity first, each with its ID, priority and next action.
+
+A finished check is reported once. The Stop hook repeated the notice of the same check result on every turn, because its key included the turn. The key now names the check and its state, so a new result is reported and an unchanged result is not.
+
 ## 0.6.0b5 (18 September 2026)
 
 A turn that only reads ends without an assessment. The Stop hook asked for a checkpoint after any tool call, so a question such as where the work stands cost an extra record. A tool call is now marked read only when it is captured: the read tools such as Read, Grep, Glob and ToolSearch, and shell commands made only of reading commands such as `ls`, `cat`, `grep`, `sed -n`, `git log`, `git status` and `git diff`. An output redirection, a command substitution, a here document, an in place edit, `find -delete` and any command outside the list make the call material, and a turn with a material call is assessed as before. Receipts captured before this change count as material.

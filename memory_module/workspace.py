@@ -18,7 +18,8 @@ from .shared import prior_result, run_summary, store_result
 
 KEY_REUSED = 'This action key was already used for different changes.'
 RECORD_OPERATIONS = ('plan', 'sprint', 'comment', 'requirements', 'lesson_review', 'allow_paths', 'link', 'component',
-                     'answer_kickoff', 'instructions', 'phase', 'reassess', 'session_flag', 'session_proposal')
+                     'answer_kickoff', 'instructions', 'phase', 'reassess', 'session_flag', 'session_proposal',
+                     'confirm_criterion')
 RUN_OPERATIONS = ('delegate', 'merge', 'discard', 'review', 'cancel_run', 'request_work_review', 'focus_check', 'focus_start',
                   'hive_post', 'hive_close', 'hive_purge', 'reconcile', 'reconcile_read_only')
 # Promotion actions write to the machine memory, which is a second database, so they run outside the
@@ -40,6 +41,7 @@ FIELDS = {
     'reassess': ({'decision_id', 'assessment', 'reason'}, {'outcome_id'}),
     'session_flag': ({'flag_id', 'status', 'reason'}, set()),
     'session_proposal': ({'proposal_id', 'status', 'reason'}, {'episode_id', 'expected_version'}),
+    'confirm_criterion': ({'episode_id', 'criterion', 'statement'}, set()),
     'reconcile': ({'receipt_id', 'resolution', 'reason'}, set()),
     'reconcile_read_only': ({'reason'}, set()),
     'delegate': ({'episode_id'}, {'host', 'max_seconds'}),
@@ -69,6 +71,7 @@ MESSAGES = {
     'reassess': 'Select the decision, the new assessment and the reason. The outcome you reviewed is optional.',
     'session_flag': 'Select the flagged message, confirm or dismiss it, and give the reason.',
     'session_proposal': 'Select the proposal, accept or reject it, and give the reason. Acceptance needs the work item and its current version.',
+    'confirm_criterion': 'Select the work item and the criterion, and write your confirmation.',
     'reconcile': 'Select the tool call, its resolution and the reason.',
     'reconcile_read_only': 'Write the reason for resolving the read-only calls.',
     'delegate': 'Select the work item to delegate. The host and time limit are optional.',
@@ -434,10 +437,17 @@ def session_proposal(memory, data, request_key):
                                     episode_id=data.get('episode_id'), expected_version=data.get('expected_version'))
 
 
+def confirm_criterion(memory, data, request_key):
+    """Confirm a criterion that the latest check could not confirm by any machine. Each criterion is offered once."""
+    from . import reviews
+    return reviews.confirm_criterion(memory, data['episode_id'], data['criterion'], data['statement'], request_key)
+
+
 RECORD_HANDLERS = {'plan': plan, 'sprint': sprint, 'comment': comment, 'requirements': requirements,
                    'lesson_review': lesson_review, 'allow_paths': allow_paths, 'link': link, 'component': component,
                    'answer_kickoff': answer_kickoff, 'instructions': instructions, 'phase': phase, 'reassess': reassess,
-                   'session_flag': session_flag, 'session_proposal': session_proposal}
+                   'session_flag': session_flag, 'session_proposal': session_proposal,
+                   'confirm_criterion': confirm_criterion}
 
 
 # Agent run actions.

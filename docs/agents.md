@@ -45,6 +45,16 @@ project-memory review --episode EPISODE_ID --role outcome --retry --max-seconds 
 
 The execution limit is 30 to 900 seconds and defaults to 300. Waiting defaults to 60 seconds and returns the current state when the check is still running; it never extends the execution limit and never cancels the reviewer. A retry reads current evidence, so it is not a replay of an identical input.
 
+### Facts outside the repository
+
+A workflow run, a published artefact or an installed version lies outside the checked folder, and a receipt keeps only the hash and size of a tool result. A check could therefore read such a fact only from the summary the implementer wrote, and it ended uncertain. The `evidence` operation of `memory_write` closes that gap. Name up to 20 receipts of completed tool calls in `receipt_ids` and leave `data` empty. Project Memory reads the output of each call from the transcript of its session and stores it only when the sha256 of that output matches the receipt. A mismatch, or a call whose transcript holds no result, refuses the whole request and stores nothing. The output is stored under the reserved source key `receipt-evidence:<receipt>`, which only Project Memory can write. Cite the returned sources as evidence on the outcome. A check snapshot then carries each such source with a `verification` field that names its receipt.
+
+Receipts still keep only hashes and sizes, and nothing is stored unless it is named as evidence. Only calls that the hooks observed have a receipt: in a Claude Code session this covers shell commands and not calls to MCP tools. Claude Code transcripts are verified through the `toolUseResult` field; for Codex a result is accepted only when one of its transcript fields matches the hash.
+
+Some criteria cannot be confirmed by any machine, such as an approval of wording. A check reports such a criterion as `needs_user`. The work item then shows it under Needs your confirmation in the control panel, and the Stop notice asks the assistant to refer it to you. Each criterion is offered once. Your statement is stored with user origin, and the next outcome check reads it as the evidence for that criterion. A confirmation belongs to the text of its criterion, so it does not carry over when the plan changes that text.
+
+A finished check is reported by the Stop hook once per result. A new turn does not repeat the notice, and a change in the state of the check reports it again.
+
 ## Delegated work
 
 Delegation runs a work item through a host that edits files, then has the result reviewed by another host before you merge it.
@@ -168,7 +178,7 @@ Every run keeps its input, its structured report, the host output and its errors
 
 A timed out or cancelled run keeps any valid report and provider counters it already received, but it cannot approve work. The states `execution_deadline`, `host_exit`, `host_error`, `invalid_report`, `worker_error`, `cancelled` and `host_unavailable` separate a termination from an actual verdict of changes required. A worker without a heartbeat for 30 seconds is shown as interrupted. Silence from a child process is observable but does not establish a lost connection, and nothing is retried automatically.
 
-Reviewer reports must address every numbered criterion and constraint exactly once, and missing proof must be reported as unknown. A reviewer may propose lessons. Those proposals are recorded as proposed lessons and still require your explicit acceptance.
+Reviewer reports must address every numbered criterion and constraint exactly once, and missing proof must be reported as unknown. A criterion that no machine can confirm is reported as `needs_user`, and a passing report cannot contain one. A reviewer may propose lessons. Those proposals are recorded as proposed lessons and still require your explicit acceptance.
 
 ## Boundaries
 

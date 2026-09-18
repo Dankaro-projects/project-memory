@@ -687,6 +687,19 @@
     },
     done: (result) => "The proposal is " + result.status + ".",
   });
+  // A criterion that no machine can confirm. The statement of the user is stored with user origin.
+  P.registerForm("confirm_criterion", { title: "Confirm the criterion", submitLabel: "Record my confirmation",
+    render(fields, context) {
+      fields.append(P.kv([["Criterion", context.criterion], ["Condition", context.condition]]),
+        reasonField("3", "Your confirmation", "Write what you checked and that the condition is met."),
+        hint("The next outcome check reads your statement as the evidence for this criterion."));
+    },
+    submit(values, context) {
+      need(values.reason, "Write your confirmation.");
+      return { operation: "confirm_criterion", data: { episode_id: context.episode_id, criterion: context.criterion, statement: values.reason } };
+    },
+    done: (result) => "Criterion " + result.criterion + " is confirmed. Request a new outcome check to use it.",
+  });
   // An unconfirmed tool call. The transcript suggestion is preselected; the user's choice and reason are recorded.
   P.registerForm("reconcile", { title: "Reconcile the tool call", submitLabel: "Record the resolution",
     render(fields, context) {

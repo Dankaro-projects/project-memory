@@ -26,7 +26,8 @@ DASH_PROMPT = '-starts with a dash'
 def _normalise(value, root):
     """Replace the machine specific paths of a command line with stable markers."""
     text = json.dumps(value, ensure_ascii=False)
-    replacements = ((str(install.SOURCE_ROOT), '<source>'), (str(root), '<root>'), (sys.executable, '<python>'))
+    # The interpreter goes first: it can lie inside the source folder, as .venv/bin/python does.
+    replacements = ((sys.executable, '<python>'), (str(install.SOURCE_ROOT), '<source>'), (str(root), '<root>'))
     for old, new in replacements:
         text = text.replace(json.dumps(old, ensure_ascii=False)[1:-1], new)
     return json.loads(text)
