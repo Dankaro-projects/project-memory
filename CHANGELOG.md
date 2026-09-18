@@ -8,6 +8,8 @@ A criterion that no machine can confirm goes to the user once. A check reports i
 
 A resume leads to the work to continue. The session start context named only the work items that earlier sessions touched, so a ready item planned as next was not named, and on 18 September 2026 the user had to point to it. The context now names up to three open items, in progress, in review or ready, with the most recent activity first, each with its ID, priority and next action.
 
+Work on a claimed item needs no extra records. A decision binding ends at the first outcome, even a partial one, so every later tool call counted as unassigned, and the Stop hook blocked a session with 14 such calls although all of them served the item the session had claimed. A tool call without a bound decision now names the in progress item that its session claimed and no longer counts as unassigned. The item is named in the receipt payload only, so check snapshots and their signatures do not change.
+
 A finished check is reported once. The Stop hook repeated the notice of the same check result on every turn, because its key included the turn. The key now names the check and its state, so a new result is reported and an unchanged result is not.
 
 ## 0.6.0b5 (18 September 2026)

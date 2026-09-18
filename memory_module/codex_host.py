@@ -350,6 +350,19 @@ def summary(value):
     return result
 
 
+def claimed_item(memory, session):
+    """The in progress work item whose current plan this session claimed, the most recent claim first, or None."""
+    rows = memory.db.execute("SELECT episode_id FROM events WHERE kind='work_plan' AND json_extract(payload,'$.session_id')=? "
+                             "GROUP BY episode_id ORDER BY max(seq) DESC LIMIT 20", (session,)).fetchall()
+    for row in rows:
+        plan = memory.db.execute("SELECT payload FROM events WHERE episode_id=? AND kind='work_plan' ORDER BY seq DESC LIMIT 1",
+                                 (row[0],)).fetchone()
+        current = json.loads(plan[0]) if plan else {}
+        if current.get('state') == 'in_progress' and current.get('session_id') == session:
+            return row[0]
+    return None
+
+
 def active_binding(memory, session):
     row=memory.db.execute("SELECT episode_id,decision_id FROM host_receipts WHERE session_id=? AND event_name='DecisionBound' ORDER BY rowid DESC LIMIT 1",(session,)).fetchone()
     if row and (memory.read(row['decision_id'])['replaced_by'] or
@@ -444,6 +457,11 @@ def capture(memory, event, host='codex'):
         if name=='Stop':payload['stop_hook_active']=bool(event.get('stop_hook_active'))
         if name == 'PostToolUse' and host_event == 'PostToolUseFailure': payload['failed'] = True
         if name == 'PreToolUse' and read_only(tool, event.get('tool_input')): payload['read_only'] = True
+        if name == 'PreToolUse' and not decision:
+            # Without a bound decision, for example after a partial outcome, the call belongs to the work the session
+            # claimed. It is named in the payload only: the episode_id column selects the receipts of a check snapshot.
+            owned = claimed_item(memory, session)
+            if owned: payload['work_item'] = owned
         key = [session,turn,name,tool_id,payload.get('source')]
         if name=='Stop':
             key.extend([payload.get('last_assistant_message',{}).get('sha256'),payload['stop_hook_active']])

@@ -48,7 +48,7 @@ def inspect(memory, session_id, limit=10, offset=0):
                                                   (session_id, limit, offset))]
     assessment = memory.db.execute("SELECT rowid,id,episode_id,payload FROM host_receipts WHERE session_id=? AND event_name='IntentAssessed' ORDER BY rowid DESC LIMIT 1", (session_id,)).fetchone()
     since = assessment['rowid'] if assessment else 0
-    unbound = memory.db.execute("SELECT count(*) FROM host_receipts t WHERE session_id=? AND event_name='PreToolUse' AND decision_id IS NULL AND rowid>? AND "+MATERIAL, (session_id, since)).fetchone()[0]
+    unbound = memory.db.execute("SELECT count(*) FROM host_receipts t WHERE session_id=? AND event_name='PreToolUse' AND decision_id IS NULL AND json_extract(payload,'$.work_item') IS NULL AND rowid>? AND "+MATERIAL, (session_id, since)).fetchone()[0]
     state = codex_host.status(memory, session_id, limit=limit, offset=offset)
     active = state['active']
     open_sql = '''FROM host_receipts b WHERE b.session_id=? AND b.event_name='DecisionBound'
