@@ -784,6 +784,9 @@ def evidence_manifest(snapshot, folder, readable=True):
             remaining -= used
             packet['execution'][group] = {**packet['execution'][group], **entry}
     packet['work_scope'] = next(r['payload'] for r in snapshot['records'] if r['kind']=='work_plan')
+    # Carried in the packet, not the prompt: the prompt is a command line argument, limited to 8,191 characters by cmd.exe.
+    packet['result_values'] = ('Use needs_user only for a criterion that no evidence available to any machine can confirm, such as an approval of the user. '
+                               'A criterion in user_confirmations is met on that statement. A source with a verification field holds tool output matched to its receipt hash.')
     packet['evidence_access'] = 'The files contain complete records. Read the sources and artifacts relevant to task criteria and applicable constraints. Conditions and exceptions remain authoritative; do not infer them from titles. Unrelated historical work does not require re-verification.' if readable else \
         'The files named beside this packet are outside the folder you may read, because this check runs in the worktree of its work. Every record and source is therefore carried in the packet itself, cut where it was too long and saying how many characters were left out. The git history of the checked folder is in checked_folder_history, because a linked worktree holds no readable history. Treat missing content as unknown, not as a failure of the work.'
     return packet
@@ -983,9 +986,6 @@ def execute(memory, run_id, timeout=None):
                    'This is a check of task acceptance and applicable constraints, not a general quality review or a reimplementation of the work. '
                    'The work can be code, documents, spreadsheets, presentations or workflow exports; judge each against its own criteria. '
                    'Use every checklist ID exactly once with result met, unmet, unknown or needs_user and cite evidence. ID fields contain only the ID, without condition text. Preserve all conditions and exceptions. '
-                   'Use needs_user only for a criterion that no evidence available to any machine can confirm, such as an approval or a judgement of the user; the user is then asked once. '
-                   'A criterion listed in user_confirmations is met on that statement of the user. '
-                   'A source with a verification field holds tool output that Project Memory matched to the hash of its host receipt; it can establish a run, an artefact or an installed version that lies outside the repository. '
                    'The work scope bounds the task; progress descriptions and the review gate are not extra deliverables. '
                    'Assess every project constraint once in constraint_checks: applicability applies, not_applicable or uncertain; '
                    'explain the reason and cite evidence for that mapping. For applies use result met, unmet or unknown; '
