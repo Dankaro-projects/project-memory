@@ -311,7 +311,8 @@ def task_snapshot(memory, episode, role, *, project, scope, intent_key='intent')
     return value
 
 
-def snapshot(memory, episode_id, role):
+def snapshot(memory, episode_id, role, *, tree=None):
+    """The evidence of a check and its signature. tree replaces the hash of the checked folder when given."""
     from .planning import latest
     config = configured(memory)
     if not config:
@@ -344,8 +345,9 @@ def snapshot(memory, episode_id, role):
         "SELECT id FROM host_receipts WHERE episode_id=? AND event_name IN ('PreToolUse','PostToolUse','Interrupt','Reconciled') ORDER BY rowid", (episode_id,))]
     folder = check_folder(config, plan)
     # The shared and cached signatures belong to the project folder; a worktree is hashed on its own.
-    tree = (getattr(memory,'_review_tree',None) or tree_signature(folder,cache=getattr(memory,'_review_tree_cache',None))) \
-        if folder == config['project'] else tree_signature(folder)
+    if tree is None:
+        tree = (getattr(memory,'_review_tree',None) or tree_signature(folder,cache=getattr(memory,'_review_tree_cache',None))) \
+            if folder == config['project'] else tree_signature(folder)
     value = {**task_snapshot(memory, ep, role, project=folder, scope=plan['scope']),
              'records': records, 'sources': sources, 'receipts': receipts, 'tree_signature': tree}
     signature=hashlib.sha256(dumps(value).encode()).hexdigest()
@@ -561,9 +563,35 @@ def current(memory, episode_id, role='outcome'):
         _, signature = snapshot(memory, episode_id, role)
         if signature != value['signature']:
             value['state'] = 'stale'
+            if run_state == 'pass' and files_only(memory, episode_id, role, value):
+                value['state'] = 'pass'
+                value['note'] = FILES_CHANGED_NOTE
     except (InvalidRecord, OSError, subprocess.SubprocessError) as exc:
         value['state'] = 'stale'; value['error'] = str(exc)
-    return {**{k: value[k] for k in ('id','role','state','report','error','updated_at')}, 'run_state':run_state}
+    result = {**{k: value[k] for k in ('id','role','state','report','error','updated_at')}, 'run_state':run_state}
+    if value.get('note'):
+        result['note'] = value['note']
+    return result
+
+
+FILES_CHANGED_NOTE = ('Project files changed after this check passed. The work is recorded as done and its evidence is '
+                      'unchanged, so the check still covers the work as it was completed; later changes are other work.')
+
+
+def files_only(memory, episode_id, role, run):
+    """True when finished work differs from its passing check only in the project files.
+
+    A check hashes the whole checked folder, so any later commit made every earlier check stale and returned finished
+    work to review. Once the work is recorded as done, its check keeps approving it while the records, sources and
+    receipts it read are unchanged. Work that is not yet done still needs a check of the current files.
+    """
+    from .planning import latest
+    plan = latest(memory, episode_id, 'work_plan')
+    stored = run.get('snapshot') or {}
+    if not plan or plan.get('state') != 'done' or not stored.get('tree_signature'):
+        return False
+    _, signature = snapshot(memory, episode_id, role, tree=stored['tree_signature'])
+    return signature == run['signature']
 
 
 def request(memory, episode_id, role='outcome', *, request_key, session_id='', retry=False, max_seconds=300):

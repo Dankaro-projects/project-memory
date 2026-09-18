@@ -62,6 +62,29 @@ class CoverageTests(unittest.TestCase):
         p=self.prompt('What does this file say?');self.tool();self.checkpoint(p)
         self.assertFalse(self.issues());self.assertEqual(hook(self.m,self.event('Stop')),{})
         self.assertEqual(self.m.db.execute('SELECT count(*) FROM episodes').fetchone()[0],0)
+    def test_a_turn_that_only_reads_needs_no_assessment(self):
+        self.prompt('Where did we leave off?')
+        self.capture('PreToolUse',tool_name='Read',tool_use_id='r1',tool_input={'file_path':'README.md'})
+        self.capture('PostToolUse',tool_name='Read',tool_use_id='r1',tool_response={'ok':True})
+        self.capture('PreToolUse',tool_name='Bash',tool_use_id='r2',tool_input={'command':'git log -5 --oneline && git status -sb | head -3'})
+        self.capture('PostToolUse',tool_name='Bash',tool_use_id='r2',tool_response={'exit_code':0})
+        self.assertFalse(self.issues());self.assertEqual(hook(self.m,self.event('Stop')),{})
+    def test_a_turn_that_may_change_something_still_needs_assessment(self):
+        for turn,command in enumerate(('git commit -m x','sed -i s/a/b/ f','cat a > b','python3 - <<EOF\nprint(1)\nEOF','echo $(touch x)','find . -delete')):
+            with self.subTest(command=command):
+                p=self.prompt('Change it.',turn_id=str(turn))
+                self.capture('PreToolUse',tool_name='Bash',tool_use_id=command,tool_input={'command':command},turn_id=str(turn))
+                self.capture('PostToolUse',tool_name='Bash',tool_use_id=command,tool_response={'exit_code':0},turn_id=str(turn))
+                self.assertEqual(self.issues(),{'intent_unassessed','activity_unassigned'})
+                self.checkpoint(p)
+    def test_the_read_only_classification_of_shell_commands(self):
+        read=['ls -la','cd /x && sed -n 1,20p a.py','grep -n "a>b" f | head','git -C /x log --oneline','git branch','git tag --sort=-creatordate','wc -l *.py 2>/dev/null | sort -n']
+        write=['git tag v1','git branch -D x','git diff --output=x','rm f','uv run pytest','sed --in-place s/a/b/ f','cat "unbalanced']
+        for command in read:self.assertTrue(codex_host.read_only('Bash',{'command':command}),command)
+        for command in write:self.assertFalse(codex_host.read_only('Bash',{'command':command}),command)
+        self.assertTrue(codex_host.read_only('exec_command',{'cmd':'git status'}))
+        self.assertTrue(codex_host.read_only('shell',{'command':['bash','-lc','ls']}))
+        self.assertFalse(codex_host.read_only('Edit',{'file_path':'a'}))
     def test_greeting_without_activity_needs_no_administration(self):
         self.prompt('Thank you.');self.assertFalse(self.issues());self.assertEqual(hook(self.m,self.event('Stop')),{})
     def test_bundled_checkpoint_plan_and_missing_outcome(self):

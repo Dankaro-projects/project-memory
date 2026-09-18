@@ -3,6 +3,7 @@ import argparse
 import hashlib
 import json
 import re
+import shlex
 import sqlite3
 import sys
 from pathlib import Path
@@ -39,6 +40,81 @@ HOOK_CHARACTERS = 2500
 RULE_CHARACTERS = 2000
 # The prompt text read for the keywords of a rule.
 PROMPT_CHARACTERS = 2000
+
+
+# Tools that only read. A turn whose tool calls are all read only needs no intent assessment.
+READ_TOOLS = {'Read', 'Grep', 'Glob', 'LS', 'NotebookRead', 'ToolSearch', 'WebSearch', 'WebFetch', 'TaskOutput',
+              'ListMcpResourcesTool', 'ReadMcpResourceTool', 'ReadMcpResourceDirTool', 'view_image'}
+SHELL_TOOLS = {'Bash', 'shell', 'exec_command', 'local_shell'}
+# Shell commands that only read. Any other command, an output redirection, a substitution or a here document makes
+# the call material, so an error in this list can only ask for an assessment that was not needed.
+READ_COMMANDS = {'cd', 'ls', 'cat', 'head', 'tail', 'wc', 'grep', 'rg', 'find', 'sed', 'sort', 'uniq', 'cut', 'tr',
+                 'echo', 'pwd', 'which', 'file', 'stat', 'du', 'diff', 'jq', 'tree', 'date', 'nl', 'basename',
+                 'dirname', 'realpath', 'true'}
+READ_GIT = {'log', 'status', 'diff', 'show', 'rev-parse', 'ls-files', 'blame', 'grep', 'describe', 'shortlog'}
+LISTING_GIT = {'tag', 'branch'}
+LISTING_CHANGES = {'-a', '-s', '-u', '-f', '-d', '-D', '-m', '-M', '-c', '-C', '--delete', '--force', '--move', '--copy',
+                   '--annotate', '--sign', '--message', '--set-upstream-to', '--unset-upstream', '--edit-description'}
+WRITE_OPTIONS = {'--in-place', '-delete', '-exec', '-execdir', '-ok', '-okdir', '-fprint', '-fprintf', '-fls', '--output'}
+HARMLESS_REDIRECTS = re.compile(r'(?<!\S)(?:[12&]?>\s*/dev/null|2>&1)(?=\s|$|[;&|])')
+
+
+def shell_command(tool_input):
+    """The command text of a shell tool call, or None."""
+    if not isinstance(tool_input, dict):
+        return None
+    command = tool_input.get('command', tool_input.get('cmd'))
+    if isinstance(command, list) and command and all(isinstance(part, str) for part in command):
+        if len(command) >= 3 and command[0].rsplit('/', 1)[-1] in {'bash', 'zsh', 'sh'} and command[-2] in {'-c', '-lc'}:
+            return command[-1]
+        return shlex.join(command)
+    return command if isinstance(command, str) else None
+
+
+def read_only(tool, tool_input):
+    """True when a tool call cannot change files, records or anything outside the session."""
+    if tool in READ_TOOLS:
+        return True
+    if tool not in SHELL_TOOLS:
+        return False
+    command = shell_command(tool_input)
+    if not command or '$(' in command or '`' in command or '<<' in command:
+        return False
+    try:
+        lexer = shlex.shlex(HARMLESS_REDIRECTS.sub(' ', command).replace('\n', ' ; '), posix=True, punctuation_chars=True)
+        lexer.whitespace_split = True
+        tokens = list(lexer)
+    except ValueError:
+        return False
+    segments, words = [], []
+    for token in tokens:
+        if token in {';', '&&', '||', '|'}:
+            segments.append(words)
+            words = []
+        elif token and set(token) <= set('();<>|&'):
+            return False
+        else:
+            words.append(token)
+    segments.append(words)
+    for words in filter(None, segments):
+        name = words[0].rsplit('/', 1)[-1]
+        options = words[1:]
+        if any(word.split('=')[0] in WRITE_OPTIONS for word in options):
+            return False
+        if name == 'git':
+            if options[:1] == ['-C']:
+                options = options[2:]
+            if not options:
+                return False
+            if options[0] in LISTING_GIT:
+                # git tag and git branch only list when they name nothing and change nothing.
+                if any(not word.startswith('-') or word.split('=')[0] in LISTING_CHANGES for word in options[1:]):
+                    return False
+            elif options[0] not in READ_GIT:
+                return False
+        elif name not in READ_COMMANDS or name == 'sed' and any(word.startswith('-i') for word in options):
+            return False
+    return True
 
 
 def initialize(memory):
@@ -367,6 +443,7 @@ def capture(memory, event, host='codex'):
         if host_event != name: payload['host_event'] = host_event
         if name=='Stop':payload['stop_hook_active']=bool(event.get('stop_hook_active'))
         if name == 'PostToolUse' and host_event == 'PostToolUseFailure': payload['failed'] = True
+        if name == 'PreToolUse' and read_only(tool, event.get('tool_input')): payload['read_only'] = True
         key = [session,turn,name,tool_id,payload.get('source')]
         if name=='Stop':
             key.extend([payload.get('last_assistant_message',{}).get('sha256'),payload['stop_hook_active']])

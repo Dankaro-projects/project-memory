@@ -356,11 +356,12 @@ def view_record(memory, request):
         result = codex_host.read_receipt(memory, rid)
     else:
         result = memory.read(rid)
-    if 'body_offset' not in args:
+    if 'body_offset' not in args and result.get('kind') != 'source':
         return result
     if result.get('kind') != 'source':
         raise InvalidRecord('Only source bodies support slices.')
-    position = args['body_offset']
+    # A source read without an offset carries the start of its body, so one call reads a short source whole.
+    position = args.get('body_offset', 0)
     if type(position) is not int or position < 0:
         raise InvalidRecord('body_offset must be nonnegative.')
     body = memory.read(rid, detail=True)['body']
@@ -371,11 +372,43 @@ def view_record(memory, request):
         return {**result, 'body': body[position:position + count], 'body_offset': position, 'next_offset': position + count,
                 'body_characters': len(body), 'body_more': position + count < len(body)}
 
+    if 'body_offset' not in args and size(sliced(0)) > request.budget:
+        return result
     bounded(sliced(0), request.budget)  # Count the actual serialized envelope, including escaping.
     low = largest(sliced, 0, min(len(body) - position, request.budget), request.budget)
     if low == 0 and position < len(body):
+        if 'body_offset' not in args:
+            return sliced(0)
         raise BudgetTooSmall('Source metadata needs a larger budget.')
     return sliced(low)
+
+
+def view_metrics(memory, request):
+    """Totals over every group first, then the groups with the most decisions, as many as the budget holds.
+
+    There is one group per task type, criterion, model, subject and condition, so the complete list grows with the
+    project and soon exceeds any budget. The totals stay complete; the groups are paged.
+    """
+    found = memory.metrics()
+    groups = sorted(found['groups'], key=lambda group: -group['decisions'])
+    counted = ('decisions', 'assessed', 'good', 'bad', 'pending', 'unknown', 'not_acted', 'major_bad')
+    totals = {key: sum(group[key] for group in groups) for key in counted}
+    totals['bad_outcome_rate'] = totals['bad'] / totals['assessed'] if totals['assessed'] else None
+    totals['completion'] = {key: sum(group['completion'][key] for group in groups) for key in groups[0]['completion']} if groups else {}
+    failures = {}
+    for group in groups:
+        for failure, count in group['failure_types'].items():
+            failures[failure] = failures.get(failure, 0) + count
+    totals['failure_types'] = failures
+    page = groups[request.offset:request.offset + request.limit]
+
+    def build(count):
+        return {'project': found['project'], 'totals': totals, 'episodes': found['episodes'], 'groups': page[:count],
+                'groups_total': len(groups), 'offset': request.offset, 'next_offset': request.offset + count,
+                'more': request.offset + count < len(groups), 'meaning': found['meaning'],
+                'note': 'Totals cover every group. Groups are ordered by their number of decisions; read more with offset.'}
+
+    return build(largest(build, 0, len(page), request.budget))
 
 
 def view_records(memory, request):
@@ -538,7 +571,7 @@ VIEWS = {
     'lineage': ('Evidence and revisions of one record, paged.', lambda memory, request: memory.lineage(request.id, limit=request.limit, offset=request.offset)),
     'signals': ('Records whose evidence needs attention.', lambda memory, request: memory.signals(limit=request.limit, offset=request.offset)),
     'schema': ('Write fields of the operation or record kind named by id.', lambda memory, request: schema(request.id)),
-    'metrics': ('Outcome and cost totals.', lambda memory, request: memory.metrics()),
+    'metrics': ('Outcome and cost totals.', view_metrics),
     'direction': ('Requirement revisions and approval pointers.', lambda memory, request: shrink(lambda limit: module('direction').overview(memory, limit, request.offset), request.limit, request.budget)),
     'requirements': ('Requirement text, current or at version, paged.', lambda memory, request: shrink(lambda limit: module('direction').items(memory, limit, request.offset, request.args.get('version')), request.limit, request.budget)),
     'health': ('Store health, including an empty requirements baseline.', lambda memory, request: module('health').inspect(memory)),

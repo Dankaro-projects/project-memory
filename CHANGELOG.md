@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+A turn that only reads ends without an assessment. The Stop hook asked for a checkpoint after any tool call, so a question such as where the work stands cost an extra record. A tool call is now marked read only when it is captured: the read tools such as Read, Grep, Glob and ToolSearch, and shell commands made only of reading commands such as `ls`, `cat`, `grep`, `sed -n`, `git log`, `git status` and `git diff`. An output redirection, a command substitution, a here document, an in place edit, `find -delete` and any command outside the list make the call material, and a turn with a material call is assessed as before. Receipts captured before this change count as material.
+
+Finished work stays finished when other work changes the project. A check signs the whole checked folder, so any later commit made every earlier passing check stale and returned finished work to review. On the board of this project, four finished items had returned to review this way. A passing check of work recorded as done now stays valid while the records, sources and receipts it read are unchanged, and it carries a note that project files changed afterwards. Changed evidence still makes the check stale, and work that is not done still needs a check of its current files.
+
+A session digest counts the files its commits changed. The digest counted only files named by an edit tool, so a session that changed files through the shell reported none: the session that prepared 0.6.0b4 reported 0 files changed although its commits changed 16. The digest now adds the files of the commits made in the time of the session, and its summary states the number of commits.
+
+A source reads in one call. The record view returned the metadata of a source without its text unless `body_offset` was given, although the session start context says to read a digest with that view. It now carries the start of the text that fits the budget, with `body_more` and `next_offset` for the rest.
+
+The metrics view pages its groups. There is one group per task type and criterion, so the complete result grew with the project, and on this project it needed 31,620 characters and was refused. The view now returns totals over every group first, then the groups with the most decisions that fit the budget, with `groups_total`, `more` and `next_offset`.
+
 ## 0.6.0b4 (18 September 2026)
 
 The release states its own version. Version 0.6.0b3 was published with the version constant in `memory_module/__init__.py` left at `0.6.0b2`, so the tool reported a version it was not, and the installer, which builds its wheel URL from that constant, pointed at the earlier wheel. The plugin metadata, the wheel URLs in the plugin files and the install commands in the documentation were left behind in the same way. Every version location named in `docs/releasing.md` is raised in this release. No product code differs from 0.6.0b3.

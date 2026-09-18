@@ -2,6 +2,9 @@
 from . import codex_host, shared
 from .core import InvalidRecord, Conflict, _text, _digest
 
+# A tool call that may change something. A call marked read only when it was captured needs no assessment.
+MATERIAL = "coalesce(json_extract(t.payload,'$.read_only'),0)=0"
+
 
 def sessions(memory, limit=10, offset=0):
     if type(limit) is not int or not 1 <= limit <= 100 or type(offset) is not int or offset < 0:
@@ -37,7 +40,7 @@ def inspect(memory, session_id, limit=10, offset=0):
       AND NOT EXISTS (SELECT 1 FROM host_receipts a, json_each(a.payload,'$.prompt_ids') j
         WHERE a.session_id=p.session_id AND a.event_name='IntentAssessed' AND j.value=p.id)
       AND (p.decision_id IS NOT NULL OR EXISTS (SELECT 1 FROM host_receipts t
-        WHERE t.session_id=p.session_id AND t.rowid>p.rowid AND t.event_name IN ('PreToolUse','DecisionBound')
+        WHERE t.session_id=p.session_id AND t.rowid>p.rowid AND (t.event_name='DecisionBound' OR t.event_name='PreToolUse' AND '''+MATERIAL+''')
         AND NOT EXISTS (SELECT 1 FROM host_receipts n WHERE n.session_id=p.session_id
           AND n.event_name='UserPromptSubmit' AND n.rowid>p.rowid AND n.rowid<t.rowid)))'''
     total = memory.db.execute('SELECT count(*) '+pending, (session_id,)).fetchone()[0]
@@ -45,7 +48,7 @@ def inspect(memory, session_id, limit=10, offset=0):
                                                   (session_id, limit, offset))]
     assessment = memory.db.execute("SELECT rowid,id,episode_id,payload FROM host_receipts WHERE session_id=? AND event_name='IntentAssessed' ORDER BY rowid DESC LIMIT 1", (session_id,)).fetchone()
     since = assessment['rowid'] if assessment else 0
-    unbound = memory.db.execute("SELECT count(*) FROM host_receipts WHERE session_id=? AND event_name='PreToolUse' AND decision_id IS NULL AND rowid>?", (session_id, since)).fetchone()[0]
+    unbound = memory.db.execute("SELECT count(*) FROM host_receipts t WHERE session_id=? AND event_name='PreToolUse' AND decision_id IS NULL AND rowid>? AND "+MATERIAL, (session_id, since)).fetchone()[0]
     state = codex_host.status(memory, session_id, limit=limit, offset=offset)
     active = state['active']
     open_sql = '''FROM host_receipts b WHERE b.session_id=? AND b.event_name='DecisionBound'

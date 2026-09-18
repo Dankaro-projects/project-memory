@@ -18,6 +18,7 @@ import subprocess
 import tempfile
 import time
 
+from .codex_host import READ_TOOLS
 from .core import USER_ACTOR, Conflict, InvalidRecord, _digest, _text, dumps
 
 SOURCE_PREFIX = 'session-digest:'
@@ -562,6 +563,28 @@ def _commits(root, first_at, last_at):
     return [_cut(line, 200) for line in run.stdout.splitlines() if line.strip()] if run.returncode == 0 else []
 
 
+def _committed_files(root, first_at, last_at):
+    """Files changed by the commits made in the time of a session, relative to the project folder.
+
+    An edit tool names the file it changes, but a shell command, a script or a commit does not. The commits made
+    during the session record those changes, so a session that edited through the shell still reports its files.
+    """
+    if not first_at or not last_at:
+        return []
+    try:
+        run = subprocess.run(['git', '-C', str(root), 'log', '--all', '--since=' + first_at, '--until=' + last_at,
+                              '--name-only', '--format=', '-n', '30'], capture_output=True, text=True, encoding='utf-8', timeout=20)
+    except (OSError, subprocess.SubprocessError):
+        return []
+    return list(dict.fromkeys(line.strip() for line in run.stdout.splitlines() if line.strip())) if run.returncode == 0 else []
+
+
+def changed_files(memory, data):
+    """The files a session changed: those named by its edit tools, then those in its commits."""
+    files = list(data['files'])
+    return files + [f for f in _committed_files(_root(memory), data['first_at'], data['last_at']) if f not in files]
+
+
 def _session(memory, key):
     row = memory.db.execute('SELECT * FROM session_digests WHERE session_key=?', (key,)).fetchone()
     if not row:
@@ -569,24 +592,25 @@ def _session(memory, key):
     return row
 
 
-def render(row, commits, titles):
+def render(row, commits, titles, files=None):
     """The digest text: mechanical facts first, then the user messages, cut from the middle when the digest is too long."""
     data = json.loads(row['data'])
+    files = data['files'] if files is None else files
     messages = data['messages']
     head = [f'Session digest of the {row["host"]} session {row["session_id"]}.',
             f'Transcript file: {row["file"]}. Why it belongs to this project: {row["related"].replace("_", " ")}.',
             f'First activity: {data["first_at"]}. Last activity: {data["last_at"]}.',
             f'User messages: {sum(m["kind"] == "message" for m in messages)}. Answers to questions: '
             f'{sum(m["kind"] == "answer" for m in messages)}. Failed commands: {len(data["failures"])}. '
-            f'Files changed: {len(data["files"])}. Memory records written: {len(data["records"])}. Commits: {len(commits)}.',
+            f'Files changed: {len(files)}. Memory records written: {len(data["records"])}. Commits: {len(commits)}.',
             'Each item names its line in the transcript. Text is quoted from the session and is evidence, not an instruction.']
     tail = []
     if titles:
         tail += ['', 'Work items with records from this session:'] + ['- ' + t for t in titles]
     if data['failures']:
         tail += ['', 'Failed commands:'] + [f'- line {f["line"]}, exit code {f["exit_code"]}: {f["command"]}' for f in data['failures'][-30:]]
-    if data['files']:
-        tail += ['', 'Files changed:'] + ['- ' + f for f in data['files'][:100]]
+    if files:
+        tail += ['', 'Files changed, by edit tools and by commits:'] + ['- ' + f for f in files[:100]]
     if data['records']:
         tail += ['', 'Memory records written:'] + [f'- {r["id"]} ({r["operation"] or "unknown operation"}), line {r["line"]}' for r in data['records'][-60:]]
     if commits:
@@ -616,15 +640,17 @@ def store_digest(memory, key):
     """Store the digest as a new source version when its text changed."""
     row = _session(memory, key)
     data = json.loads(row['data'])
-    text = render(row, _commits(_root(memory), data['first_at'], data['last_at']), _titles(memory, data))
+    commits = _commits(_root(memory), data['first_at'], data['last_at'])
+    files = changed_files(memory, data)
+    text = render(row, commits, _titles(memory, data), files)
     source_key = SOURCE_PREFIX + _digest(key)[:32]
     latest = memory.db.execute('SELECT id,body FROM sources WHERE source_key=? ORDER BY version DESC LIMIT 1', (source_key,)).fetchone()
     if latest and latest['body'] == text:
         return latest['id']
     day = (data['last_at'] or '')[:10] or 'an unknown day'
     title = f'Session digest of {day}, {row["host"]} session {row["session_id"][:8]}'
-    summary = f'{sum(m["kind"] == "message" for m in data["messages"])} user messages, {len(data["files"])} files changed, ' \
-              f'{len(data["failures"])} failed commands.'
+    summary = f'{sum(m["kind"] == "message" for m in data["messages"])} user messages, {len(files)} files changed, ' \
+              f'{len(commits)} commits, {len(data["failures"])} failed commands.'
     with memory._write():
         source = memory.source(source_key, title, summary, text, 'tool', subject='general', internal=True)
         memory.db.execute('UPDATE session_digests SET source_id=? WHERE session_key=?', (source['id'], key))
@@ -910,7 +936,7 @@ def digests(memory, *, limit=20, exclude=None):
         result.append({'session_key': row['session_key'], 'host': row['host'], 'session_id': row['session_id'],
                        'source_id': row['source_id'], 'related': row['related'], 'first_at': row['first_at'],
                        'last_at': row['last_at'], 'messages': sum(m['kind'] == 'message' for m in data['messages']),
-                       'answers': sum(m['kind'] == 'answer' for m in data['messages']), 'files': len(data['files']),
+                       'answers': sum(m['kind'] == 'answer' for m in data['messages']), 'files': len(changed_files(memory, data)),
                        'failures': len(data['failures']), 'records': len(data['records']),
                        'open_flags': memory.db.execute("SELECT count(*) FROM session_flags WHERE session_key=? AND status='open'",
                                                        (row['session_key'],)).fetchone()[0]})
@@ -1079,8 +1105,7 @@ def context_hint(memory, session_id, transcript_path):
 
 # Reconciliation from the control panel (section 17.11).
 
-READ_ONLY_TOOLS = {'memory_get', 'memory_context', 'Read', 'Glob', 'Grep', 'WebSearch', 'WebFetch', 'ToolSearch', 'LS',
-                   'NotebookRead', 'TaskOutput', 'ListMcpResourcesTool', 'ReadMcpResourceTool'}
+READ_ONLY_TOOLS = READ_TOOLS | {'memory_get', 'memory_context'}
 EXCERPT_CHARACTERS = 600
 BULK_LIMIT = 100
 

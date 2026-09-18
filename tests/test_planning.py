@@ -231,6 +231,32 @@ class PlanningTests(unittest.TestCase):
                 with self.assertRaises(InvalidRecord) as caught:self.revise(work,state='done')
                 self.assertEqual(caught.exception.details['next_step']['action'],action)
 
+    def test_finished_work_keeps_its_passing_check_when_only_project_files_change(self):
+        from memory_module import reviews
+        reviews.configure(self.m,self.root,'codex')
+        work=self.work();self.complete(work);ep=work['episode_id']
+        run=reviews.request(self.m,ep,request_key=self.key())
+        with self.m._write():self.m.db.execute("UPDATE review_runs SET state='pass' WHERE id=?",(run['id'],))
+        self.revise(work,state='done')
+        (self.root/'later.txt').write_text('Other work changed the project after this item was done.')
+        found=card(self.m,ep)
+        self.assertEqual(found['state'],'done')
+        self.assertEqual(found['agent_check']['state'],'pass')
+        self.assertIn('Project files changed',found['agent_check']['note'])
+        # Changed evidence still makes the check stale, and the finished work returns to review.
+        self.m.source('user','Scope','Revised scope','The contract now needs a fresh assessment.','user')
+        found=card(self.m,ep)
+        self.assertEqual((found['state'],found['agent_check']['state']),('review','stale'))
+
+    def test_unfinished_work_needs_a_check_of_the_current_files(self):
+        from memory_module import reviews
+        reviews.configure(self.m,self.root,'codex')
+        work=self.work(state='review');self.complete(work);ep=work['episode_id']
+        run=reviews.request(self.m,ep,request_key=self.key())
+        with self.m._write():self.m.db.execute("UPDATE review_runs SET state='pass' WHERE id=?",(run['id'],))
+        (self.root/'later.txt').write_text('The implementation changed after review.')
+        self.assertEqual(card(self.m,ep)['agent_check']['state'],'stale')
+
     def test_completion_error_explains_missing_and_partial_outcomes(self):
         for completion in (None,'partial'):
             with self.subTest(completion=completion):

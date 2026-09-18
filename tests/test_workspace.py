@@ -69,7 +69,11 @@ class WorkspaceTests(unittest.TestCase):
         self.assertEqual(reviews.current(self.m,ep)['state'],'pass')
         action(self.m,'plan',self.update(state='done'),'done')
         self.assertEqual(card(self.m,ep)['state'],'done')
+        # Finished work keeps its passing check when only project files change; changed evidence makes it stale.
         (self.root/'parser.py').write_text('changed = True\n')
+        self.assertEqual(reviews.current(self.m,ep)['state'],'pass')
+        self.assertEqual(card(self.m,ep)['state'],'done')
+        self.m.source('test','Actual parser result','The result was measured again.','The fixture result changed.','tool',subject='code')
         self.assertEqual(reviews.current(self.m,ep)['state'],'stale')
         self.assertEqual(card(self.m,ep)['state'],'review')
         self.assertEqual(reviews.read(self.m,run['id'])['state'],'pass')
