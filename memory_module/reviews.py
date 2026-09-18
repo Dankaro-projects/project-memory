@@ -384,6 +384,73 @@ def working_tree(folder):
     return value
 
 
+# The history given to a reviewer that cannot read it, and the evidence inlined when its files are unreadable.
+CHECKED_FOLDER_COMMITS = 10
+CHECKED_FOLDER_DETAILED = 5
+CHECKED_FOLDER_PATHS = 200
+EVIDENCE_INLINE_CHARACTERS = 20000
+EVIDENCE_INLINE_TOTAL = 150000
+
+
+def folder_is_readable(folder, project):
+    """True when the reviewer, whose file access is the checked folder, can open the run folder."""
+    try:
+        return Path(folder).resolve().is_relative_to(Path(project).resolve())
+    except (OSError, ValueError):
+        return False
+
+
+def folder_history(folder):
+    """The commits of the checked folder, for a reviewer that cannot read the git history itself.
+
+    A linked worktree holds a .git file that points into the main repository, so the reflog a check reads in the
+    project folder is unreachable there, and the reviewer has no tool that runs git. This is read when the check
+    is requested and stays outside the snapshot signature.
+    """
+    def read(*arguments):
+        try:
+            result = git(folder, *arguments, check=False, timeout=10)
+        except (InvalidRecord, OSError, subprocess.SubprocessError):
+            return None
+        return result.stdout.strip() if result.returncode == 0 else None
+
+    head = read('rev-parse', 'HEAD')
+    value = {'read': bool(head), 'head': head,
+             'meaning': 'The commits of the checked folder, read when this check was requested. A reviewer working '
+                        'in a linked worktree cannot read the git history itself, because the .git entry there is a '
+                        'file pointing into the main repository.'}
+    if not head:
+        return value
+    remote = read('branch', '-r', '--contains', head) or ''
+    references = [line.strip().lstrip('* ') for line in remote.splitlines() if line.strip()]
+    value['head_on_a_remote'] = bool(references)
+    value['remote_references'] = references[:CHECKED_FOLDER_COMMITS]
+    commits = []
+    for line in (read('log', '-n', str(CHECKED_FOLDER_COMMITS), '--format=%H%x1f%s%x1f%aI') or '').splitlines():
+        parts = line.split('\x1f')
+        if len(parts) != 3:
+            continue
+        entry = {'commit': parts[0], 'subject': parts[1], 'date': parts[2]}
+        if len(commits) < CHECKED_FOLDER_DETAILED:
+            stat = read('show', '--stat=' + str(CHECKED_FOLDER_PATHS), '--format=', parts[0]) or ''
+            entry['changed'] = [row.strip() for row in stat.splitlines() if row.strip()][:CHECKED_FOLDER_PATHS]
+        commits.append(entry)
+    value['commits'] = commits
+    return value
+
+
+def inline_record(record, remaining):
+    """One record for a packet whose files the reviewer cannot read, with what was left out stated."""
+    body = dumps(record)
+    if len(body) <= min(EVIDENCE_INLINE_CHARACTERS, remaining):
+        return record, len(body)
+    summary = {key: value for key, value in record.items() if key in SUMMARY_FIELDS}
+    room = max(0, min(EVIDENCE_INLINE_CHARACTERS, remaining))
+    return {**summary, 'characters': len(body), 'characters_omitted': len(body) - room,
+            'partial_content': body[:room],
+            'note': 'This record was cut to fit the packet. Its file is not readable from the checked folder.'}, room
+
+
 def snapshot_notes(snapshot):
     """What a reviewer has to be told about evidence that a stored snapshot does not carry.
 
@@ -507,6 +574,7 @@ def request(memory, episode_id, role='outcome', *, request_key, session_id='', r
     value['execution_limit_seconds']=max_seconds
     # Outside the signature: the requesting turn changes with every tool call, and staleness follows the evidence.
     value['requesting_turn'] = requesting_turn(memory, session_id, value['project'])
+    value['checked_folder_history'] = folder_history(value['project'])
     config = configured(memory)
     ensure_run_columns(memory)
     with memory._write():
@@ -578,20 +646,35 @@ def review_evidence(snapshot, folder):
         'meaning':'Counts and tool-return fields are mechanical observations, not proof of a successful outcome. Inspect individual archived receipts when a criterion requires them; every original receipt is preserved.'}}
 
 
-def evidence_manifest(snapshot, folder):
+SUMMARY_FIELDS = {'id','kind','title','source_key','version','status','role','state'}
+
+
+def evidence_manifest(snapshot, folder, readable=True):
+    """The packet a reviewer receives, with its evidence written beside it.
+
+    readable says whether the reviewer can open that folder. A check runs in the worktree of its work, and the
+    run folder belongs to the project database, so a work item with a worktree outside the project leaves every
+    file unreadable. The content is then carried in the packet itself, bounded, instead of named by a path.
+    """
     evidence = review_evidence(snapshot, folder)
     (folder/'context.json').write_text(dumps(evidence), encoding='utf-8')
     packet = {k:v for k,v in evidence.items() if k not in {'records','sources','execution','previous_checks'}}
+    remaining = EVIDENCE_INLINE_TOTAL
     for group in ('records','sources','previous_checks'):
         packet[group] = []
         for i,record in enumerate(evidence.get(group,[])):
             body = dumps(record)
             path = folder/f'{group}-{i+1}.json'
             path.write_text(body, encoding='utf-8')
+            if not readable:
+                entry, used = inline_record(record, remaining)
+                remaining -= used
+                packet[group].append(entry)
+                continue
             if group=='records' and len(body)<=3000:
                 packet[group].append(record)
                 continue
-            summary = {k:v for k,v in record.items() if k in {'id','kind','title','source_key','version','status','role','state'}}
+            summary = {k:v for k,v in record.items() if k in SUMMARY_FIELDS}
             packet[group].append({**summary, 'file':str(path), 'characters':len(body)})
     execution = evidence['execution']
     packet['execution'] = {k:v for k,v in execution.items() if k not in {'unconfirmed','reported_failures','interruptions_and_reconciliations'}}
@@ -599,8 +682,13 @@ def evidence_manifest(snapshot, folder):
         path = folder/(group+'.json')
         path.write_text(dumps(execution[group]), encoding='utf-8')
         packet['execution'][group] = {'count':len(execution[group]), 'file':str(path)}
+        if not readable:
+            entry, used = inline_record({'entries':execution[group]}, remaining)
+            remaining -= used
+            packet['execution'][group] = {**packet['execution'][group], **entry}
     packet['work_scope'] = next(r['payload'] for r in snapshot['records'] if r['kind']=='work_plan')
-    packet['evidence_access'] = 'The files contain complete records. Read the sources and artifacts relevant to task criteria and applicable constraints. Conditions and exceptions remain authoritative; do not infer them from titles. Unrelated historical work does not require re-verification.'
+    packet['evidence_access'] = 'The files contain complete records. Read the sources and artifacts relevant to task criteria and applicable constraints. Conditions and exceptions remain authoritative; do not infer them from titles. Unrelated historical work does not require re-verification.' if readable else \
+        'The files named beside this packet are outside the folder you may read, because this check runs in the worktree of its work. Every record and source is therefore carried in the packet itself, cut where it was too long and saying how many characters were left out. The git history of the checked folder is in checked_folder_history, because a linked worktree holds no readable history. Treat missing content as unknown, not as a failure of the work.'
     return packet
 
 
@@ -810,7 +898,7 @@ def execute(memory, run_id, timeout=None):
         prompt += schema['description'] + '\n'
         prompt += ''.join(snapshot_notes(run['snapshot']))
         prompt += f'The hard deadline is {deadline.isoformat()} ({timeout} seconds total). Reserve the final {min(30,timeout/4):g} seconds to return the report, using unknown for unresolved checks.\n'
-        evidence = evidence_manifest(run['snapshot'],folder)
+        evidence = evidence_manifest(run['snapshot'],folder,readable=folder_is_readable(folder,run['snapshot']['project']))
         packet = prompt+dumps(evidence)
         (folder/'input.json').write_text(dumps(run['snapshot']), encoding='utf-8')
         (folder/'prompt.txt').write_text(packet if hosts.profile(run['host']).packet_in_input else dumps(evidence), encoding='utf-8')
