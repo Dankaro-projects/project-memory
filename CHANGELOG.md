@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.0b4 (18 September 2026)
+
+The release states its own version. Version 0.6.0b3 was published with the version constant in `memory_module/__init__.py` left at `0.6.0b2`, so the tool reported a version it was not, and the installer, which builds its wheel URL from that constant, pointed at the earlier wheel. The plugin metadata, the wheel URLs in the plugin files and the install commands in the documentation were left behind in the same way. Every version location named in `docs/releasing.md` is raised in this release. No product code differs from 0.6.0b3.
+
 ## 0.6.0b3 (18 September 2026)
 
 A check can see the turn that asked for it. The snapshot of a requested check carries the receipts of the requesting session, with their event names, tool names, turn identifiers and times, and the uncommitted state of the checked folder. Before this, a criterion such as whether the requesting turn changed any code could not be answered at all, because the receipts of a check belong to the work under review and no state of the working tree was recorded, and three checks in a row returned such conditions as unknown. The new evidence is attached after the snapshot signature is computed, so reading it never makes a check stale. `project-memory review` accepts `--session`, which names the session that requests the check, and a request without it says that no tool calls of a requesting session are recorded.
