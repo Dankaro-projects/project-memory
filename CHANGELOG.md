@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.6.0b5 (18 September 2026)
 
 A turn that only reads ends without an assessment. The Stop hook asked for a checkpoint after any tool call, so a question such as where the work stands cost an extra record. A tool call is now marked read only when it is captured: the read tools such as Read, Grep, Glob and ToolSearch, and shell commands made only of reading commands such as `ls`, `cat`, `grep`, `sed -n`, `git log`, `git status` and `git diff`. An output redirection, a command substitution, a here document, an in place edit, `find -delete` and any command outside the list make the call material, and a turn with a material call is assessed as before. Receipts captured before this change count as material.
 
