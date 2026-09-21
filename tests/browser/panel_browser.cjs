@@ -12,7 +12,9 @@ const { pathToFileURL } = require("node:url");
 
 const ROOT = path.resolve(__dirname, "../..");
 const PYTHON = process.env.MEMORY_PYTHON || "python";
-const RAIL = ["Now", "Plan", "Work", "Architecture", "Dependencies", "Decisions", "Learning", "Agents", "Machine", "Hive", "Usage", "Sessions", "Records", "Requirements"];
+const RAIL = ["Now", "Plan", "Work", "Sessions", "Learning", "Decisions", "Records", "Requirements", "Architecture", "Dependencies", "Agents", "Machine", "Hive", "Usage"];
+// The sizes at which the fixed frame is measured: a low wide window, a common laptop window and a phone.
+const FRAMES = [[1600, 640], [1440, 900], [390, 800]];
 // nodes is the number of items the architecture graph shows before any filter or toggle is changed.
 const KINDS = {
   product: { template: "Software product template", architecture: "Components and packages", items: /2 code components/, nodes: 3 },
@@ -67,8 +69,16 @@ async function go(page, hash) {
 async function noOverflow(page, width, label) {
   await page.setViewportSize({ width, height: 900 });
   await page.waitForTimeout(250);
-  const size = await page.evaluate(() => [document.documentElement.scrollWidth, document.documentElement.clientWidth]);
-  assert.ok(size[0] <= size[1], `${label} overflows at ${width} pixels: ${size}`);
+  // The view scrolls inside #main, so a view that is too wide shows there and not on the page.
+  const size = await page.evaluate(() => { const main = document.getElementById("main");
+    return [document.documentElement.scrollWidth, document.documentElement.clientWidth, main.scrollWidth, main.clientWidth]; });
+  assert.ok(size[0] <= size[1] && size[2] <= size[3], `${label} overflows at ${width} pixels: ${size}`);
+}
+// The window never scrolls: the page is as high as the window, and a scroll request moves nothing.
+async function fixedFrame(page, label) {
+  const size = await page.evaluate(() => { window.scrollTo(0, 5000); const moved = window.scrollY; window.scrollTo(0, 0);
+    return [document.documentElement.scrollHeight, document.documentElement.clientHeight, moved]; });
+  assert.ok(size[0] <= size[1] && size[2] === 0, `${label} scrolls the page: ${size}`);
 }
 const text = (page, selector) => page.locator(selector).first().innerText();
 const field = (page, name) => page.locator(`#form-fields [name="${name}"]`);
@@ -77,9 +87,79 @@ const savedToast = async (page, pattern) => {
   assert.match(await page.locator(".toast").last().textContent(), pattern);
 };
 
+// The fixed frame shell: the rail with its groups, counts and foot, the header row and the project activity.
+async function shell(page, kind) {
+  assert.deepEqual(await page.locator("#nav h2, #nav summary > span:not(.nav-count)").allTextContents(), ["Work", "Decide", "Look up", "More views"]);
+  assert.equal(await page.locator(".nav-link svg.icon use").count(), RAIL.length);
+  const symbols = await page.evaluate(() => [...document.querySelectorAll(".nav-link use")].filter((use) => !document.getElementById(use.getAttribute("href").slice(1))).length);
+  assert.equal(symbols, 0, "a rail icon names a symbol that the page does not hold");
+  // The rail counts add up the kinds of the same response that Now shows, so the two cannot disagree.
+  const counts = await page.evaluate(async () => {
+    const kinds = new Map((await Panel.get("now")).attention_kinds.map((entry) => [entry.type, entry.count]));
+    const sum = (...types) => types.reduce((total, type) => total + (kinds.get(type) || 0), 0);
+    const shown = (name) => { const node = document.querySelector(`.nav-link[data-nav="${name}"] .nav-count`); return node.hidden ? 0 : parseInt(node.textContent, 10); };
+    const fold = document.querySelector("#nav-more summary .nav-count");
+    return { expected: [sum("session_flags", "session_proposals"), sum("lessons_to_accept", "rules_over_cap", "rule_ineffective"), sum("awaiting_merge", "agent_follow_up"), sum("machine_rules")],
+      shown: ["sessions", "learning", "agents", "machine"].map(shown), fold: fold.hidden ? 0 : parseInt(fold.textContent, 10), now: document.querySelector('.nav-link[data-nav="now"] .nav-count').hidden };
+  });
+  assert.deepEqual(counts.shown, counts.expected);
+  assert.ok(counts.expected.some((n) => n > 0), "the fixture holds nothing that a rail count would show");
+  assert.equal(counts.fold, counts.expected[2] + counts.expected[3]);
+  assert.equal(counts.now, true);
+  step(`${kind}: the rail groups 14 views with icons, and its counts equal the kinds of Now`);
+
+  // More views stays folded until the reader opens it or works in one of its views.
+  assert.equal(await page.locator("#nav-more").evaluate((node) => node.open), false);
+  await go(page, "#usage");
+  assert.equal(await page.locator("#nav-more").evaluate((node) => node.open), true);
+  assert.equal(await page.locator('.nav-link[data-nav="usage"]').getAttribute("aria-current"), "page");
+  await page.locator("#nav-more summary").click();
+  await go(page, "#now");
+  const foot = await page.locator(".rail-foot").innerText();
+  assert.match(foot, /Fixture|fixture/);
+  assert.match(foot, /Lifecycle\s*Development/);
+  assert.match(foot, /Live/);
+  step(`${kind}: More views opens for a view it holds, and the foot of the rail names the project, the lifecycle stage and the live state`);
+
+  // Project activity opens from the header row of every view and closes with Escape, with focus back on its button.
+  await page.locator("#activity-toggle").click();
+  assert.equal(await page.locator("#activity-toggle").getAttribute("aria-expanded"), "true");
+  assert.match(await text(page, "#activity"), /WORK BY STATE[\s\S]*1 in progress[\s\S]*IN PROGRESS[\s\S]*AGENTS/i);
+  await page.keyboard.press("Escape");
+  assert.deepEqual(await page.evaluate(() => [document.getElementById("activity").hidden, document.activeElement.id]), [true, "activity-toggle"]);
+  await page.locator("#activity-toggle").click();
+  await page.locator('#activity [data-key^="activity-work-"]').first().click();
+  await page.waitForFunction(() => !document.getElementById("drawer").hidden && document.getElementById("drawer-title").textContent !== "Loading");
+  assert.equal(await page.locator("#activity").isHidden(), true);
+  await closeDrawer(page);
+  step(`${kind}: Project activity shows the work by state, opens the work in progress and closes with Escape`);
+
+  // No view scrolls the page at the three measured sizes. With More views folded the rail fits a window 640 pixels high.
+  for (const [width, height] of FRAMES) {
+    await page.setViewportSize({ width, height });
+    for (const name of RAIL) {
+      await go(page, "#" + name.toLowerCase());
+      await fixedFrame(page, `${kind} ${name} at ${width} by ${height}`);
+    }
+  }
+  await page.setViewportSize({ width: 1600, height: 640 });
+  await go(page, "#now");
+  await page.evaluate(() => { document.getElementById("nav-more").open = false; });
+  const rail = await page.evaluate(() => { const node = document.getElementById("rail"); return [node.scrollHeight, node.clientHeight]; });
+  assert.ok(rail[0] <= rail[1], `${kind}: the rail with More views folded needs ${rail[0]} pixels in a window 640 pixels high`);
+  await page.setViewportSize({ width: 390, height: 800 });
+  await page.locator("#menu-toggle").click();
+  assert.equal(await page.locator('.nav-link[data-nav="requirements"]').isVisible(), true);
+  assert.match(await page.locator(".rail-foot").innerText(), /Live/);
+  await page.keyboard.press("Escape");
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await go(page, "#now");
+  step(`${kind}: no view scrolls the page at ${FRAMES.map((size) => size.join(" by ")).join(", ")} pixels, and the narrow menu holds the rail with its foot`);
+}
+
 async function views(page, kind, expected) {
   await go(page, "#now");
-  assert.deepEqual(await page.locator(".nav-link").allTextContents(), RAIL);
+  assert.deepEqual(await page.locator(".nav-link .nav-title").allTextContents(), RAIL);
   assert.equal(await text(page, "#main .sentence"), "1 work item is in progress, 2 are blocked and 1 needs review.");
   assert.match(await text(page, "#main .card.kickoff"), new RegExp(expected.template));
   // Section 17.12: four cards of at most five items each; decisions and scope blocks open from the view head.
@@ -87,9 +167,9 @@ async function views(page, kind, expected) {
   assert.equal(await page.locator('#main [data-key^="now-attention-"]').count(), 5);
   assert.equal(await page.locator("[data-key=now-open-decisions]").count(), 1);
   assert.equal(await page.locator("[data-key=now-open-blocks]").count(), 1);
-  assert.ok(await page.locator("#ledger .strip-part").count() >= 4, "the state ledger shows no work states");
-  assert.equal(await page.locator("#ledger a, #ledger button").count(), 0, "the ledger of 4 pixels still holds a link");
+  assert.match(await text(page, "#view-summary"), /^\d+ items wait for you\.$/);
   step(`${kind}: Now states the project position, the kickoff checklist and the attention list`);
+  await shell(page, kind);
 
   // The checklist must not push the project position, the blocked work and the attention list below the first screen.
   const checklist = await page.locator("#main .card.kickoff").boundingBox();
@@ -331,10 +411,10 @@ async function views(page, kind, expected) {
   await page.setViewportSize({ width: 1440, height: 900 });
   step(`${kind}: the runs table leaves the delegation columns empty for a check and keeps the merge state on a phone`);
 
-  // The top bar states the phase of the project, because the phase decides who merges delegated work.
+  // The foot of the rail states the phase of the project, because the phase decides who merges delegated work.
   assert.match(await text(page, "#phase"), /Lifecycle\s*Development/);
   assert.match(await page.locator("#phase .phase-button").getAttribute("title"), /may bring delegated work into the project after a passing work review/);
-  step(`${kind}: the top bar states that the project is in development`);
+  step(`${kind}: the foot of the rail states that the project is in development`);
 
   await go(page, "#machine");
   const machine = await text(page, "#main");
@@ -397,8 +477,8 @@ async function views(page, kind, expected) {
   assert.match(await text(page, "#main"), /The project requirements are not established yet\./);
   step(`${kind}: Records and Requirements render their current state`);
 
-  // Beside an open drawer the top bar keeps its controls in reach. On a narrow screen the top bar scrolls with the page,
-  // the Work filters stay folded, and the page behind the full width drawer takes no focus.
+  // Beside an open drawer the header row keeps its controls in reach. On a narrow screen the header row is part of the
+  // frame, the Work filters stay folded, and the page behind the full width drawer takes no focus.
   await go(page, "#work");
   await page.locator("#main .board button.item").first().click();
   await page.waitForFunction(() => !document.getElementById("drawer").hidden && document.getElementById("drawer-title").textContent !== "Loading");
@@ -413,7 +493,7 @@ async function views(page, kind, expected) {
   await go(page, "#work");
   assert.equal(await page.locator("#work-filters").evaluate((node) => node.open), false);
   await page.setViewportSize({ width: 1440, height: 900 });
-  step(`${kind}: the drawer leaves the top bar in reach, and a narrow screen folds the Work filters and frees the top of the page`);
+  step(`${kind}: the drawer leaves the header row in reach, and a narrow screen folds the Work filters and keeps the page behind the drawer inert`);
 
   for (const width of [1440, 768, 390, 320]) {
     for (const hash of ["#now", "#plan", "#work", "#architecture", "#decisions", "#learning", "#machine", "#hive", "#usage"]) {

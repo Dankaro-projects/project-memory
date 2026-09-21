@@ -27,9 +27,12 @@
  *
  * Views: Panel.registerView(name, {title, section, render(container, params, ctx)}). Hash #name/key=value&key=value.
  *   render may be async; the container is laid out but hidden until it resolves, and a rejected render shows
- *   Panel.errorState. ctx: live, canEdit, revision, onShown(fn). Rail order: now, plan, work, architecture,
- *   dependencies, decisions, learning, agents, machine, records, requirements; section names the rail group of any
- *   other view. Panel.go(name, params), Panel.route(), Panel.setParams(params) (hash only, no render), Panel.refresh().
+ *   Panel.errorState. ctx: live, canEdit, revision, onShown(fn), setSummary(text) (the sentence beside the title).
+ *   The window never scrolls: the view scrolls inside #main. The rail groups are Work (now, plan, work), Decide
+ *   (sessions, learning, decisions), Look up (records, requirements) and the folded More views (architecture,
+ *   dependencies, agents, machine, hive, usage), which also takes any other view that names a section. A rail icon is
+ *   the symbol i-<view name> of viewer.html. Panel.go(name, params), Panel.route(), Panel.setParams(params) (hash
+ *   only, no render), Panel.refresh().
  *
  * Drawer (non modal): Panel.registerDrawer(kind, {render(body, params, ctx)}); ctx adds setTitle(text) and
  *   setKind(text). Panel.openDrawer(kind, params, trigger) pushes an open entry on the back stack and the trigger
@@ -51,6 +54,7 @@
  * Elements and text
  *   Panel.h(tag, attrs, ...children): attrs class, text, dataset, style (object), on (events), hidden, value,
  *     checked, disabled, selected, multiple, required, href (# links only) and other attributes.
+ *   Panel.icon(name): the inline symbol i-<name> of viewer.html, hidden from assistive technology.
  *   Panel.put(host, ...children) appends every child that is not null. Panel.button(label, key, handler(trigger),
  *     className, attrs), Panel.chip(text, attrs), Panel.kv(pairs) (leaves out empty values), Panel.lower(text).
  *   Panel.badge(state, label), Panel.tone(state) (blocked, review, in_progress, ready, done, backlog, guarded,
@@ -66,11 +70,15 @@
 const Panel = (() => {
   "use strict";
   const $ = (id) => document.getElementById(id);
-  const NAV = [["now", "Now", "Delivery"], ["plan", "Plan", "Delivery"], ["work", "Work", "Delivery"],
-    ["architecture", "Architecture", "Structure"], ["dependencies", "Dependencies", "Structure"],
-    ["decisions", "Decisions", "Oversight"], ["learning", "Learning", "Oversight"], ["agents", "Agents", "Oversight"],
-    ["machine", "Machine", "Oversight"],
-    ["records", "Records", "Reference"], ["requirements", "Requirements", "Reference"]];
+  const MORE = "More views";
+  const NAV = [["now", "Now", "Work"], ["plan", "Plan", "Work"], ["work", "Work", "Work"],
+    ["sessions", "Sessions", "Decide"], ["learning", "Learning", "Decide"], ["decisions", "Decisions", "Decide"],
+    ["records", "Records", "Look up"], ["requirements", "Requirements", "Look up"],
+    ["architecture", "Architecture", MORE], ["dependencies", "Dependencies", MORE], ["agents", "Agents", MORE],
+    ["machine", "Machine", MORE], ["hive", "Hive", MORE], ["usage", "Usage", MORE]];
+  // The kinds of Now that a view decides. A rail count adds them up from the response that Now itself shows.
+  const WAITS = { sessions: ["session_flags", "session_proposals"], learning: ["lessons_to_accept", "rules_over_cap", "rule_ineffective"],
+    agents: ["awaiting_merge", "agent_follow_up"], machine: ["machine_rules"] };
   const COLORS = { blocked: "#b42318", review: "#b54708", in_progress: "#4457e6", ready: "#25715a",
     done: "#6b7280", backlog: "#9ca3af", guarded: "#7a5af8", neutral: "#65625d" };
   const TONES = {};
@@ -99,7 +107,7 @@ const Panel = (() => {
   const revisionListeners = [];
   const state = { route: { name: "now", params: {} }, health: live ? null : (snapshot.responses || {}).health || null,
     revision: null, csrf: null, healthTag: null, polling: false, stale: false, template: null, renderToken: 0,
-    drawerToken: 0, drawer: null, drawerStack: [], drawerTrigger: null, form: null, pendingRender: false };
+    drawerToken: 0, drawer: null, drawerStack: [], drawerTrigger: null, form: null, pendingRender: false, now: {} };
 
   class PanelError extends Error { constructor(message, extra = {}) { super(message); this.name = "PanelError"; Object.assign(this, extra); } }
   class FormError extends Error {}
@@ -123,6 +131,14 @@ const Panel = (() => {
       if (child !== null && child !== undefined && typeof child !== "boolean") node.append(child instanceof Node ? child : String(child));
     }
     return node;
+  }
+  // Panel.h builds HTML elements only, and an icon needs the SVG namespace.
+  function icon(name) {
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg"), use = svg.appendChild(document.createElementNS(svg.namespaceURI, "use"));
+    svg.setAttribute("class", "icon");
+    svg.setAttribute("aria-hidden", "true");
+    use.setAttribute("href", "#i-" + ($("i-" + name) ? name : "more"));
+    return svg;
   }
   function words(value) {
     if (value === null || value === undefined || value === "") return "Not recorded";
@@ -324,26 +340,35 @@ const Panel = (() => {
   const omitted = (name) => !live && (snapshot.omitted || []).some((entry) => entry.key === (name === "dependencies" ? "work_graph" : name));
   function buildNav() {
     const entries = NAV.map(([name, title, section]) => [name, (views.get(name) || {}).title || title, section]);
-    for (const [name, view] of views) if (!NAV.some((entry) => entry[0] === name) && view.section) entries.push([name, view.title || words(name), view.section]);
+    for (const [name, view] of views) if (!NAV.some((entry) => entry[0] === name) && view.section) entries.push([name, view.title || words(name), MORE]);
     const groups = new Map();
+    const waiting = () => h("span", { class: "nav-count", hidden: true });
     for (const [name, title, section] of entries) {
       if (!groups.has(section)) groups.set(section, []);
       const missing = omitted(name);
       groups.get(section).push(h("li", null, h("a", { class: ["nav-link", missing && "nav-omitted"], href: "#" + name, dataset: { nav: name },
-        "aria-label": missing ? title + ", not included in this snapshot" : null }, title)));
+        "aria-label": missing ? title + ", not included in this snapshot" : null }, icon(name), h("span", { class: "nav-title" }, title), waiting())));
     }
-    $("nav").replaceChildren(...[...groups].map(([section, items]) => h("div", { class: "nav-group" }, h("h2", null, section), h("ul", null, items))));
+    // The views of occasional use stay folded, and the fold carries their count while it is closed.
+    $("nav").replaceChildren(...[...groups].map(([section, items]) => (section === MORE
+      ? h("details", { class: "nav-group nav-more", id: "nav-more" }, h("summary", null, icon("more"), h("span", null, section), waiting(), icon("chev")), h("ul", null, items))
+      : h("div", { class: "nav-group" }, h("h2", null, section), h("ul", null, items)))));
+  }
+  function setCount(node, n) {
+    node.hidden = !n;
+    node.replaceChildren(String(n), h("span", { class: "visually-hidden" }, n === 1 ? " item waits" : " items wait"));
   }
   function updateChrome() {
     const title = (views.get(state.route.name) || {}).title || words(state.route.name);
     $("view-title").textContent = title;
     document.title = title + " | " + ((state.health && state.health.project) || snapshot.project || "Project Memory");
     for (const node of document.querySelectorAll(".nav-link")) {
-      if (node.dataset.nav === state.route.name) node.setAttribute("aria-current", "page");
-      else node.removeAttribute("aria-current");
+      if (node.dataset.nav !== state.route.name) { node.removeAttribute("aria-current"); continue; }
+      node.setAttribute("aria-current", "page");
+      if (node.closest("details")) node.closest("details").open = true;
     }
   }
-  // The phase of the project decides who merges delegated work, so the top bar states it and offers the change.
+  // The phase of the project decides who merges delegated work, so the foot of the rail states it and offers the change.
   function updatePhase() {
     const value = (state.health || {}).phase;
     const node = $("phase");
@@ -362,16 +387,38 @@ const Panel = (() => {
     $("project-name").textContent = (state.health && state.health.project) || snapshot.project || "Project Memory";
     updatePhase();
     await loadTemplate();
-    const counts = await get("now").then((now) => now.counts || {}, () => ({}));
-    // The thin ledger only decorates the top bar, and the legend of Now holds its links.
-    $("ledger").replaceChildren(...STRIP.filter((name) => counts[name]).map((name) => h("span", { class: "strip-part", dataset: { tone: name }, style: { flexGrow: String(counts[name]) } })));
-    $("ledger").hidden = !STRIP.some((name) => counts[name]);
+    state.now = await get("now").catch(() => ({}));
+    const kinds = new Map((state.now.attention_kinds || []).map((kind) => [kind.type, kind.count]));
+    let folded = 0;
+    for (const node of document.querySelectorAll(".nav-link")) {
+      const n = (WAITS[node.dataset.nav] || []).reduce((sum, type) => sum + (kinds.get(type) || 0), 0);
+      setCount(node.querySelector(".nav-count"), n);
+      if (node.closest("details")) folded += n;
+    }
+    if ($("nav-more")) setCount($("nav-more").querySelector("summary .nav-count"), folded);
+    if (!$("activity").hidden) drawActivity();
+  }
+  // Project activity: the work by state, the work in progress and the active agent runs, one click from every view.
+  function drawActivity() {
+    const now = state.now, active = ((now.agents || {}).active || []).length;
+    const title = (text) => h("h2", null, text);
+    $("activity").replaceChildren();
+    put($("activity"), title("Work by state"), stateStrip(now.counts || {}, { legend: true }), title("In progress"),
+      (now.in_progress || []).length ? h("ul", { class: "list" }, now.in_progress.map((item) => h("li", null,
+        button(item.title, "activity-work-" + item.id, (trigger) => { setActivity(false); openWork(item.id, trigger); }, "item"))))
+        : h("p", { class: "muted" }, "No work item is in progress."),
+      title("Agents"), h("p", { class: "muted" }, active ? count(active, "agent run is", "agent runs are") + " active. " : "No agent run is active. ", h("a", { href: "#agents" }, "Open Agents")));
+  }
+  function setActivity(open) {
+    $("activity").hidden = !open;
+    $("activity-toggle").setAttribute("aria-expanded", String(open));
+    if (open) drawActivity();
   }
   function setStatus(kind, message) {
     const node = $("live-status");
     node.dataset.state = kind;
     node.textContent = { connecting: "Connecting", live: "Live", failed: "Update failed", snapshot: "Snapshot from " + date(snapshot.exported_at) }[kind];
-    if (kind === "live") node.title = "Last successful update at " + new Date().toLocaleTimeString("en-GB") + ".";
+    node.title = kind === "live" ? "Last successful update at " + new Date().toLocaleTimeString("en-GB") + "." : kind === "snapshot" ? "This snapshot is read only." : "";
     if (kind === "failed") alert("Updates are unavailable. The control panel tries again every 2 seconds. " + (message || ""), "updates");
     else clearAlert("updates");
   }
@@ -398,7 +445,7 @@ const Panel = (() => {
   const context = (shown) => ({ live, canEdit: canEdit(), revision: state.revision, onShown: (handler) => shown.push(handler) });
   // Renders into a hidden container next to the current content, then swaps, so a refresh does not flash.
   async function renderInto(root, container, render, token, current, keep) {
-    const scroll = [window.scrollX, window.scrollY, root.scrollTop];
+    const scroll = root.scrollTop;
     const focus = keep ? focusIdentity(root) : null;
     const shown = [];
     root.append(container);
@@ -413,7 +460,7 @@ const Panel = (() => {
     const late = keep ? focusIdentity(root) : null;
     for (const old of [...root.children]) if (old !== container) old.remove();
     container.classList.remove("pending");
-    if (keep) { window.scrollTo(scroll[0], scroll[1]); root.scrollTop = scroll[2]; restoreFocus(container, late || focus); }
+    if (keep) { root.scrollTop = scroll; restoreFocus(container, late || focus); }
     else root.scrollTop = 0;
     for (const handler of shown) handler();
     return true;
@@ -423,9 +470,10 @@ const Panel = (() => {
     const token = ++state.renderToken;
     const { name, params } = state.route;
     updateChrome();
-    if (!options.keep) window.scrollTo(0, 0);
+    if (!options.keep) $("view-summary").textContent = "";
+    const setSummary = (text) => { if (token === state.renderToken) $("view-summary").textContent = text || ""; };
     const container = h("div", { class: "view pending", dataset: { view: name } });
-    const done = await renderInto($("main"), container, (shown) => views.get(name).render(container, { ...params }, context(shown)),
+    const done = await renderInto($("main"), container, (shown) => views.get(name).render(container, { ...params }, { ...context(shown), setSummary }),
       token, () => state.renderToken, options.keep);
     // A view that moved the reader to one of its sections keeps that focus; otherwise the title announces the new view.
     if (done && options.focus && !$("main").contains(document.activeElement)) $("view-title").focus({ preventScroll: true });
@@ -661,7 +709,9 @@ const Panel = (() => {
 
   // Boot.
   function bindEvents() {
-    window.addEventListener("hashchange", () => { state.route = parseHash(); setMenu(false); renderView({ focus: true }); });
+    window.addEventListener("hashchange", () => { state.route = parseHash(); setMenu(false); setActivity(false); renderView({ focus: true }); });
+    $("activity-toggle").addEventListener("click", () => setActivity($("activity").hidden));
+    document.addEventListener("click", (event) => { if (!$("activity").hidden && !event.target.closest("#activity, #activity-toggle")) setActivity(false); });
     $("menu-toggle").addEventListener("click", () => setMenu($("app").dataset.menu !== "open"));
     $("nav").addEventListener("click", (event) => { if (event.target.closest("a")) setMenu(false); });
     $("search").addEventListener("submit", (event) => { event.preventDefault(); const query = $("search-input").value.trim(); go("records", query ? { query } : {}); });
@@ -674,6 +724,7 @@ const Panel = (() => {
     document.addEventListener("keydown", (event) => {
       if (event.defaultPrevented || $("form-dialog").open) return;
       if (event.key === "Escape" && $("app").dataset.menu === "open") { setMenu(false); $("menu-toggle").focus(); }
+      else if (event.key === "Escape" && !$("activity").hidden) { setActivity(false); $("activity-toggle").focus(); }
       else if (event.key === "Escape" && state.drawer) { event.preventDefault(); closeDrawer(); }
       else if (event.key === "/" && !event.target.closest("input, textarea, select, [contenteditable]")) { event.preventDefault(); $("search-input").focus(); }
     });
@@ -684,7 +735,6 @@ const Panel = (() => {
     buildNav();
     bindEvents();
     state.route = parseHash();
-    $("mode-label").textContent = live ? "Local control panel" : "Read only snapshot";
     if (!live) {
       if (!location.hash && omitted(state.route.name)) state.route = { name: (NAV.find(([name]) => !omitted(name)) || NAV[0])[0], params: {} };
       setStatus("snapshot"); updateShell(); renderView(); return;
@@ -703,7 +753,7 @@ const Panel = (() => {
     registerForm: (name, definition) => forms.set(name, definition),
     go, route: () => ({ name: state.route.name, params: { ...state.route.params } }), setParams, refresh,
     openDrawer, closeDrawer, backDrawer, openRecord, openWork, openForm, formValues, field, input, textarea, select, filterField,
-    h, put, button, chip, kv, lower, badge, tone, link, markdown, words, term, template, date, count, progress, stateStrip, empty, errorState, toast, alert, clearAlert,
+    h, icon, put, button, chip, kv, lower, badge, tone, link, markdown, words, term, template, date, count, progress, stateStrip, empty, errorState, toast, alert, clearAlert,
   };
 })();
 window.Panel = Panel;

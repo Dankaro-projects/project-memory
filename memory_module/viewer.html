@@ -108,20 +108,39 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
 <pre>project-memory view</pre>
 <p>If you used uvx to set up the project, run <code>uvx project-memory-mcp view</code>. The command opens the live control panel with your records and automatic updates.</p>
 </section>
+<svg class="icons" aria-hidden="true">
+<symbol id="i-now" viewBox="0 0 24 24"><path d="M4 13 6.5 5h11L20 13v6H4zM4 13h5l1 2h4l1-2h5"/></symbol>
+<symbol id="i-plan" viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="16" rx="2"/><path d="M4 10h16M8 3v4M16 3v4M8 14h2M12 14h2M8 17h2"/></symbol>
+<symbol id="i-work" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="m8.5 12 2.5 2.5 4.5-5"/></symbol>
+<symbol id="i-sessions" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3"/><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6M16 5.2a3 3 0 0 1 0 5.6M18 14.3c1.8.8 3 2.6 3 4.7"/></symbol>
+<symbol id="i-learning" viewBox="0 0 24 24"><path d="M12 6c-2-1.5-4.5-2-8-2v14c3.5 0 6 .5 8 2 2-1.5 4.5-2 8-2V4c-3.5 0-6 .5-8 2zM12 6v14"/></symbol>
+<symbol id="i-decisions" viewBox="0 0 24 24"><circle cx="12" cy="5" r="2"/><circle cx="6" cy="19" r="2"/><circle cx="18" cy="19" r="2"/><path d="M12 7v4M12 11l-6 6M12 11l6 6"/></symbol>
+<symbol id="i-records" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h6"/></symbol>
+<symbol id="i-requirements" viewBox="0 0 24 24"><ellipse cx="12" cy="6" rx="7" ry="3"/><path d="M5 6v6c0 1.7 3.1 3 7 3s7-1.3 7-3V6M5 12v6c0 1.7 3.1 3 7 3s7-1.3 7-3v-6"/></symbol>
+<symbol id="i-architecture" viewBox="0 0 24 24"><path d="m12 3 9 5-9 5-9-5zM3 13l9 5 9-5"/></symbol>
+<symbol id="i-dependencies" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><path d="M10 6.5h4a3 3 0 0 1 3 3V14"/></symbol>
+<symbol id="i-agents" viewBox="0 0 24 24"><rect x="5" y="8" width="14" height="11" rx="2"/><path d="M12 4v4M9 13v2M15 13v2"/></symbol>
+<symbol id="i-machine" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></symbol>
+<symbol id="i-hive" viewBox="0 0 24 24"><path d="m12 3 8 4.5v9L12 21l-8-4.5v-9z"/></symbol>
+<symbol id="i-usage" viewBox="0 0 24 24"><path d="M5 20V10M12 20V4M19 20v-7"/></symbol>
+<symbol id="i-more" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+<symbol id="i-chev" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></symbol>
+<symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="m20 20-4.5-4.5"/></symbol>
+</svg>
 <div id="app" class="shell" hidden>
 <nav id="rail" class="rail" aria-label="Control panel sections">
-<div class="brand"><strong>Project Memory</strong><span id="mode-label">Local control panel</span></div>
+<div class="brand"><span></span>Project Memory</div>
 <div id="nav"></div>
+<div class="rail-foot"><strong id="project-name">Project Memory</strong><div id="phase" class="phase" hidden></div><span id="live-status" class="status" data-state="connecting">Connecting</span></div>
 </nav>
 <div class="column">
 <header class="topbar">
 <button id="menu-toggle" class="menu-toggle" type="button" aria-controls="rail" aria-expanded="false">Menu</button>
-<div class="titles"><span id="project-name">Project Memory</span><h1 id="view-title" tabindex="-1">Now</h1></div>
-<span id="live-status" class="status" data-state="connecting">Connecting</span>
-<div id="phase" class="phase" hidden></div>
-<form id="search" class="search" role="search"><label class="visually-hidden" for="search-input">Search records</label><input id="search-input" type="search" name="query" placeholder="Search records" autocomplete="off" /></form>
-<div id="ledger" class="ledger" aria-hidden="true" hidden></div>
+<h1 id="view-title" tabindex="-1">Now</h1><p id="view-summary" class="summary"></p>
+<form id="search" class="search" role="search"><svg class="icon" aria-hidden="true"><use href="#i-search"/></svg><label class="visually-hidden" for="search-input">Search records</label><input id="search-input" type="search" name="query" placeholder="Search records" autocomplete="off" /><kbd aria-hidden="true">/</kbd></form>
+<button id="activity-toggle" type="button" class="quiet" aria-expanded="false" aria-controls="activity">Project activity</button>
 </header>
+<aside id="activity" class="activity" aria-label="Project activity" hidden></aside>
 <div id="alerts" class="alerts" role="alert" aria-live="assertive"></div>
 <main id="main" class="main" tabindex="-1"></main>
 </div>

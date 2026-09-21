@@ -42,8 +42,10 @@ async function go(page, hash) {
 async function noOverflow(page, width, label) {
   await page.setViewportSize({ width, height: 900 });
   await page.waitForTimeout(250);
-  const size = await page.evaluate(() => [document.documentElement.scrollWidth, document.documentElement.clientWidth]);
-  assert.ok(size[0] <= size[1], `${label} overflows at ${width} pixels: ${size}`);
+  // The view scrolls inside #main, so a view that is too wide shows there and not on the page.
+  const size = await page.evaluate(() => { const main = document.getElementById("main");
+    return [document.documentElement.scrollWidth, document.documentElement.clientWidth, main.scrollWidth, main.clientWidth]; });
+  assert.ok(size[0] <= size[1] && size[2] <= size[3], `${label} overflows at ${width} pixels: ${size}`);
 }
 const text = (page, selector) => page.locator(selector).first().innerText();
 const drawer = (page) => page.locator("#drawer-body .drawer-content:not(.pending)");

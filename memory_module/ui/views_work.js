@@ -214,8 +214,9 @@
       bulk && P.canEdit() ? P.formButton(`Resolve ${bulk} read-only ${bulk === 1 ? "call" : "calls"}`, "reconcile_read_only", { count: bulk }, { class: "small" }) : null,
       listOf(items, unconfirmedItem));
   }
-  P.registerView("now", { title: "Now", async render(container) {
-      const now = await P.get("now");
+  P.registerView("now", { title: "Now", async render(container, params, ctx) {
+      const now = await P.get("now"), waiting = now.attention_count || 0;
+      ctx.setSummary(waiting ? `${waiting} ${verb(waiting, "item waits", "items wait")} for you.` : "Nothing waits for you.");
       const counts = now.counts || {}, attention = now.attention || [], agents = now.agents || {}, detail = nowDetail(now);
       const decisions = (now.latest_decisions || []).length, blocks = (now.scope_blocks || []).length;
       const stateCard = (title, state, items) => h("section", { class: "card" }, heading(title, counts[state] || 0),

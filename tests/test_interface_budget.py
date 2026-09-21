@@ -56,13 +56,27 @@ PANEL_ACTIONS_LIMIT = 8_000
 USABILITY_ALLOWANCE = {'views': 7_400, 'forms.js': 1_300, 'core.js': 1_300}
 USABILITY_LIMIT = 10_000
 USABILITY_STYLE_ALLOWANCE = 400
-ALLOWANCES = (FOCUS_ALLOWANCE, HIVE_ALLOWANCE, USAGE_ALLOWANCE, SESSIONS_ALLOWANCE, PANEL_ACTIONS_ALLOWANCE, USABILITY_ALLOWANCE)
+# Temporary allowance for the fixed frame redesign. The user decided on 21 September 2026: at most 20,000 code characters of
+# JavaScript and 8,000 of stylesheet while the old cards and drawers exist beside the new frame and panes. The allowance
+# grows with each work item of the redesign by its measured size and stays under these caps. When the last item closes, the
+# user sets new base budgets from the measured size, and this allowance and the earlier ones, including the usability cap
+# that the user did not confirm, are folded into them. Measured against 1e1c041 after the shell item: core.js grew by 2,972
+# with the rail groups, the rail counts, the icons, the view summary and Project activity, views_work.js by 148 with the
+# summary of Now, and panel.css by 2,750 to 30,084. viewer.html grew by 2,221 to 8,677 with the 17 inline icon symbols, the
+# foot of the rail and the header row. The user confirmed the page shell allowance of 2,300 on the same day.
+REDESIGN_ALLOWANCE = {'views': 200, 'core.js': 3_000}
+REDESIGN_LIMIT = 20_000
+REDESIGN_STYLE_ALLOWANCE = 2_800
+REDESIGN_STYLE_LIMIT = 8_000
+REDESIGN_SHELL_ALLOWANCE = 2_300
+ALLOWANCES = (FOCUS_ALLOWANCE, HIVE_ALLOWANCE, USAGE_ALLOWANCE, SESSIONS_ALLOWANCE, PANEL_ACTIONS_ALLOWANCE, USABILITY_ALLOWANCE,
+              REDESIGN_ALLOWANCE)
 TOTAL_SCRIPT_CHARACTERS = 196_000 + sum(sum(allowance.values()) for allowance in ALLOWANCES)
 FILE_BUDGETS = {'core.js': 36_000 + sum(allowance.get('core.js', 0) for allowance in ALLOWANCES),
                 'forms.js': 37_000 + sum(allowance.get('forms.js', 0) for allowance in ALLOWANCES), 'graphs.js': 41_000}
 VIEW_CHARACTERS = 82_000 + sum(allowance.get('views', 0) for allowance in ALLOWANCES)
-STYLE_CHARACTERS = 27_000 + USABILITY_STYLE_ALLOWANCE
-SHELL_CHARACTERS = 6_600
+STYLE_CHARACTERS = 27_000 + USABILITY_STYLE_ALLOWANCE + REDESIGN_STYLE_ALLOWANCE
+SHELL_CHARACTERS = 6_600 + REDESIGN_SHELL_ALLOWANCE
 
 
 def size(path):
@@ -154,6 +168,18 @@ class InterfaceBudgetTests(unittest.TestCase):
             self.assertIn(part, knowledge)
         self.assertIn('context.needsPaths', (UI / 'forms.js').read_text(encoding='utf-8'))
         self.assertIn('function coverPage()', (UI / 'core.js').read_text(encoding='utf-8'))
+
+    def test_the_budget_is_measured_with_the_fixed_frame_shell_in_place(self):
+        # The redesign allowance is temporary and capped, and it pays for these parts of the shell.
+        self.assertLessEqual(sum(REDESIGN_ALLOWANCE.values()), REDESIGN_LIMIT)
+        self.assertLessEqual(REDESIGN_STYLE_ALLOWANCE, REDESIGN_STYLE_LIMIT)
+        core = (UI / 'core.js').read_text(encoding='utf-8')
+        for part in ('const WAITS = ', 'function icon(name)', 'function drawActivity()', 'const setSummary = '):
+            self.assertIn(part, core)
+        shell = (ROOT / 'viewer.html').read_text(encoding='utf-8')
+        for part in ('<symbol id="i-usage"', 'class="rail-foot"', 'id="view-summary"', 'id="activity-toggle"'):
+            self.assertIn(part, shell)
+        self.assertIn('ctx.setSummary(', (UI / 'views_work.js').read_text(encoding='utf-8'))
 
 
 if __name__ == '__main__':
