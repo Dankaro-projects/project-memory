@@ -160,56 +160,69 @@ async function shell(page, kind) {
 async function views(page, kind, expected) {
   await go(page, "#now");
   assert.deepEqual(await page.locator(".nav-link .nav-title").allTextContents(), RAIL);
-  assert.equal(await text(page, "#main .sentence"), "1 work item is in progress, 2 are blocked and 1 needs review.");
-  assert.match(await text(page, "#main .card.kickoff"), new RegExp(expected.template));
-  // Section 17.12: four cards of at most five items each; decisions and scope blocks open from the view head.
-  assert.equal(await page.locator("#main .now-grid > .card").count(), 4);
-  assert.equal(await page.locator('#main [data-key^="now-attention-"]').count(), 5);
-  assert.equal(await page.locator("[data-key=now-open-decisions]").count(), 1);
-  assert.equal(await page.locator("[data-key=now-open-blocks]").count(), 1);
-  assert.match(await text(page, "#view-summary"), /^\d+ items wait for you\.$/);
-  step(`${kind}: Now states the project position, the kickoff checklist and the attention list`);
+  // One tab for each kind with its true count, then the tabs of Now that are no kinds. The summary adds the kinds up.
+  const tabs = await page.evaluate(async () => {
+    const now = await Panel.get("now");
+    return { kinds: now.attention_kinds.map((entry) => [entry.type, entry.count]), total: now.attention_count,
+      shown: [...document.querySelectorAll(".now-tabs button")].map((node) => [node.dataset.key.replace("now-kind-", ""), node.querySelector(".chip") ? Number(node.querySelector(".chip").textContent) : null]) };
+  });
+  assert.deepEqual(tabs.shown.slice(0, tabs.kinds.length), tabs.kinds);
+  assert.deepEqual(tabs.shown.slice(tabs.kinds.length).map((tab) => tab[0]), ["kickoff", "decisions", "scope_blocks"]);
+  assert.equal(await text(page, "#view-summary"), `${tabs.total} items wait for you.`);
+  assert.equal(tabs.kinds.reduce((sum, entry) => sum + entry[1], 0), tabs.total);
+  assert.match(await text(page, '[data-key="now-kind-machine_rules"]'), /Machine rules\s*1/);
+  step(`${kind}: Now shows one tab for each kind with its true count, and the summary adds them up`);
   await shell(page, kind);
 
-  // The checklist must not push the project position, the blocked work and the attention list below the first screen.
-  const checklist = await page.locator("#main .card.kickoff").boundingBox();
-  assert.ok(checklist.height <= 360, `${kind}: the kickoff card is ${Math.round(checklist.height)} pixels high and fills the first screen`);
-  const firstEntry = await page.locator('#main [data-key^="now-attention-"]').first().boundingBox();
-  assert.ok(firstEntry.y < 900, `${kind}: the attention list starts at ${Math.round(firstEntry.y)} pixels, below the first screen`);
-  assert.equal(await page.locator('#main [data-key^="now-attention-"] .item-action').count(), 5);
-  assert.match(await text(page, "#main .strip-legend"), /\d+ in progress/);
-  // The card leads the view with one button per kind, so a kind at the end of a long list is still on the first screen.
-  assert.equal(await page.locator("#main .now-grid > .card").first().getAttribute("class"), "card now-waiting");
-  assert.match(await text(page, '[data-key="now-kind-machine_rules"]'), /Machine rules\s*1/);
-  assert.ok((await page.locator('[data-key="now-kinds"]').boundingBox()).y < 600, `${kind}: the kinds of waiting items start below the first screen`);
-  await page.click('[data-key="now-kind-blocked_work"]');
-  await page.waitForFunction(() => document.getElementById("detail-title").textContent === "Blocked");
+  // The rows of a kind are 60 pixels high, name the item and why it waits, and open the pane beside the list.
+  const tab = async (name) => {
+    await page.click(`[data-key="now-kind-${name}"]`);
+    await page.waitForFunction((key) => { const node = document.querySelector(`#main .view:not(.pending) [data-key="${key}"]`); return node && node.getAttribute("aria-pressed") === "true"; }, "now-kind-" + name);
+    await settle(page);
+  };
+  await tab("blocked_work");
+  const rows = page.locator("#main .pane-row");
+  assert.equal(await rows.count(), 2);
+  assert.ok((await rows.evaluateAll((nodes) => nodes.map((node) => node.getBoundingClientRect().height))).every((height) => height >= 60));
+  assert.match(await text(page, "#main .pane-foot"), /Showing 1 to 2 of 2\./);
+  const blockedTitle = await rows.first().locator("strong").textContent();
+  await rows.first().click();
+  await page.waitForFunction((title) => document.getElementById("detail-title").textContent === title, blockedTitle);
   await settle(page);
-  assert.equal(await page.locator('#detail-body [data-key^="now-attention-"]').count(), 2);
+  assert.equal(await rows.first().getAttribute("aria-current"), "true");
+  assert.match(await text(page, "#detail"), /Next step/);
+  const frame = await page.evaluate(() => { const list = document.querySelector("#main .pane-rows"), head = document.querySelector("#main .pane-head").getBoundingClientRect(), main = document.getElementById("main").getBoundingClientRect();
+    return [getComputedStyle(list).overflowY, head.top >= main.top, document.getElementById("main").scrollHeight <= document.getElementById("main").clientHeight]; });
+  assert.deepEqual(frame, ["auto", true, true]);
   await closePane(page);
-  await page.click("[data-key=now-all-attention]");
-  await page.waitForSelector("#detail-body [data-key^='now-attention-']");
-  // The ninth row is the proposed machine rule of the fixture, which waits in the Machine view.
-  assert.equal(await page.locator('#detail-body [data-key^="now-attention-"]').count(), 9);
-  assert.match(await text(page, "#detail-body [data-key^='now-attention-machine_rules']"), /1 proposed machine rule waits for your acceptance or refusal\.\s*Open the proposed rules/);
-  const nowText = await text(page, "#detail-body");
-  await closePane(page);
-  await page.click("[data-key=now-open-decisions]");
-  await page.waitForSelector("#detail-body a[href='#decisions']");
-  await closePane(page);
-  assert.match(nowText, /occurred once after the lesson was accepted/);
-  assert.match(nowText, /changed 1 file and awaits a merge decision/);
-  step(`${kind}: Now keeps the first screen, names each action and counts a single event in the singular`);
+  await tab("guard_recurrence");
+  assert.match(await text(page, "#main .pane-row"), /occurred once after the lesson was accepted/);
+  await tab("awaiting_merge");
+  assert.match(await text(page, "#main .pane-row"), /changed 1 file and awaits a merge decision/);
+  step(`${kind}: a tab lists its rows in a fixed list pane, and a row opens the work item beside it and counts a single event in the singular`);
 
-  // Every row of the list opens something: the proposed lessons open as the first section of Learning.
-  await page.click("[data-key=now-all-attention]");
-  await page.waitForSelector("#detail-body [data-key^='now-attention-lessons_to_accept']");
-  await page.click("#detail-body [data-key^='now-attention-lessons_to_accept']");
-  await page.waitForFunction(() => document.activeElement && document.activeElement.textContent === "Proposed lessons");
-  assert.equal(await page.locator("#main section h3").first().textContent(), "Proposed lessons");
-  assert.ok(!/section=/.test(page.url()), "the section stays in the route and would move the reader again");
+  // The kickoff checklist, the latest decisions and the scope blocks stay reachable from Now in tabs of their own.
+  await tab("kickoff");
+  assert.match(await text(page, "#main .card.kickoff"), new RegExp(expected.template));
+  await tab("decisions");
+  assert.equal(await page.locator("#main a[href='#decisions']").count(), 1);
+  await tab("scope_blocks");
+  assert.match(await text(page, "#main .now-panel"), /was blocked\. The allowed paths were/);
+  // A kind that another view decides opens that view, and a lesson opens its decision in the pane.
+  await tab("machine_rules");
+  await page.locator("#main .pane-row").first().click();
+  await page.waitForFunction(() => document.querySelector('#main .view[data-view="machine"]:not(.pending)'));
+  await go(page, "#now");
+  await tab("lessons_to_accept");
+  await page.locator("#main .pane-row").first().click();
+  await page.waitForFunction(() => document.getElementById("detail-kind").textContent === "Decide a lesson" && !document.querySelector(".detail-content.pending"));
+  assert.deepEqual(await page.locator("#detail .detail-foot .actions button").allTextContents(), ["Accept", "Reject"]);
+  // A lesson still needs a reason: without one nothing is sent and the reason field takes the focus.
+  await page.locator('[data-key="decide-accepted"]').click();
+  assert.equal(await page.locator(".toast").last().textContent(), "Write the reason for your decision first.");
+  assert.equal(await page.evaluate(() => document.activeElement.id), "decide-reason");
   await closePane(page);
-  step(`${kind}: the lessons row of Now opens the proposed lessons, which lead the Learning view`);
+  step(`${kind}: the kickoff checklist, the decisions and the scope blocks keep their place in Now, and a lesson asks for its reason in the pane`);
 
   await go(page, "#plan");
   assert.match(await text(page, "#main .sentence"), /16 work items are planned in 7 phases\. 0 are done\./);
@@ -529,8 +542,8 @@ async function views(page, kind, expected) {
 
 // The editing checks run on one fixture, because each action changes the records the other checks read.
 async function editing(page, ids, posts) {
-  await go(page, "#now");
-  const trigger = `[data-key="now-in_progress-${ids.story}"]`;
+  await go(page, "#work");
+  const trigger = `[data-key="work-card-${ids.story}"]`;
   await page.locator(trigger).focus();
   await page.keyboard.press("Enter");
   await page.waitForFunction(() => document.getElementById("detail-title").textContent === "Parse client files");
@@ -667,14 +680,14 @@ async function editing(page, ids, posts) {
 
   // Allowing the blocked path of the scope block.
   await go(page, "#now");
-  await page.click("[data-key=now-open-blocks]");
-  await page.getByRole("button", { name: "Allow paths" }).first().click();
+  await page.click("[data-key=now-kind-scope_blocks]");
+  await page.locator("#main .now-panel").getByRole("button", { name: "Allow paths" }).first().click();
   await page.waitForSelector("#form-dialog[open]");
   assert.equal(await field(page, "paths").inputValue(), "docs/brief.md");
   await field(page, "reason").fill("The work item needs the brief.");
   await page.locator("#form-save").click();
   await savedToast(page, /docs\/brief\.md/);
-  step("the blocked path of a scope block is allowed from the scope blocks pane of the Now view");
+  step("the blocked path of a scope block is allowed from the scope blocks tab of the Now view");
   await closePane(page);
 
   // The phase of the project, which decides who merges delegated work.
@@ -961,11 +974,33 @@ async function hived(browser, fixture) {
   await page.goto(fixture.url);
   await page.waitForFunction(() => document.getElementById("live-status").textContent === "Live", null, { timeout: 20000 });
   // Session flags are low risk decisions: a row decides one at once, and one dialog decides the rest with an optional reason.
+  // Now decides a flag and a lesson in its pane without a dialog, and the next item opens by itself.
   await go(page, "#now");
-  await page.click("[data-key=now-all-attention]");
-  assert.match(await text(page, "#detail-body [data-key^='now-attention-session_flags']"), /3 flagged session messages wait for your confirmation or dismissal\.\s*Open the flags/);
-  await page.click("#detail-body [data-key^='now-attention-session_flags']");
+  await page.click("[data-key=now-kind-session_flags]");
+  await page.waitForSelector('#main .view:not(.pending) [data-key="now-row-flag_fixture_4"]');
+  assert.match(await text(page, "[data-key=now-kind-session_flags]"), /Session flags\s*4/);
+  assert.equal(await page.locator("#main .pane-row").count(), 4);
+  await page.click('[data-key="now-row-flag_fixture_4"]');
+  await page.waitForFunction(() => /Wait for the review before the release/.test(document.getElementById("detail-title").textContent));
+  await settle(page);
+  assert.equal(await page.locator("#decide-reason").getAttribute("placeholder"), "Add a reason (optional)");
+  await page.locator("#detail-title").focus();
+  await page.keyboard.press("d");
+  await page.waitForFunction(() => !/Wait for the review/.test(document.getElementById("detail-title").textContent) && !["Loading", "This item is decided"].includes(document.getElementById("detail-title").textContent), null, { timeout: 15000 });
+  assert.equal(await page.locator("#form-dialog[open]").count(), 0, "a flag of Now still needs a dialog");
+  assert.equal(await page.locator("#detail").isHidden(), false);
+  await page.waitForFunction(() => /Session flags\s*3/.test(document.querySelector("#main .view:not(.pending) [data-key=now-kind-session_flags]").textContent), null, { timeout: 15000 });
   await closePane(page);
+  await page.click("[data-key=now-kind-lessons_to_accept]");
+  await page.waitForSelector("#main .view:not(.pending) [data-key=now-kind-lessons_to_accept][aria-pressed=true]");
+  await page.locator("#main .pane-row").first().click();
+  await page.waitForFunction(() => document.getElementById("detail-kind").textContent === "Decide a lesson" && !document.querySelector(".detail-content.pending"));
+  await page.locator("#decide-reason").fill("The practice prevents unclear release notes.");
+  await page.locator('[data-key="decide-accepted"]').click();
+  await page.waitForFunction(() => [...document.querySelectorAll(".toast")].some((node) => node.textContent === "The lesson is accepted."), null, { timeout: 15000 });
+  await page.waitForFunction(() => document.getElementById("detail").hidden && !document.querySelector("#main .view:not(.pending) [data-key=now-kind-lessons_to_accept]"), null, { timeout: 15000 });
+  step("now: a flag is dismissed with one key and the next flag opens by itself, and a lesson is accepted in the pane with its reason");
+  await go(page, "#sessions");
   await page.waitForFunction(() => /3 open flags/.test((document.querySelector("#main .view:not(.pending) .sentence") || {}).textContent || ""));
   await page.click('[data-key="flag-dismissed-flag_fixture_3"]');
   await page.waitForFunction(() => /2 open flags/.test(document.querySelector("#main .view:not(.pending) .sentence").textContent), null, { timeout: 15000 });
@@ -977,8 +1012,8 @@ async function hived(browser, fixture) {
   await page.locator("#form-save").click();
   await savedToast(page, /2 flags are dismissed\./);
   await page.waitForFunction(() => /0 open flags/.test(document.querySelector("#main .view:not(.pending) .sentence").textContent), null, { timeout: 15000 });
-  assert.match(await text(page, '[data-key="sessions-note"]'), /Of 3 decided flags, 0 were confirmed\./);
-  step("sessions: Now names the open flags, a row dismisses one flag without a dialog, and one dialog without a reason dismisses the rest");
+  assert.match(await text(page, '[data-key="sessions-note"]'), /Of 4 decided flags, 0 were confirmed\./);
+  step("sessions: a row dismisses one flag without a dialog, and one dialog without a reason dismisses the rest");
 
   await go(page, "#hive");
   assert.equal(await text(page, "#main .sentence"), "1 swarm is recorded, and 1 is open.");

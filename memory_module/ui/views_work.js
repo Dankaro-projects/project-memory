@@ -4,7 +4,7 @@
  * allow_paths {episode_id, paths}, delegate, review {episode_id, role} and answer_kickoff {question_ids}. The panes
  * draw the lineage with Panel.lineageGraph of graphs.js, and runs open the "run" pane of views_knowledge.js. A work item
  * with a focused problem shows its check, its attempts side by side and its report, with the focus_check and
- * focus_start forms {episode_id}. Now opens the "now_list" pane {kind, offset} and the reconcile {receipt_id, resolution}
+ * focus_start forms {episode_id}. Now opens the "decide" pane {kind, id} for a lesson, a flag or a proposal, and the reconcile {receipt_id, resolution}
  * and reconcile_read_only forms; a blocked work item lists its unconfirmed calls with the same forms.
  */
 (() => {
@@ -99,9 +99,6 @@
     const progress = c.in_progress || 0, blocked = c.blocked || 0, review = c.review || 0;
     return `${progress} ${noun(progress)} ${verb(progress, "is", "are")} in progress, ${blocked} ${verb(blocked, "is", "are")} blocked and ${review} ${verb(review, "needs", "need")} review.`;
   }
-  const nowDetail = (now) => [now.lessons_to_accept ? `${now.lessons_to_accept} proposed ${verb(now.lessons_to_accept, "lesson awaits", "lessons await")} your acceptance.` : "",
-    now.attention_total ? `${now.attention_count} ${verb(now.attention_count, "item waits", "items wait")} for you.` : "",
-    now.recurrences ? `Failures recurred ${P.count(now.recurrences, "time")} after a lesson was accepted.` : ""].filter(Boolean).join(" ");
   const DOCUMENTS = { unchanged: ["review", "Not yet filled"], missing: ["blocked", "Missing"], changed: ["ready", "Filled"], unreadable: ["blocked", "Unreadable"] };
   function kickoffStep(step, kickoff) {
     const primary = (label, handler) => button(label, "kickoff-next", handler, "primary");
@@ -167,12 +164,6 @@
     session_flags: ["review", "Session flags", "flags", openSessions], session_proposals: ["review", "Session proposals", "proposals", openSessions],
     machine_rules: ["review", "Machine rules", "proposed rules", () => P.go("machine")] };
   const attentionOf = (type) => ATTENTION[type] || ["neutral", P.words(type), "record", openRecordOf];
-  // The whole row is the button, so each row names what it opens, as the cards beside it do.
-  const attentionItem = (entry, index) => {
-    const [tone, label, target, open] = attentionOf(entry.type);
-    return openItem("now-attention-" + entry.type + "-" + (entry.id || index), (t) => open(entry, t),
-      h("span", { class: "row" }, toneBadge(tone, label, entry.type)), h("span", null, entry.reason), h("span", { class: "item-action" }, "Open the " + (target || noun(1))));
-  };
   const decisionItem = (decision, prefix) => openItem(prefix + decision.id, (t) => openDecision(decision.id, t),
     h("span", { class: "row" }, outcomeBadge(decision.outcome && decision.outcome.assessment), decision.status !== "recorded" ? P.badge(decision.status) : null),
     h("strong", null, decision.title), h("span", { class: "muted" }, [decision.episode_title, P.date(decision.date)].filter(Boolean).join(". ")));
@@ -187,10 +178,7 @@
   }
   const allLink = (href, text) => h("a", { href }, text);
 
-  // Now keeps each card short: five items, then a pane with the rest. Decisions and scope blocks open from the view head.
-  const NOW_ITEMS = 5, BOARD_PAGE = 10;
-  const clip = (items) => (items || []).slice(0, NOW_ITEMS);
-  const showAll = (kind, total, shown) => (total > shown ? button(`Show all ${total}`, "now-all-" + kind, (t) => P.openPane("now_list", { kind }, t), "small quiet") : null);
+  const BOARD_PAGE = 10;
   function unconfirmedItem(item) {
     const found = item.transcript || {}, suggested = found.suggested;
     const text = !found.found ? "No transcript entry was found for this call. Check its effect yourself."
@@ -209,63 +197,111 @@
     const items = (data && data.items) || [];
     if (!items.length) return null;
     const bulk = items.filter((item) => item.read_only && (item.transcript || {}).found && item.transcript.result !== "no_result").length;
-    return h("section", { class: "card", dataset: { key: "now-unconfirmed" } }, heading("Needs reconciliation", data.total),
+    return h("section", { class: "card", dataset: { key: "now-unconfirmed", total: String(data.total || items.length) } }, heading("Needs reconciliation", data.total),
       h("p", { class: "muted" }, "These tool calls started without a recorded result, so their work items stay blocked. The suggestion comes from the transcript of the session."),
       bulk && P.canEdit() ? P.formButton(`Resolve ${bulk} read-only ${bulk === 1 ? "call" : "calls"}`, "reconcile_read_only", { count: bulk }, { class: "small" }) : null,
       listOf(items, unconfirmedItem));
   }
+  // Now: one tab for each kind that waits with its count, the rows of the selected kind, and a pane that decides the item or
+  // opens it. Lessons, flags and proposals are decided in the pane, and the next item opens after each decision.
+  const NOW_ICONS = { blocked_work: "work", work_to_review: "records", scope_block: "work", awaiting_merge: "agents", agent_follow_up: "agents",
+    lessons_to_accept: "learning", guard_recurrence: "learning", rules_over_cap: "learning", rule_ineffective: "learning", failure_without_lesson: "decisions",
+    session_flags: "sessions", session_proposals: "sessions", machine_rules: "machine", capture_failure: "requirements", recording_gap: "requirements" };
+  const DECIDED = { lessons_to_accept: ["learning", (data) => (data.proposed_lessons || {}).lessons, (item) => [item.do || item.title || "Proposed lesson", "From: " + (item.episode_title || item.episode_id)],
+      "An accepted lesson guides every later agent run that matches it."],
+    session_flags: ["sessions", (data) => data.flags, (item) => ["\u201C" + item.excerpt + "\u201D", P.words(item.category) + ", from " + item.session_key],
+      "A message of yours that may hold a direction no record followed. Each flag is a low confidence hint."],
+    session_proposals: ["sessions", (data) => data.proposals, (item) => [item.text, P.words(item.slot) + ", " + lower(P.words(item.confidence)) + " confidence"],
+      "A proposal from an earlier session becomes a record only when you accept it."] };
+  const NOW_EXTRA = { unconfirmed: "Needs reconciliation", kickoff: "Kickoff", decisions: "Latest decisions", scope_blocks: "Scope blocks" };
   P.registerView("now", { title: "Now", async render(container, params, ctx) {
-      const now = await P.get("now"), waiting = now.attention_count || 0;
+      const now = await P.get("now"), waiting = now.attention_count || 0, kinds = now.attention_kinds || [];
       ctx.setSummary(waiting ? `${waiting} ${verb(waiting, "item waits", "items wait")} for you.` : "Nothing waits for you.");
-      const counts = now.counts || {}, attention = now.attention || [], agents = now.agents || {}, detail = nowDetail(now);
-      const decisions = (now.latest_decisions || []).length, blocks = (now.scope_blocks || []).length;
-      const stateCard = (title, state, items) => h("section", { class: "card" }, heading(title, counts[state] || 0),
-        listOf(clip(items), (item) => workButton(item, "now-" + state + "-"), `No ${noun(1)} is ${state === "blocked" ? "blocked" : "in progress"}.`),
-        (counts[state] || 0) > clip(items).length ? allLink("#work/state=" + state, `Show all ${counts[state]} on the board`) : null);
-      put(container,
-        h("div", { class: "view-head" }, h("div", { class: "stack" }, h("p", { class: "sentence" }, nowSentence(now)), detail ? h("p", { class: "muted" }, detail) : null),
-          h("div", { class: "row" }, button(`Decisions (${decisions})`, "now-open-decisions", (t) => P.openPane("now_list", { kind: "decisions" }, t), "small"),
-            button(`Scope blocks (${blocks})`, "now-open-blocks", (t) => P.openPane("now_list", { kind: "scope_blocks" }, t), "small"))),
-        P.stateStrip(counts, { legend: true }),
-        await kickoffCard(now),
-        await unconfirmedCard({}),
-        h("div", { class: "grid now-grid" },
-          // What waits for the user leads the view: one button per kind, then the first rows.
-          h("section", { class: "card now-waiting" }, heading("Waiting for you", now.attention_count || 0),
-            (now.attention_kinds || []).length > 1 ? h("div", { class: "row", dataset: { key: "now-kinds" } }, now.attention_kinds.map((kind) => {
-              const [tone, label, , open] = attentionOf(kind.type);
-              return button([label, chip(String(kind.count), { dataset: { tone } })], "now-kind-" + kind.type,
-                (t) => (kind.entry ? open(kind.entry, t) : P.openPane("now_list", { kind: "attention", type: kind.type }, t)), "small");
-            })) : null,
-            listOf(clip(attention), attentionItem, "Nothing waits for you."),
-            showAll("attention", now.attention_total || 0, clip(attention).length)),
-          stateCard("In progress", "in_progress", now.in_progress),
-          stateCard("Blocked", "blocked", now.blocked),
-          h("section", { class: "card" }, heading("Agents running", (agents.active || []).length),
-            listOf(clip(agents.active), (run) => runButton(run, "now-active-"), "No agent run is active."),
-            showAll("agents", (agents.active || []).length, clip(agents.active).length),
-            (agents.recent || []).length ? h("details", null, h("summary", null, "Recent runs"), listOf(agents.recent, (run) => runButton(run, "now-recent-"))) : null)));
+      const [unconfirmed, kickoff] = await Promise.all([unconfirmedCard({}), kickoffCard(now)]);
+      const extra = { unconfirmed, kickoff, decisions: () => [listOf(now.latest_decisions, (decision) => decisionItem(decision, "now-decision-"), "No decision is recorded."), allLink("#decisions", "Open all decisions")],
+        scope_blocks: () => listOf(now.scope_blocks, scopeBlock, "No edit was blocked for being outside the allowed paths.") };
+      const tabs = [...kinds.map((kind) => ({ id: kind.type, label: attentionOf(kind.type)[1], count: kind.count, tone: attentionOf(kind.type)[0], kind })),
+        ...Object.keys(NOW_EXTRA).filter((id) => extra[id]).map((id) => ({ id, label: NOW_EXTRA[id], count: id === "unconfirmed" ? Number(unconfirmed.dataset.total) : id === "scope_blocks" ? (now.scope_blocks || []).length : null }))];
+      const tab = tabs.find((entry) => entry.id === params.kind) || tabs[0], offset = Number(params.offset) || 0;
+      container.classList.add("list-view");
+      put(container, h("div", { class: "tabs now-tabs", role: "group", "aria-label": "What waits for you, by kind" }, tabs.map((entry) => button([entry.label,
+        entry.count === null ? null : chip(String(entry.count), entry.tone ? { dataset: { tone: entry.tone } } : null)], "now-kind-" + entry.id, () => P.go("now", { kind: entry.id }), null,
+      { "aria-pressed": String(entry === tab) }))));
+      // The row of tabs scrolls sideways, so the selected tab is brought into sight.
+      ctx.onShown(() => container.querySelector('.now-tabs [aria-pressed="true"]').scrollIntoView({ block: "nearest", inline: "nearest" }));
+      if (!tab.kind) { put(container, h("div", { class: "list-pane" }, h("div", { class: "pane-rows now-panel", dataset: { scroll: "rows" } }, typeof extra[tab.id] === "function" ? extra[tab.id]() : extra[tab.id]))); return; }
+      // The rows of a decided kind come from the view that owns them, and every other kind pages through the response of Now.
+      const type = tab.id, source = DECIDED[type], [tone, label, target, open] = attentionOf(type);
+      let rows, total = tab.kind.rows;
+      if (source) {
+        const items = await P.get(source[0]).then(source[1], () => null);
+        if (items) { total = tab.count; rows = items.map((item) => { const [title, sub] = source[2](item); return P.paneRow("now-row-" + item.id, NOW_ICONS[type], title, sub, (t) => P.openPane("decide", { kind: type, id: item.id, from: item.episode_title }, t)); }); }
+      }
+      if (!rows) {
+        const page = offset && P.live ? (await P.get("now", { attention_type: type, attention_offset: String(offset) })).attention : tab.kind.entries || [];
+        rows = page.map((entry, index) => P.paneRow("now-attention-" + type + "-" + (entry.id || index), NOW_ICONS[type] || "records", entry.title || label, entry.detail || entry.reason, (t) => open(entry, t)));
+      }
+      const from = source ? 0 : offset, turn = (to) => () => P.go("now", { kind: type, offset: to ? String(to) : "" });
+      put(container, P.listPane({ title: label, count: tab.count, tone, note: source ? source[3] : target ? "A row opens the " + target + "." : "A row opens the " + noun(1) + " with why it waits and its next step.",
+        rows, empty: "Nothing of this kind waits for you.", foot: [h("span", null, rows.length ? `Showing ${from + 1} to ${from + rows.length} of ${Math.max(total, from + rows.length)}.` : ""),
+          !source && P.live ? h("span", { class: "row" }, offset ? button("Previous 20", "now-previous", turn(Math.max(0, offset - 20)), "small") : null,
+            offset + rows.length < total ? button("Next 20", "now-next", turn(offset + 20), "small") : null) : null] }));
   } });
-  const NOW_LISTS = { decisions: "Latest decisions", scope_blocks: "Recent scope blocks", attention: "Waiting for you", agents: "Agents running" };
-  P.registerPane("now_list", { async render(body, params, ctx) {
-      // A snapshot holds the unfiltered response only.
-      const offset = Number(params.offset || 0), type = params.type || "";
-      const now = await P.get("now", { attention_offset: offset ? String(offset) : "", attention_type: P.live ? type : "" });
-      if (type && !P.live) now.attention = (now.attention || []).filter((entry) => entry.type === type);
-      ctx.setTitle(type ? attentionOf(type)[1] : NOW_LISTS[params.kind] || "List");
-      ctx.setKind("Now");
-      const page = (to) => (t) => P.openPane("now_list", { kind: params.kind, type, offset: String(to) }, t);
-      const lists = {
-        decisions: () => [listOf(now.latest_decisions, (decision) => decisionItem(decision, "now-decision-"), "No decision is recorded."), allLink("#decisions", "Open all decisions")],
-        scope_blocks: () => listOf(now.scope_blocks, scopeBlock, "No edit was blocked for being outside the allowed paths."),
-        agents: () => listOf((now.agents || {}).active, (run) => runButton(run, "now-list-active-"), "No agent run is active."),
-        attention: () => [h("p", { class: "muted" }, `Items ${offset + 1} to ${offset + (now.attention || []).length} of ${now.attention_total || 0}.`),
-          listOf(now.attention, attentionItem, "Nothing waits for you."),
-          h("div", { class: "row" }, offset > 0 ? button("Previous 20", "now-list-previous", page(Math.max(0, offset - 20)), "small") : null,
-            offset + (now.attention || []).length < (now.attention_total || 0) ? button("Next 20", "now-list-next", page(offset + 20), "small") : null)],
+
+  // The decision pane of a lesson, a session flag or a session proposal. A lesson needs a reason; a flag does not.
+  const DECIDE = { lessons_to_accept: ["Decide a lesson", "Accept", "Reject", "accepted", "rejected"], session_flags: ["Decide a flag", "Confirm", "Dismiss", "confirmed", "dismissed"],
+    session_proposals: ["Decide a proposal", "Accept", "Reject", "accepted", "rejected"] };
+  // After a decision the next row of the list opens, so a run of decisions needs no return to the list.
+  function advance() {
+    const rows = [...document.querySelectorAll("#main .pane-row")], index = rows.findIndex((row) => "selected" in row.dataset), next = rows[index + 1] || rows[index - 1];
+    if (next) next.click(); else P.closePane();
+  }
+  P.registerPane("decide", { async render(body, params, ctx) {
+      const [kindName, yes, no, yesStatus, noStatus] = DECIDE[params.kind], lessons = params.kind === "lessons_to_accept", flags = params.kind === "session_flags";
+      ctx.setKind(kindName);
+      const data = lessons ? await P.get("record", { id: params.id }) : await P.get("sessions");
+      const item = lessons ? data.record : ((flags ? data.flags : data.proposals) || []).find((entry) => entry.id === params.id);
+      if (!item || (lessons && (item.detail.lesson_status || item.status) !== "proposed")) { ctx.setTitle("This item is decided"); put(body, h("p", { class: "muted" }, "Select another row of the list.")); return; }
+      const lesson = lessons ? item.detail.payload || {} : null;
+      ctx.setTitle(lessons ? lesson.do || item.title : flags ? "\u201C" + item.excerpt + "\u201D" : item.text);
+      if (lessons) put(body, h("div", { class: "row" }, toneBadge("guarded", "Proposed by " + (item.detail.actor || "an agent")), chip(P.words(lesson.pattern_type || "lesson")), h("span", { class: "muted" }, P.date(item.date))),
+        P.kv([["When", lesson.when], ["Because", lesson.because], ["Exceptions", lesson.exceptions],
+          ["Learned in", button(item.episode_title || params.from || item.episode_id, "decide-work", (t) => P.openWork(item.episode_id, t), "small")]]),
+        h("p", { class: "muted" }, "An accepted lesson guides every later agent run that matches it. It keeps the triggers it was proposed with; open the full lesson to change them."),
+        button("Open the full lesson", "decide-open", (t) => P.openRecord(item.id, t), "small quiet"));
+      else if (flags) put(body, h("div", { class: "row" }, chip(P.words(item.category)), toneBadge("backlog", "Low confidence"), h("span", { class: "muted" }, item.session_key + ", line " + item.line + ", " + P.date(item.at))),
+        h("p", null, "No decision, requirement or correction was recorded within the hour after this message. Confirm the flag when a record is missing. Dismiss it when nothing is missing."),
+        button("Open Sessions", "decide-open", () => P.go("sessions"), "small quiet"));
+      else put(body, h("div", { class: "row" }, chip(P.words(item.slot)), chip(P.words(item.confidence) + " confidence"), h("span", { class: "muted" }, item.pointers.file + ", lines " + item.pointers.lines.join(", "))),
+        button("Open Sessions", "decide-open", () => P.go("sessions"), "small quiet"));
+      if (!ctx.canEdit) return;
+      if (!lessons && !flags) { put(ctx.foot, h("div", { class: "actions" }, [[yes, yesStatus, "primary"], [no, noStatus, ""]].map(([text, status, tone]) =>
+        button(text, "decide-" + status, (t) => P.openForm("session_proposal", { proposal_id: item.id, status }, t).then((result) => result && advance()), tone)))); return; }
+      const reason = P.textarea("reason", "", { id: "decide-reason", rows: "1", "aria-label": "Reason", placeholder: lessons ? "Write the reason for your decision" : "Add a reason (optional)" });
+      const decide = (status) => async (trigger) => {
+        const text = reason.value.trim();
+        if (lessons && !text) { P.toast("Write the reason for your decision first.", "blocked"); reason.focus(); return; }
+        trigger.disabled = true;
+        try {
+          const triggers = lessons && status === "accepted" && ((lesson.paths || []).length || (lesson.keywords || []).length || lesson.failure_type || (lesson.roles || []).length)
+            ? { paths: lesson.paths || [], keywords: lesson.keywords || [], ...(lesson.failure_type ? { failure_type: lesson.failure_type } : {}), ...((lesson.roles || []).length ? { roles: lesson.roles } : {}) } : {};
+          await P.action(lessons ? "lesson_review" : "session_flag", lessons ? { lesson_id: item.id, expected_version: (await P.get("record", { id: item.episode_id })).record.detail.version, status, reason: text, ...triggers }
+            : { flag_id: item.id, status, ...(text ? { reason: text } : {}) }, P.requestKey("decide"));
+          P.toast(`The ${lessons ? "lesson" : "flag"} is ${status}.`);
+          advance();
+        } catch (error) { trigger.disabled = false; P.toast(error.message, "blocked"); }
       };
-      put(body, (lists[params.kind] || lists.attention)());
+      put(ctx.foot, reason, h("div", { class: "actions" }, button(yes, "decide-" + yesStatus, decide(yesStatus), "primary", { "data-hotkey": yes[0].toLowerCase() }),
+        button(no, "decide-" + noStatus, decide(noStatus), null, { "data-hotkey": no[0].toLowerCase() })),
+      h("p", { class: "hint" }, `The next item opens after each decision. Keys: ${yes[0]} ${yes.toLowerCase()}, ${no[0]} ${no.toLowerCase()}, J and K move.`),
+      flags && data.flags.length > 1 ? P.formButton("Dismiss the " + data.flags.length + " shown flags", "session_flag", { flag_ids: data.flags.map((flag) => flag.id), status: "dismissed" }, { class: "small quiet" }) : null);
   } });
+  // The decision letters never fire while the reader types in a field.
+  document.addEventListener("keydown", (event) => {
+    if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey || event.target.closest("input, textarea, select, [contenteditable], dialog")) return;
+    const target = document.querySelector('#detail .detail-foot [data-hotkey="' + CSS.escape(event.key.toLowerCase()) + '"]');
+    if (target && !target.disabled) { event.preventDefault(); target.click(); }
+  });
 
   // Plan.
   const matches = (node, filter) => (!filter.type || node.item_type === filter.type) && (!filter.state || node.state === filter.state)

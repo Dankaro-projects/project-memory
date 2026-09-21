@@ -226,6 +226,34 @@ a.strip-part:hover { filter: brightness(0.85); }
   .kv { grid-template-columns: minmax(0, 1fr); gap: 2px; }
   .kv dd { margin-bottom: var(--dk-space-2); }
 }
+/* List pane: a view of this kind fills the pane of the view, its head and foot stay in place and only its rows scroll. */
+.main:has(> .list-view:not(.pending)) { display: flex; padding: 0; overflow: hidden; }
+.view.list-view:not(.pending) { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 0; }
+.tabs.now-tabs { flex: none; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; padding: var(--dk-space-2) var(--dk-space-3) 0; }
+.tabs.now-tabs button { flex: none; min-height: 44px; border-bottom-width: 3px; border-radius: var(--dk-radius) var(--dk-radius) 0 0; white-space: nowrap; }
+.tabs.now-tabs [aria-pressed="true"] { color: var(--dk-color-accent-text); background: var(--dk-color-accent-soft); }
+.list-pane { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.pane-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 14px; padding: 14px var(--dk-space-5) var(--dk-space-3); border-bottom: 1px solid var(--dk-color-border); }
+.pane-head h2 { display: flex; align-items: center; gap: 10px; font-size: 19px; letter-spacing: -0.02em; }
+.pane-rows { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; list-style: none; margin: 0; padding: 0; }
+.pane-rows > li + li { border-top: 1px solid var(--dk-color-border); }
+.pane-rows > .empty, .now-panel { padding: var(--dk-space-5); }
+.now-panel { display: grid; gap: var(--dk-space-4); align-content: start; }
+button.pane-row {
+  width: 100%; display: grid; grid-template-columns: 40px minmax(0, 1fr) 20px; align-items: center; gap: var(--dk-space-2);
+  min-height: 60px; padding: 7px var(--dk-space-5) 7px var(--dk-space-2); font-weight: 400; background: transparent; border: 0; border-radius: 0;
+}
+button.pane-row:hover { background: #f8fafb; }
+.pane-row > .icon:first-child { justify-self: center; color: var(--dk-color-support); }
+.pane-row > .icon:last-child { color: var(--dk-color-support); }
+.pane-row strong, .pane-row .muted { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pane-row strong { font-size: 15px; letter-spacing: -0.01em; }
+.pane-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--dk-space-2); padding: 10px var(--dk-space-5); color: var(--dk-color-support); border-top: 1px solid var(--dk-color-border); }
+/* The decision of the pane: a reason field of one line that grows, and two buttons of equal weight in width. */
+.detail-foot textarea { height: 40px; min-height: 40px; max-height: 120px; }
+.actions { display: grid; grid-template-columns: 1fr 1fr; gap: var(--dk-space-3); }
+.actions button { min-height: 40px; }
+.actions button:not(.primary) { color: var(--dk-color-accent-text); border-color: var(--dk-color-accent); }
 /* The row that opened the pane stays marked while the pane is open. */
 .main [data-selected], .main button.item[data-selected] { background: var(--dk-color-accent-soft); border-color: var(--dk-color-accent); box-shadow: inset 3px 0 0 var(--dk-color-accent); }
 /* Below two panes of width one pane shows at a time. The view keeps its place and its scroll position behind the pane. */
@@ -420,11 +448,6 @@ table.kn-table td:first-child { min-width: 160px; }
 /* views_work.js: Now, Plan, Work and Decisions views and the work and decision panes. */
 button.item.work-item, .work-item { display: grid; grid-template-columns: minmax(0, 1fr); justify-content: normal; text-align: left; gap: 4px; min-width: 0; }
 .work-item .row { gap: 6px; }
-/* Each row of the attention list names what opens, because the whole row is the button. */
-.item-action { font-weight: 700; color: var(--dk-color-accent-text); }
-button.item:hover .item-action { text-decoration: underline; }
-.now-grid, .now-waiting .list { grid-template-columns: repeat(auto-fill, minmax(min(100%, 340px), 1fr)); }
-.now-waiting { grid-column: 1 / -1; }
 .card.kickoff { border-color: var(--dk-color-accent); }
 /* The checklist stays one card high until the reader opens it, so the project state keeps the first screen. */
 .kickoff-detail[open] > summary { margin-bottom: var(--dk-space-3); }
@@ -457,9 +480,9 @@ summary > h3 { display: inline; }
 }
 .board-column { min-width: 0; display: grid; gap: var(--dk-space-2); padding: var(--dk-space-3); background: var(--dk-color-surface); border-top: 3px solid var(--tone); border-radius: var(--dk-radius); }
 .board-column > h3 { display: flex; align-items: center; justify-content: space-between; font-size: 13px; }
-.board-column .list, .now-waiting .list { gap: var(--dk-space-2); }
-.board-column .list > li, .now-waiting .list > li { padding: 0; border-top: 0; }
-.board-column button.item, .now-waiting button.item { height: 100%; background: var(--dk-color-white); border-color: var(--dk-color-border); }
+.board-column .list { gap: var(--dk-space-2); }
+.board-column .list > li { padding: 0; border-top: 0; }
+.board-column button.item { height: 100%; background: var(--dk-color-white); border-color: var(--dk-color-border); }
 .compare { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--dk-space-3); }
 .compare .kv { grid-template-columns: minmax(0, 1fr); gap: 2px; }
 @media (max-width: 639px) {

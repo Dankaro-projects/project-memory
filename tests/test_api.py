@@ -173,6 +173,10 @@ class ApiTests(unittest.TestCase):
         self.assertEqual((by_kind['blocked_work']['count'], by_kind['blocked_work']['rows'], 'entry' in by_kind['blocked_work']), (2, 2, False))
         self.assertEqual(by_kind['lessons_to_accept']['entry']['type'], 'lessons_to_accept')
         self.assertEqual(value['attention_count'], sum(item['count'] for item in value['attention_kinds']))
+        # Each kind carries its first rows for its tab, and the row of a work item names the item and why it waits.
+        self.assertEqual([len(by_kind['blocked_work']['entries']), len(by_kind['lessons_to_accept']['entries'])], [2, 1])
+        row = by_kind['blocked_work']['entries'][0]
+        self.assertTrue(row['title'] and row['detail'] and row['reason'].startswith(row['title']))
         blocked = api.now(self.m, {'attention_type': 'blocked_work'})
         self.assertEqual(([item['type'] for item in blocked['attention']], blocked['attention_total']), (['blocked_work'] * 2, 2))
         self.assertEqual(value['lessons_to_accept'], 1)

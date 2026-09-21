@@ -67,9 +67,13 @@ USABILITY_STYLE_ALLOWANCE = 400
 # Measured against 07e03bf after the detail pane replaced the drawer: core.js lost 4,313 code characters and gained 6,365,
 # a growth of 2,052 with the row selection, the J and K keys, the pinned foot, and the scroll positions and typed text that
 # a live update keeps. The view files grew by 151 and panel.css lost 1,647 and gained 2,553, a growth of 906 to 30,990.
-REDESIGN_ALLOWANCE = {'views': 400, 'core.js': 5_100}
+# Measured against e6f5550 after Now became tabs by kind with a list pane and a decision pane: views_work.js lost 5,016 code
+# characters with the four cards, the attention rows and the list pane of Now, and gained 9,824, a growth of 4,808. core.js
+# grew by 1,046 with Panel.listPane and Panel.paneRow, and panel.css lost 581 and gained 2,623, a growth of 2,042 to 33,032.
+# The stylesheet allowance now uses 5,750 of its cap of 8,000 while four items that move views are still open.
+REDESIGN_ALLOWANCE = {'views': 5_250, 'core.js': 6_200}
 REDESIGN_LIMIT = 20_000
-REDESIGN_STYLE_ALLOWANCE = 3_700
+REDESIGN_STYLE_ALLOWANCE = 5_750
 REDESIGN_STYLE_LIMIT = 8_000
 REDESIGN_SHELL_ALLOWANCE = 2_300
 ALLOWANCES = (FOCUS_ALLOWANCE, HIVE_ALLOWANCE, USAGE_ALLOWANCE, SESSIONS_ALLOWANCE, PANEL_ACTIONS_ALLOWANCE, USABILITY_ALLOWANCE,
@@ -155,7 +159,9 @@ class InterfaceBudgetTests(unittest.TestCase):
             self.assertIn(f'P.registerForm("{name}"', forms)
         self.assertIn('P.registerView("sessions"', (UI / 'views_knowledge.js').read_text(encoding='utf-8'))
         work = (UI / 'views_work.js').read_text(encoding='utf-8')
-        self.assertIn('P.registerPane("now_list"', work)
+        # The tabs of Now replaced the list pane of the earlier Now view, and the decision pane serves its lessons, flags and proposals.
+        self.assertIn('P.registerPane("decide"', work)
+        self.assertIn('const NOW_EXTRA = { unconfirmed: "Needs reconciliation", kickoff: "Kickoff"', work)
         self.assertIn('async function unconfirmedCard(params)', work)
 
     def test_the_budget_is_measured_with_the_usability_changes_in_place(self):
@@ -179,7 +185,7 @@ class InterfaceBudgetTests(unittest.TestCase):
         self.assertLessEqual(REDESIGN_STYLE_ALLOWANCE, REDESIGN_STYLE_LIMIT)
         core = (UI / 'core.js').read_text(encoding='utf-8')
         for part in ('const WAITS = ', 'function icon(name)', 'function drawActivity()', 'const setSummary = ', 'function openPane(kind, params = {}, trigger)',
-                     'function markSelected()', 'function stepRow(by)'):
+                     'function markSelected()', 'function stepRow(by)', 'const listPane = (options)', 'const paneRow = (key, name, title, sub, handler)'):
             self.assertIn(part, core)
         self.assertNotIn('Drawer', core)
         shell = (ROOT / 'viewer.html').read_text(encoding='utf-8')

@@ -671,10 +671,11 @@ class Builder:
         self.ids['hive'] = {'swarm': swarm, 'entries': ids}
 
     def session_flags(self):
-        """Three open flags of one finished session, so the Sessions view offers the row actions and the batch decision."""
+        """Four open flags of one finished session, so Now decides one in its pane and Sessions offers the row actions and the batch decision."""
         sessions.ensure(self.m)
         with self.m._write():
-            for turn, excerpt in enumerate(('No, keep the offset of the delivery day.', 'Do not change the export format.', 'Use the second file instead.'), start=1):
+            for turn, excerpt in enumerate(('No, keep the offset of the delivery day.', 'Do not change the export format.', 'Use the second file instead.',
+                                            'Wait for the review before the release.'), start=1):
                 self.m.db.execute('INSERT INTO session_flags VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
                                   (f'flag_fixture_{turn}', 'claude:fixture', turn, turn * 4, '2026-09-10T10:0%d:00+00:00' % turn,
                                    'correction', excerpt, 'open', '2026-09-10T12:00:00+00:00', None, None, None))

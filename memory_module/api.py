@@ -398,9 +398,16 @@ def now(memory, params):
             attention.append({'type': 'scope_block', 'id': block['id'], 'episode_id': block['episode_id'],
                               'reason': 'An edit was blocked because ' + ', '.join(outside[:5]) + (' is' if len(outside) == 1 else ' are') +
                                         ' outside the recorded paths of the work item. Allow the paths or keep the block.'})
+    def waits(item, fallback):
+        """Why a work item waits, in one line for its row: the first issue and the number of further ones."""
+        issues = item['issues']
+        if not issues:
+            return fallback
+        return issues[0]['reason'] + (f' {len(issues) - 1} more issue{"" if len(issues) == 2 else "s"}.' if len(issues) > 1 else '')
     for item in by_state['blocked']:
         first = item['issues'][0]['reason'] if item['issues'] else (item['plan'] or {}).get('reason', 'The work item is blocked.')
-        attention.append({'type': 'blocked_work', 'id': item['id'], 'reason': item['title'] + ' is blocked. ' + first})
+        attention.append({'type': 'blocked_work', 'id': item['id'], 'title': item['title'], 'detail': waits(item, first),
+                          'reason': item['title'] + ' is blocked. ' + first})
     for run in awaiting_merge(memory, limit=20):
         review = (run.get('review') or {}).get('state', 'missing').replace('_', ' ')
         changed = run['changed_files']
@@ -438,7 +445,9 @@ def now(memory, params):
                 attention.append({'type': 'recording_gap', 'id': session['session_id'],
                                   'reason': 'A host session has recording issues: ' + ', '.join(issue['type'].replace('_', ' ') for issue in session['issues']) + '.'})
     for item in by_state['review']:
-        attention.append({'type': 'work_to_review', 'id': item['id'], 'reason': item['title'] + ' needs review before it can continue or finish.'})
+        attention.append({'type': 'work_to_review', 'id': item['id'], 'title': item['title'],
+                          'detail': waits(item, 'It needs review before it can continue or finish.'),
+                          'reason': item['title'] + ' needs review before it can continue or finish.'})
     lessons = proposed_lesson_ids(memory)
     if lessons:
         attention.append({'type': 'lessons_to_accept', 'id': lessons[0], 'count': len(lessons),
@@ -460,13 +469,15 @@ def now(memory, params):
         attention.append({'type': 'machine_rules', 'id': None, 'count': promoted,
                           'reason': f'{promoted} proposed machine rule{"" if promoted == 1 else "s"} '
                                     f'wait{"s" if promoted == 1 else ""} for your acceptance or refusal.'})
-    # The list can be long, so Now leads with one entry per kind: how many items wait, in how many rows, and the row itself
-    # when there is only one. attention_type narrows the paged list to one kind.
+    # The list can be long, so Now leads with one entry per kind: how many items wait, in how many rows, the first rows of
+    # the kind for its tab, and the row itself when there is only one. attention_type narrows the paged list to one kind.
     kinds = {}
     for item in attention:
-        kind = kinds.setdefault(item['type'], {'type': item['type'], 'count': 0, 'rows': 0, 'entry': item})
+        kind = kinds.setdefault(item['type'], {'type': item['type'], 'count': 0, 'rows': 0, 'entry': item, 'entries': []})
         kind['count'] += item.get('count', 1)
         kind['rows'] += 1
+        if len(kind['entries']) < ATTENTION_LIMIT:
+            kind['entries'].append(item)
     for kind in kinds.values():
         if kind['rows'] > 1:
             del kind['entry']

@@ -77,7 +77,7 @@ const pane = (page) => page.locator("#detail-body .detail-content:not(.pending)"
       }
       assert.match(await text(page, "#main"), /requirements/i);
       await go(page, "#now");
-      assert.equal(await text(page, "#main .sentence"), "1 work item is in progress, 2 are blocked and 1 needs review.");
+      assert.match(await text(page, "#view-summary"), /^\d+ items wait for you\.$/);
       await go(page, "#plan");
       assert.match(await text(page, "#main .sentence"), /16 work items are planned in 7 phases\./);
       await go(page, "#architecture");
@@ -91,15 +91,26 @@ const pane = (page) => page.locator("#detail-body .detail-content:not(.pending)"
 
       await go(page, "#agents");
       assert.ok(!(await text(page, "#main")).includes("Not applicable"), `${kind}: the snapshot runs table prints Not applicable`);
+      // Every kind has its tab with the true count and its rows from the embedded response of the Now view.
       await go(page, "#now");
-      assert.match(await text(page, "#main"), /occurred once after the lesson was accepted/);
-      assert.equal(await page.locator('#main [data-key^="now-attention-"] .item-action').count(), 5);
-      // The rest of the attention list opens in the pane from the embedded response of the Now view.
-      await page.click("[data-key=now-all-attention]");
-      await page.waitForSelector("#detail-body [data-key^='now-attention-']");
-      assert.equal(await page.locator('#detail-body [data-key^="now-attention-"] .item-action').count(), 9);
+      const tabs = await page.evaluate(async () => {
+        const kinds = (await Panel.get("now")).attention_kinds;
+        return { expected: kinds.map((entry) => [entry.type, entry.count]), rows: kinds.reduce((sum, entry) => sum + entry.entries.length, 0),
+          shown: [...document.querySelectorAll(".now-tabs button .chip")].slice(0, kinds.length).map((node) => [node.parentNode.dataset.key.replace("now-kind-", ""), Number(node.textContent)]) };
+      });
+      assert.deepEqual(tabs.shown, tabs.expected);
+      assert.equal(tabs.rows, 9);
+      await page.click('[data-key="now-kind-guard_recurrence"]');
+      await page.waitForSelector('#main .view:not(.pending) [data-key="now-kind-guard_recurrence"][aria-pressed="true"]');
+      assert.match(await text(page, "#main .pane-row"), /occurred once after the lesson was accepted/);
+      // A lesson opens in the pane of a snapshot without a decision, because a snapshot is read only.
+      await page.click('[data-key="now-kind-lessons_to_accept"]');
+      await page.waitForSelector('#main .view:not(.pending) [data-key="now-kind-lessons_to_accept"][aria-pressed="true"]');
+      await page.locator("#main .pane-row").first().click();
+      await page.waitForFunction(() => document.getElementById("detail-kind").textContent === "Decide a lesson" && !document.querySelector(".detail-content.pending"));
+      assert.equal(await page.locator("#detail .detail-foot button, #detail .detail-foot textarea").count(), 0);
       await page.evaluate(() => Panel.closePane());
-      step(`${kind}: the snapshot counts a single event in the singular and names the action of every attention entry`);
+      step(`${kind}: the snapshot shows every kind of Now with its true count and its rows, and offers no decision`);
 
       // No action is offered and none can be opened.
       for (const name of VIEWS) {

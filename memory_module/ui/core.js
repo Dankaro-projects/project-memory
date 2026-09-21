@@ -42,6 +42,9 @@
  *   aria-current, J and K open the next and the previous row of its kind, and the first trigger gets focus on close.
  *   Below 1180 pixels one pane shows at a time. Panel.openRecord(id, trigger) uses the 'record' pane and
  *   Panel.openWork(id, trigger) the 'work' pane, registered by views_knowledge.js and views_work.js. Escape closes.
+ * List pane: a view that adds the class list-view to its container fills #main and scrolls only inside its list.
+ *   Panel.listPane({title, count, tone, note, rows, empty, foot}) has a fixed head and foot around the scrolling rows,
+ *   and Panel.paneRow(key, icon, title, sub, handler(trigger)) is one row of 60 pixels that opens a pane or a view.
  *
  * Forms (modal dialog): Panel.registerForm(name, {title, submitLabel, render(fields, context, form),
  *   submit(values, context, form) -> {operation, data}, done(result, context) -> toast text, reload}).
@@ -577,6 +580,13 @@ const Panel = (() => {
     const next = rows[rows.indexOf(row) + by];
     if (next) { next.click(); next.scrollIntoView({ block: "nearest" }); }
   }
+  // List pane: the head and the foot stay in place and only the rows scroll.
+  const paneRow = (key, name, title, sub, handler) => button([icon(name), h("span", null, h("strong", { title }, title), sub ? h("span", { class: "muted" }, sub) : null), icon("chev")], key, handler, "pane-row");
+  const listPane = (options) => h("section", { class: "list-pane" },
+    h("div", { class: "pane-head" }, h("h2", null, options.title, typeof options.count === "number" ? chip(String(options.count), options.tone ? { dataset: { tone: options.tone } } : null) : null),
+      options.note ? h("p", { class: "muted" }, options.note) : null),
+    options.rows.length ? h("ul", { class: "pane-rows", dataset: { scroll: "rows" } }, options.rows.map((row) => h("li", null, row))) : h("div", { class: "pane-rows" }, empty(options.empty)),
+    options.foot ? h("div", { class: "pane-foot" }, options.foot) : null);
   const openRecord = (id, trigger) => openPane("record", { id }, trigger);
   const openWork = (id, trigger) => openPane("work", { id }, trigger);
 
@@ -774,7 +784,7 @@ const Panel = (() => {
     registerView: (name, definition) => views.set(name, definition), registerPane: (kind, definition) => panes.set(kind, definition),
     registerForm: (name, definition) => forms.set(name, definition),
     go, route: () => ({ name: state.route.name, params: { ...state.route.params } }), setParams, refresh,
-    openPane, closePane, backPane, openRecord, openWork, openForm, formValues, field, input, textarea, select, filterField,
+    openPane, closePane, backPane, openRecord, openWork, listPane, paneRow, openForm, formValues, field, input, textarea, select, filterField,
     h, icon, put, button, chip, kv, lower, badge, tone, link, markdown, words, term, template, date, count, progress, stateStrip, empty, errorState, toast, alert, clearAlert,
   };
 })();
