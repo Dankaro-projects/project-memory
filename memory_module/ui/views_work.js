@@ -231,10 +231,12 @@
       ctx.onShown(() => container.querySelector('.now-tabs [aria-pressed="true"]').scrollIntoView({ block: "nearest", inline: "nearest" }));
       if (!tab.kind) { put(container, h("div", { class: "list-pane" }, h("div", { class: "pane-rows now-panel", dataset: { scroll: "rows" } }, typeof extra[tab.id] === "function" ? extra[tab.id]() : extra[tab.id]))); return; }
       // The rows of a decided kind come from the view that owns them, and every other kind pages through the response of Now.
-      const type = tab.id, source = DECIDED[type], [tone, label, target, open] = attentionOf(type);
-      let rows, total = tab.kind.rows;
+      const type = tab.id, [tone, label, target, open] = attentionOf(type);
+      let rows, total = tab.kind.rows, source = DECIDED[type];
       if (source) {
+        // A snapshot holds no session messages, so its flags and proposals stay one row that names their number.
         const items = await P.get(source[0]).then(source[1], () => null);
+        if (!items) source = null;
         if (items) { total = tab.count; rows = items.map((item) => { const [title, sub] = source[2](item); return P.paneRow("now-row-" + item.id, NOW_ICONS[type], title, sub, (t) => P.openPane("decide", { kind: type, id: item.id, from: item.episode_title }, t)); }); }
       }
       if (!rows) {
