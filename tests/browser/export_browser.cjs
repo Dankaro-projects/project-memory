@@ -33,7 +33,7 @@ function watch(page) {
   page.on("console", (message) => { if (message.type() === "error") problems.push("console: " + message.text()); });
   return problems;
 }
-const settle = (page) => page.waitForFunction(() => !document.querySelector("#main .view.pending, .drawer-content.pending"));
+const settle = (page) => page.waitForFunction(() => !document.querySelector("#main .view.pending, .detail-content.pending"));
 async function go(page, hash) {
   await page.evaluate((value) => { location.hash = value; }, hash);
   await page.waitForFunction((name) => document.querySelector(`#main .view[data-view="${name}"]:not(.pending)`), hash.split("/")[0].slice(1));
@@ -48,7 +48,7 @@ async function noOverflow(page, width, label) {
   assert.ok(size[0] <= size[1] && size[2] <= size[3], `${label} overflows at ${width} pixels: ${size}`);
 }
 const text = (page, selector) => page.locator(selector).first().innerText();
-const drawer = (page) => page.locator("#drawer-body .drawer-content:not(.pending)");
+const pane = (page) => page.locator("#detail-body .detail-content:not(.pending)");
 
 (async () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "export-browser-"));
@@ -94,11 +94,11 @@ const drawer = (page) => page.locator("#drawer-body .drawer-content:not(.pending
       await go(page, "#now");
       assert.match(await text(page, "#main"), /occurred once after the lesson was accepted/);
       assert.equal(await page.locator('#main [data-key^="now-attention-"] .item-action').count(), 5);
-      // The rest of the attention list opens in the drawer from the embedded response of the Now view.
+      // The rest of the attention list opens in the pane from the embedded response of the Now view.
       await page.click("[data-key=now-all-attention]");
-      await page.waitForSelector("#drawer-body [data-key^='now-attention-']");
-      assert.equal(await page.locator('#drawer-body [data-key^="now-attention-"] .item-action').count(), 9);
-      await page.evaluate(() => Panel.closeDrawer());
+      await page.waitForSelector("#detail-body [data-key^='now-attention-']");
+      assert.equal(await page.locator('#detail-body [data-key^="now-attention-"] .item-action').count(), 9);
+      await page.evaluate(() => Panel.closePane());
       step(`${kind}: the snapshot counts a single event in the singular and names the action of every attention entry`);
 
       // No action is offered and none can be opened.
@@ -114,28 +114,28 @@ const drawer = (page) => page.locator("#drawer-body .drawer-content:not(.pending
 
       // A record that the snapshot does not hold says so instead of failing.
       await page.evaluate(() => Panel.openRecord("event_missing_from_this_snapshot"));
-      await page.waitForFunction(() => /not included in this snapshot/.test(document.getElementById("drawer-body").textContent));
-      await page.evaluate(() => Panel.closeDrawer());
+      await page.waitForFunction(() => /not included in this snapshot/.test(document.getElementById("detail-body").textContent));
+      await page.evaluate(() => Panel.closePane());
       step(`${kind}: a record outside the snapshot states that it is not included`);
 
       // The document keeps its structure, and the payloads inside it stay inert.
       await page.evaluate((id) => Panel.openRecord(id), fixture.ids.document);
-      await page.waitForFunction(() => /Outline/.test((document.querySelector("#drawer-body .drawer-content:not(.pending)") || {}).textContent || ""));
-      assert.equal(await drawer(page).locator(".document table tbody tr").count(), 2);
-      assert.equal(await drawer(page).locator('a[href^="javascript:"]').count(), 0);
-      assert.equal(await drawer(page).locator("img").count(), 0);
-      assert.equal(await drawer(page).locator('a[href^="https:"]').first().getAttribute("rel"), "noopener noreferrer");
-      assert.match(await drawer(page).innerText(), /<img src=x onerror=/);
-      await drawer(page).locator('[data-key="source-toggle"]').click();
-      assert.equal(await drawer(page).locator("pre.source-text").count(), 1);
-      await page.evaluate(() => Panel.closeDrawer());
+      await page.waitForFunction(() => /Outline/.test((document.querySelector("#detail-body .detail-content:not(.pending)") || {}).textContent || ""));
+      assert.equal(await pane(page).locator(".document table tbody tr").count(), 2);
+      assert.equal(await pane(page).locator('a[href^="javascript:"]').count(), 0);
+      assert.equal(await pane(page).locator("img").count(), 0);
+      assert.equal(await pane(page).locator('a[href^="https:"]').first().getAttribute("rel"), "noopener noreferrer");
+      assert.match(await pane(page).innerText(), /<img src=x onerror=/);
+      await pane(page).locator('[data-key="source-toggle"]').click();
+      assert.equal(await pane(page).locator("pre.source-text").count(), 1);
+      await page.evaluate(() => Panel.closePane());
       step(`${kind}: the document keeps its table and outline, and its raw HTML and javascript link stay inert`);
 
       // The note that carries a closing script tag must not have run.
       await page.evaluate((id) => Panel.openRecord(id), fixture.ids.review);
-      await page.waitForFunction(() => document.getElementById("drawer-title").textContent !== "Loading");
+      await page.waitForFunction(() => document.getElementById("detail-title").textContent !== "Loading");
       assert.equal(await page.evaluate(() => window.injected), undefined);
-      await page.evaluate(() => Panel.closeDrawer());
+      await page.evaluate(() => Panel.closePane());
       step(`${kind}: the injected script payload did not run`);
 
       for (const width of [1440, 768, 390, 320]) {

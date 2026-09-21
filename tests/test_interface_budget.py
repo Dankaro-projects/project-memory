@@ -64,9 +64,12 @@ USABILITY_STYLE_ALLOWANCE = 400
 # with the rail groups, the rail counts, the icons, the view summary and Project activity, views_work.js by 148 with the
 # summary of Now, and panel.css by 2,750 to 30,084. viewer.html grew by 2,221 to 8,677 with the 17 inline icon symbols, the
 # foot of the rail and the header row. The user confirmed the page shell allowance of 2,300 on the same day.
-REDESIGN_ALLOWANCE = {'views': 200, 'core.js': 3_000}
+# Measured against 07e03bf after the detail pane replaced the drawer: core.js lost 4,313 code characters and gained 6,365,
+# a growth of 2,052 with the row selection, the J and K keys, the pinned foot, and the scroll positions and typed text that
+# a live update keeps. The view files grew by 151 and panel.css lost 1,647 and gained 2,553, a growth of 906 to 30,990.
+REDESIGN_ALLOWANCE = {'views': 400, 'core.js': 5_100}
 REDESIGN_LIMIT = 20_000
-REDESIGN_STYLE_ALLOWANCE = 2_800
+REDESIGN_STYLE_ALLOWANCE = 3_700
 REDESIGN_STYLE_LIMIT = 8_000
 REDESIGN_SHELL_ALLOWANCE = 2_300
 ALLOWANCES = (FOCUS_ALLOWANCE, HIVE_ALLOWANCE, USAGE_ALLOWANCE, SESSIONS_ALLOWANCE, PANEL_ACTIONS_ALLOWANCE, USABILITY_ALLOWANCE,
@@ -152,7 +155,7 @@ class InterfaceBudgetTests(unittest.TestCase):
             self.assertIn(f'P.registerForm("{name}"', forms)
         self.assertIn('P.registerView("sessions"', (UI / 'views_knowledge.js').read_text(encoding='utf-8'))
         work = (UI / 'views_work.js').read_text(encoding='utf-8')
-        self.assertIn('P.registerDrawer("now_list"', work)
+        self.assertIn('P.registerPane("now_list"', work)
         self.assertIn('async function unconfirmedCard(params)', work)
 
     def test_the_budget_is_measured_with_the_usability_changes_in_place(self):
@@ -167,15 +170,18 @@ class InterfaceBudgetTests(unittest.TestCase):
         for part in ('function titledButton(id, options = {})', 'anchored("proposed", section("Proposed lessons"', '"Dismiss the " + flags.length + " shown flags"'):
             self.assertIn(part, knowledge)
         self.assertIn('context.needsPaths', (UI / 'forms.js').read_text(encoding='utf-8'))
-        self.assertIn('function coverPage()', (UI / 'core.js').read_text(encoding='utf-8'))
+        # The pane replaced the drawer that covered the page, so the stylesheet now hides the view behind a full width pane.
+        self.assertIn('.shell[data-pane="open"] .main { visibility: hidden; }', (UI / 'panel.css').read_text(encoding='utf-8'))
 
     def test_the_budget_is_measured_with_the_fixed_frame_shell_in_place(self):
         # The redesign allowance is temporary and capped, and it pays for these parts of the shell.
         self.assertLessEqual(sum(REDESIGN_ALLOWANCE.values()), REDESIGN_LIMIT)
         self.assertLessEqual(REDESIGN_STYLE_ALLOWANCE, REDESIGN_STYLE_LIMIT)
         core = (UI / 'core.js').read_text(encoding='utf-8')
-        for part in ('const WAITS = ', 'function icon(name)', 'function drawActivity()', 'const setSummary = '):
+        for part in ('const WAITS = ', 'function icon(name)', 'function drawActivity()', 'const setSummary = ', 'function openPane(kind, params = {}, trigger)',
+                     'function markSelected()', 'function stepRow(by)'):
             self.assertIn(part, core)
+        self.assertNotIn('Drawer', core)
         shell = (ROOT / 'viewer.html').read_text(encoding='utf-8')
         for part in ('<symbol id="i-usage"', 'class="rail-foot"', 'id="view-summary"', 'id="activity-toggle"'):
             self.assertIn(part, shell)

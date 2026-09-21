@@ -48,7 +48,6 @@
   --dk-space-8: 32px;
   --dk-radius: 8px;
   --rail-width: 256px;
-  --drawer-width: 600px;
 }
 
 *, *::before, *::after { box-sizing: border-box; }
@@ -204,29 +203,36 @@ a.strip-part:hover { filter: brightness(0.85); }
   position: relative; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: var(--dk-space-6); outline: none; overflow-wrap: anywhere;
   background: var(--dk-color-white); border: 1px solid var(--dk-color-border); border-radius: var(--dk-radius);
 }
-.main > .view.pending, .drawer-content.pending {
-  position: absolute; top: 0; left: 0; right: 0; padding: inherit; visibility: hidden; pointer-events: none;
-}
+.main > .view.pending { position: absolute; top: 0; left: 0; right: 0; padding: inherit; visibility: hidden; pointer-events: none; }
 
-/* Drawer: non modal, on the right. */
-.drawer {
-  position: fixed; top: 0; right: 0; bottom: 0; z-index: 40;
-  width: min(var(--drawer-width), 100%); display: flex; flex-direction: column;
-  background: var(--dk-color-white); border-left: 1px solid var(--dk-color-border);
-  box-shadow: -16px 0 40px rgba(17, 17, 17, 0.1);
+/* Detail pane: it sits beside the view and never over it. Its body scrolls and its foot with the actions stays pinned. */
+.panes { min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; }
+.shell[data-pane="open"] .panes { grid-template-columns: minmax(0, 1.42fr) minmax(340px, 1fr); }
+.detail {
+  min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden; container-type: inline-size;
+  background: var(--dk-color-white); border: 1px solid var(--dk-color-border); border-radius: var(--dk-radius);
 }
-.drawer-bar { display: flex; align-items: center; gap: var(--dk-space-2); padding: 10px var(--dk-space-4); border-bottom: 1px solid var(--dk-color-border); }
-.drawer-kind { flex: 1; min-width: 0; font-size: 12px; font-weight: 700; color: var(--dk-color-support); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-#drawer-title { padding: 18px var(--dk-space-6) var(--dk-space-1); font-size: 20px; outline: none; overflow-wrap: anywhere; }
-.drawer-body { position: relative; flex: 1; overflow-y: auto; padding: var(--dk-space-3) var(--dk-space-6) var(--dk-space-8); overflow-wrap: anywhere; }
-.drawer-content { display: grid; gap: var(--dk-space-4); align-content: start; }
-@media (prefers-reduced-motion: no-preference) {
-  .drawer:not([hidden]) { animation: drawer-in 0.16s ease-out; }
-  @keyframes drawer-in { from { transform: translateX(24px); opacity: 0; } }
+.detail-bar { display: flex; align-items: center; gap: var(--dk-space-2); padding: 10px var(--dk-space-4); border-bottom: 1px solid var(--dk-color-border); }
+.detail-kind { flex: 1; min-width: 0; font-size: 12px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--dk-color-accent-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#detail-title { padding: var(--dk-space-4) var(--dk-space-5) var(--dk-space-1); font-size: 20px; letter-spacing: -0.02em; outline: none; overflow-wrap: anywhere; }
+.detail-body { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; overflow-wrap: anywhere; }
+.detail-content { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.detail-content.pending { position: absolute; inset: 0; visibility: hidden; pointer-events: none; }
+.detail-scroll { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; display: grid; gap: var(--dk-space-4); align-content: start; padding: var(--dk-space-3) var(--dk-space-5) var(--dk-space-5); }
+.detail-foot { display: grid; gap: var(--dk-space-2); padding: var(--dk-space-3) var(--dk-space-5); background: #fbfcfd; border-top: 1px solid var(--dk-color-border); }
+.detail-foot:empty { display: none; }
+.detail-foot > button { width: 100%; }
+@container (max-width: 480px) {
+  .kv { grid-template-columns: minmax(0, 1fr); gap: 2px; }
+  .kv dd { margin-bottom: var(--dk-space-2); }
 }
-@media (min-width: 1360px) {
-  .shell[data-drawer="open"] .column { padding-right: calc(var(--drawer-width) + var(--dk-space-6)); }
-  .shell[data-drawer="open"] .activity { right: calc(var(--drawer-width) + var(--dk-space-6)); }
+/* The row that opened the pane stays marked while the pane is open. */
+.main [data-selected], .main button.item[data-selected] { background: var(--dk-color-accent-soft); border-color: var(--dk-color-accent); box-shadow: inset 3px 0 0 var(--dk-color-accent); }
+/* Below two panes of width one pane shows at a time. The view keeps its place and its scroll position behind the pane. */
+@media (max-width: 1179px) {
+  .shell[data-pane="open"] .panes { grid-template-columns: minmax(0, 1fr); }
+  .shell[data-pane="open"] .main, .shell[data-pane="open"] .detail { grid-area: 1 / 1; }
+  .shell[data-pane="open"] .main { visibility: hidden; }
 }
 
 /* Form dialog */
@@ -357,8 +363,7 @@ table.data th button { min-height: 0; padding: 0; border: 0; background: transpa
   .topbar, .alerts { padding-left: var(--dk-space-3); padding-right: var(--dk-space-3); }
   .main { border-width: 1px 0 0; border-radius: 0; }
   .kv, .form-grid { grid-template-columns: minmax(0, 1fr); }
-  #drawer-title { padding: var(--dk-space-4) var(--dk-space-4) var(--dk-space-1); }
-  .drawer-body { padding: var(--dk-space-3) var(--dk-space-4) var(--dk-space-6); }
+  .detail { border-width: 1px 0 0; border-radius: 0; }
   #form-title, .form-fields, .form-actions { padding-left: var(--dk-space-4); padding-right: var(--dk-space-4); }
   .sentence { font-size: 19px; }
 }
@@ -412,7 +417,7 @@ table.kn-table td:first-child { min-width: 160px; }
 }
 /* End of views_knowledge.js rules. */
 
-/* views_work.js: Now, Plan, Work and Decisions views and the work and decision drawers. */
+/* views_work.js: Now, Plan, Work and Decisions views and the work and decision panes. */
 button.item.work-item, .work-item { display: grid; grid-template-columns: minmax(0, 1fr); justify-content: normal; text-align: left; gap: 4px; min-width: 0; }
 .work-item .row { gap: 6px; }
 /* Each row of the attention list names what opens, because the whole row is the button. */

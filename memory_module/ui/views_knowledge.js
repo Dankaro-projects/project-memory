@@ -1,6 +1,6 @@
 /*
  * Project Memory control panel: views_knowledge.js registers the Learning, Agents, Machine, Records and Requirements
- * views and the "record" and "run" drawers. Buttons open the forms of forms.js: lesson_review {lesson_id, status},
+ * views and the "record" and "run" panes. Buttons open the forms of forms.js: lesson_review {lesson_id, status},
  * instructions {role}, merge, discard, cancel_run and request_work_review {run_id}, requirements {}, promotion
  * {promotion_id, status}, machine_rule {rule_id}, and reassess {decision_id, outcome_id} next to each counted recurrence.
  * A snapshot holds records {view, limit: 100} for each view, so the Records view filters and pages those in the
@@ -47,7 +47,7 @@
   }
   const actionButton = (label, key, open, tone) => button(label, key, open, ["small", tone]);
   const openForm = (name, context) => (trigger) => P.openForm(name, context, trigger);
-  const openRun = (id) => (trigger) => P.openDrawer("run", { id }, trigger);
+  const openRun = (id) => (trigger) => P.openPane("run", { id }, trigger);
   function valueNode(value, name) {
     if (value === null || value === undefined || value === "") return "Not recorded";
     if (Array.isArray(value)) return value.length ? h("ul", { class: "kn-plain" }, value.map((item) => h("li", null, valueNode(item)))) : "None recorded";
@@ -278,14 +278,15 @@
     }
     return holder;
   }
-  P.registerDrawer("run", { async render(body, params, ctx) {
+  P.registerPane("run", { async render(body, params, ctx) {
       const { run } = await P.get("run", { id: params.id }), report = run.report || {};
       ctx.setKind("Agent run");
       ctx.setTitle(P.words(run.role) + " run on " + P.words(run.host));
+      put(ctx.foot, runActions(run, ctx));
       put(body, h("div", { class: "row" }, P.badge(run.state), run.role === "work" ? mergeLabel(run) : null, h("span", { class: "muted" }, P.date(run.created_at))),
-        h("p", { class: "mono muted" }, run.id), run.summary ? h("p", null, run.summary) : null, runActions(run, ctx),
+        h("p", { class: "mono muted" }, run.id), run.summary ? h("p", null, run.summary) : null,
         run.error ? h("div", { class: "notice", dataset: { tone: "blocked" } }, h("p", null, run.error)) : null,
-        kv([[P.term("work_item"), openButton(episodeTitle(run.episode_id), run.episode_id, { work: true, prefix: "drawer-work-" })],
+        kv([[P.term("work_item"), openButton(episodeTitle(run.episode_id), run.episode_id, { work: true, prefix: "pane-work-" })],
           ["Role", P.words(run.role)], ["Host", P.words(run.host)], ["Updated", P.date(run.updated_at)],
           ["Allowed paths", run.paths && run.paths.length ? h("div", { class: "row" }, chips(run.paths)) : "None recorded"],
           ["Review", run.role === "work" ? reviewLabel(run) : undefined],
@@ -384,7 +385,7 @@
         pager({ offset, count: page.records.length, total: page.total, more: page.more, limit: PAGE }, "records", (next) => P.go("records", { ...params, offset: next ? String(next) : "" })));
   } });
 
-  // Record drawer: fields, evidence, reverse references and paged source text with an outline.
+  // Record pane: fields, evidence, reverse references and paged source text with an outline.
   function outline(text) {
     const found = [];
     let fenced = false;
@@ -432,7 +433,7 @@
       button(record.title || record.id, "related-" + record.id, (trigger) => openRecordAny(record, trigger), "quiet kn-link"),
       h("span", { class: "muted" }, P.words(record.kind)), P.badge(record.state || record.status)))) : P.empty("No other record refers to this record.");
   }
-  P.registerDrawer("record", { async render(body, params, ctx) {
+  P.registerPane("record", { async render(body, params, ctx) {
       const [{ record }, related] = await Promise.all([P.get("record", { id: params.id }),
         P.get("records", { related: params.id, limit: String(PAGE) }).catch((error) => error)]);
       const detail = record.detail || {}, payload = detail.payload || {};
@@ -443,11 +444,12 @@
       if (record.kind === "lesson" && ctx.canEdit) {
         const lesson = { ...payload, id: record.id, episode_id: record.episode_id };
         const status = detail.lesson_status || record.status;
-        put(body, h("div", { class: "row" }, status === "proposed" ? [actionButton("Accept", "drawer-accept", lessonReview(lesson, "accepted"), "primary"),
-          actionButton("Reject", "drawer-reject", lessonReview(lesson, "rejected"))] : null, status === "accepted" ? actionButton("Retire", "drawer-retire", lessonReview(lesson, "retired")) : null));
+        if (status === "proposed") put(ctx.foot, h("div", { class: "row" }, actionButton("Accept", "pane-accept", lessonReview(lesson, "accepted"), "primary"),
+          actionButton("Reject", "pane-reject", lessonReview(lesson, "rejected"))));
+        if (status === "accepted") put(ctx.foot, h("div", { class: "row" }, actionButton("Retire", "pane-retire", lessonReview(lesson, "retired"))));
       }
       if (record.episode_id && record.episode_id !== record.id) put(body, h("p", null, P.term("work_item") + ": ",
-        openButton(record.episode_title || episodeTitle(record.episode_id), record.episode_id, { work: true, prefix: "drawer-episode-" })));
+        openButton(record.episode_title || episodeTitle(record.episode_id), record.episode_id, { work: true, prefix: "pane-episode-" })));
       const fields = record.kind === "episode" ? { objective: detail.objective, criterion: detail.criterion, task_type: detail.task_type, status: detail.status, version: detail.version }
         : record.kind === "source" ? { summary: detail.summary, origin: detail.origin, version: detail.version, checked_at: detail.checked_at, review_after: detail.review_after, ...(detail.document ? { path: detail.document.path, format: detail.document.format, authority: detail.document.authority } : {}) }
           : record.kind === "project_revision" ? { requirements: detail.requirements, reason: detail.reason, actor: detail.actor }
@@ -459,10 +461,10 @@
       if (record.outcome) {
         const assessment = (record.outcome.detail.payload || {}).assessment;
         put(body, section("Latest outcome", P.badge(assessment === "bad" ? "failed" : assessment === "good" ? "good" : "mixed", "Assessment: " + P.words(assessment)),
-          h("p", null, openButton(record.outcome.title, record.outcome.id, { prefix: "drawer-outcome-" }))));
+          h("p", null, openButton(record.outcome.title, record.outcome.id, { prefix: "pane-outcome-" }))));
       }
       const chain = [["Replaces", detail.supersedes], ["Replaced by", detail.replaced_by], ["Decision", detail.decision_id]].filter(([, id]) => id);
-      if (chain.length) put(body, h("dl", { class: "kv" }, chain.map(([label, id]) => [h("dt", null, label), h("dd", null, titledButton(id, { prefix: "drawer-chain-" }))])));
+      if (chain.length) put(body, h("dl", { class: "kv" }, chain.map(([label, id]) => [h("dt", null, label), h("dd", null, titledButton(id, { prefix: "pane-chain-" }))])));
       if (record.kind === "source") put(body, typeof detail.body === "string" ? sourceText(record.id, detail)
         : section("Content", null, h("p", { class: "muted" }, "The source text is not included in this snapshot.")));
       const evidence = detail.evidence || [];

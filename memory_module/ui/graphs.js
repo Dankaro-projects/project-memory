@@ -466,7 +466,7 @@
     if (!node || node.kind === "missing") { Panel.toast("This record is not available."); return; }
     const id = node.id;
     if (id.startsWith("episode_")) return Panel.openWork(id, trigger);
-    if (id.startsWith("check_")) return Panel.openDrawer("run", { id }, trigger);
+    if (id.startsWith("check_")) return Panel.openPane("run", { id }, trigger);
     if (id.startsWith("component:") || id.startsWith("service:")) return Panel.go("architecture", { selected: id });
     if (id.startsWith("package:")) return Panel.go("dependencies", { tab: "packages", q: node.title });
     return Panel.openRecord(id, trigger);

@@ -3,7 +3,7 @@
  *
  * viewer.py joins the application files in that order into one script element. vendor/cytoscape.min.js is a separate
  * script element that runs first and defines the global `cytoscape`. Every file uses the global `Panel`. Boot runs
- * after all files are evaluated, so the other files register their views, drawers and forms at load time.
+ * after all files are evaluated, so the other files register their views, panes and forms at load time.
  *
  * Rules: build elements with Panel.h. Never use innerHTML, outerHTML, insertAdjacentHTML, eval or new Function. Set
  * computed sizes and colours through element.style, because the content security policy blocks style attributes in
@@ -21,9 +21,10 @@
  *   Panel.key(name, params), Panel.health(), Panel.snapshot, Panel.onRevision(fn(revision)).
  * Polling: live mode reads api/health one second after the previous read ends, while visible, so a change shows
  *   within two seconds. A new revision clears the response cache and
- *   renders the current view and the open drawer again, keeping scroll position and focus (give interactive elements
- *   a stable id or data-key; keep filters in route params). Nothing renders while a form dialog is open. A failed
- *   update shows "Update failed" and an alert, and both clear on the next successful poll.
+ *   renders the current view and the open detail pane again, keeping the scroll position of #main, of the pane and of
+ *   every element with data-scroll, the focus, and the text that the reader typed into a text control (give
+ *   interactive elements a stable id or data-key; keep filters in route params). Nothing renders while a form dialog
+ *   is open. A failed update shows "Update failed" and an alert, and both clear on the next successful poll.
  *
  * Views: Panel.registerView(name, {title, section, render(container, params, ctx)}). Hash #name/key=value&key=value.
  *   render may be async; the container is laid out but hidden until it resolves, and a rejected render shows
@@ -34,10 +35,13 @@
  *   the symbol i-<view name> of viewer.html. Panel.go(name, params), Panel.route(), Panel.setParams(params) (hash
  *   only, no render), Panel.refresh().
  *
- * Drawer (non modal): Panel.registerDrawer(kind, {render(body, params, ctx)}); ctx adds setTitle(text) and
- *   setKind(text). Panel.openDrawer(kind, params, trigger) pushes an open entry on the back stack and the trigger
- *   gets focus on close. Panel.openRecord(id, trigger) uses the 'record' drawer and Panel.openWork(id, trigger) the
- *   'work' drawer, registered by views_knowledge.js and views_work.js. Escape closes the drawer.
+ * Detail pane (beside the view, never over it): Panel.registerPane(kind, {render(body, params, ctx)}); ctx adds
+ *   setTitle(text), setKind(text) and foot, the pinned foot for the actions of the item, which stays in reach however
+ *   long the body is. Panel.openPane(kind, params, trigger): a trigger inside the pane pushes the open entry on the
+ *   back stack, and any other trigger starts again. The row that opened the pane is marked with data-selected and
+ *   aria-current, J and K open the next and the previous row of its kind, and the first trigger gets focus on close.
+ *   Below 1180 pixels one pane shows at a time. Panel.openRecord(id, trigger) uses the 'record' pane and
+ *   Panel.openWork(id, trigger) the 'work' pane, registered by views_knowledge.js and views_work.js. Escape closes.
  *
  * Forms (modal dialog): Panel.registerForm(name, {title, submitLabel, render(fields, context, form),
  *   submit(values, context, form) -> {operation, data}, done(result, context) -> toast text, reload}).
@@ -103,11 +107,11 @@ const Panel = (() => {
   const STRIP = ["in_progress", "review", "blocked", "ready", "backlog", "done"];
   const snapshot = JSON.parse($("memory-data").textContent);
   const live = snapshot.live === true;
-  const views = new Map(), drawers = new Map(), forms = new Map(), cache = new Map(), inflight = new Map();
+  const views = new Map(), panes = new Map(), forms = new Map(), cache = new Map(), inflight = new Map();
   const revisionListeners = [];
   const state = { route: { name: "now", params: {} }, health: live ? null : (snapshot.responses || {}).health || null,
     revision: null, csrf: null, healthTag: null, polling: false, stale: false, template: null, renderToken: 0,
-    drawerToken: 0, drawer: null, drawerStack: [], drawerTrigger: null, form: null, pendingRender: false, now: {} };
+    paneToken: 0, pane: null, paneStack: [], paneTrigger: null, form: null, pendingRender: false, now: {} };
 
   class PanelError extends Error { constructor(message, extra = {}) { super(message); this.name = "PanelError"; Object.assign(this, extra); } }
   class FormError extends Error {}
@@ -405,7 +409,7 @@ const Panel = (() => {
     $("activity").replaceChildren();
     put($("activity"), title("Work by state"), stateStrip(now.counts || {}, { legend: true }), title("In progress"),
       (now.in_progress || []).length ? h("ul", { class: "list" }, now.in_progress.map((item) => h("li", null,
-        button(item.title, "activity-work-" + item.id, (trigger) => { setActivity(false); openWork(item.id, trigger); }, "item"))))
+        button(item.title, "activity-work-" + item.id, (trigger) => { setActivity(false); openWork(item.id, $("activity-toggle")); }, "item"))))
         : h("p", { class: "muted" }, "No work item is in progress."),
       title("Agents"), h("p", { class: "muted" }, active ? count(active, "agent run is", "agent runs are") + " active. " : "No agent run is active. ", h("a", { href: "#agents" }, "Open Agents")));
   }
@@ -433,8 +437,7 @@ const Panel = (() => {
     const active = document.activeElement;
     if (!active || active === root || !root.contains(active)) return null;
     const selection = typeof active.selectionStart === "number" ? [active.selectionStart, active.selectionEnd] : null;
-    if (active.id) return { selector: "#" + CSS.escape(active.id), selection };
-    return active.dataset && active.dataset.key ? { selector: '[data-key="' + CSS.escape(active.dataset.key) + '"]', selection } : null;
+    return identity(active) ? { selector: identity(active), selection } : null;
   }
   function restoreFocus(root, identity) {
     const target = identity && root.querySelector(identity.selector);
@@ -443,6 +446,8 @@ const Panel = (() => {
     try { if (identity.selection && target.setSelectionRange) target.setSelectionRange(identity.selection[0], identity.selection[1]); } catch (error) { /* Not a text control. */ }
   }
   const context = (shown) => ({ live, canEdit: canEdit(), revision: state.revision, onShown: (handler) => shown.push(handler) });
+  const TYPED = "textarea, input[type=text], input[type=search], input:not([type])";
+  const identity = (node) => (node.id ? "#" + CSS.escape(node.id) : node.dataset && node.dataset.key ? '[data-key="' + CSS.escape(node.dataset.key) + '"]' : null);
   // Renders into a hidden container next to the current content, then swaps, so a refresh does not flash.
   async function renderInto(root, container, render, token, current, keep) {
     const scroll = root.scrollTop;
@@ -458,8 +463,15 @@ const Panel = (() => {
     // A render waits for its data, and the reader keeps working meanwhile, so the focus is read again here
     // and the later position wins. Reading it only at the start would send focus back or drop it on the body.
     const late = keep ? focusIdentity(root) : null;
-    for (const old of [...root.children]) if (old !== container) old.remove();
+    // A live update keeps what the reader typed and how far each inner pane is scrolled.
+    const old = [...root.children].filter((node) => node !== container);
+    const inside = (selector) => (keep ? old.flatMap((node) => [...node.querySelectorAll(selector)]) : []);
+    const typed = inside(TYPED).filter((node) => identity(node) && node.value !== node.defaultValue).map((node) => [identity(node), node.value]);
+    const scrolled = inside("[data-scroll]").map((node) => [node.dataset.scroll, node.scrollTop]);
+    for (const node of old) node.remove();
     container.classList.remove("pending");
+    for (const [selector, value] of typed) { const node = container.querySelector(selector); if (node && node.value === node.defaultValue) node.value = value; }
+    for (const [name, top] of scrolled) { const node = container.querySelector('[data-scroll="' + CSS.escape(name) + '"]'); if (node) node.scrollTop = top; }
     if (keep) { root.scrollTop = scroll; restoreFocus(container, late || focus); }
     else root.scrollTop = 0;
     for (const handler of shown) handler();
@@ -476,9 +488,10 @@ const Panel = (() => {
     const done = await renderInto($("main"), container, (shown) => views.get(name).render(container, { ...params }, { ...context(shown), setSummary }),
       token, () => state.renderToken, options.keep);
     // A view that moved the reader to one of its sections keeps that focus; otherwise the title announces the new view.
+    if (done) markSelected();
     if (done && options.focus && !$("main").contains(document.activeElement)) $("view-title").focus({ preventScroll: true });
   }
-  function refresh() { renderView({ keep: true }); renderDrawer({ keep: true }); }
+  function refresh() { renderView({ keep: true }); renderPane({ keep: true }); }
 
   // Router.
   function parseHash() {
@@ -503,61 +516,69 @@ const Panel = (() => {
     history.replaceState(null, "", hashFor(state.route.name, state.route.params));
   }
 
-  // Drawer.
-  function openDrawer(kind, params = {}, trigger) {
-    if (!drawers.has(kind)) throw new Error("No drawer is registered for " + kind + ".");
-    if (state.drawer) state.drawerStack.push(state.drawer);
-    else {
-      const origin = trigger || document.activeElement;
-      const identity = origin && (origin.id ? "#" + CSS.escape(origin.id) : origin.dataset && origin.dataset.key ? '[data-key="' + CSS.escape(origin.dataset.key) + '"]' : null);
-      state.drawerTrigger = { node: origin, identity };
-    }
-    state.drawer = { kind, params: { ...params } };
-    $("drawer").hidden = false;
-    $("app").dataset.drawer = "open";
-    coverPage();
-    return renderDrawer({ focus: true });
+  // Detail pane: it sits beside the view, so opening an item never covers the list.
+  function openPane(kind, params = {}, trigger) {
+    if (!panes.has(kind)) throw new Error("No pane is registered for " + kind + ".");
+    const origin = trigger || document.activeElement;
+    // A link inside the pane leads deeper, so Back returns from it. Any other trigger starts again from its row.
+    if (state.pane && origin && $("detail").contains(origin)) state.paneStack.push(state.pane);
+    else { state.paneStack = []; state.paneTrigger = { node: origin, identity: origin && identity(origin) }; }
+    state.pane = { kind, params: { ...params } };
+    $("detail").hidden = false;
+    $("app").dataset.pane = "open";
+    markSelected();
+    return renderPane({ focus: true });
   }
-  async function renderDrawer(options = {}) {
-    if (!state.drawer) return;
+  async function renderPane(options = {}) {
+    if (!state.pane) return;
     if (state.form && options.keep) { state.pendingRender = true; return; }
-    const token = ++state.drawerToken;
-    const { kind, params } = state.drawer;
-    const mine = () => token === state.drawerToken;
-    $("drawer-back").hidden = state.drawerStack.length === 0;
-    if (!options.keep) { $("drawer-title").textContent = "Loading"; $("drawer-kind").textContent = words(kind); }
-    const container = h("div", { class: "drawer-content pending" });
-    const ctx = (shown) => ({ ...context(shown), setTitle: (text) => { if (mine()) $("drawer-title").textContent = text; },
-      setKind: (text) => { if (mine()) $("drawer-kind").textContent = text; } });
-    const done = await renderInto($("drawer-body"), container, (shown) => drawers.get(kind).render(container, { ...params }, ctx(shown)),
-      token, () => state.drawerToken, options.keep);
-    if (done && $("drawer-title").textContent === "Loading") $("drawer-title").textContent = "Details";
-    if (done && options.focus) $("drawer-title").focus({ preventScroll: true });
+    const token = ++state.paneToken;
+    const { kind, params } = state.pane;
+    const mine = () => token === state.paneToken;
+    $("detail-back").hidden = state.paneStack.length === 0;
+    if (!options.keep) { $("detail-title").textContent = "Loading"; $("detail-kind").textContent = words(kind); }
+    // The body scrolls and the foot stays pinned under it, so the actions of the item are always in reach.
+    const body = h("div", { class: "detail-scroll", dataset: { scroll: "detail" } }), foot = h("div", { class: "detail-foot" });
+    const container = h("div", { class: "detail-content pending" }, body, foot);
+    const ctx = (shown) => ({ ...context(shown), foot, setTitle: (text) => { if (mine()) $("detail-title").textContent = text; },
+      setKind: (text) => { if (mine()) $("detail-kind").textContent = text; } });
+    const done = await renderInto($("detail-body"), container, (shown) => panes.get(kind).render(body, { ...params }, ctx(shown)),
+      token, () => state.paneToken, options.keep);
+    if (done && $("detail-title").textContent === "Loading") $("detail-title").textContent = "Details";
+    if (done && options.focus) $("detail-title").focus({ preventScroll: true });
   }
-  function closeDrawer() {
-    if (!state.drawer) return;
-    Object.assign(state, { drawerToken: state.drawerToken + 1, drawer: null, drawerStack: [] });
-    $("drawer").hidden = true;
-    delete $("app").dataset.drawer;
-    $("drawer-body").replaceChildren();
-    coverPage();
-    const trigger = state.drawerTrigger || {};
-    state.drawerTrigger = null;
-    const target = (trigger.node && trigger.node.isConnected && trigger.node) || (trigger.identity && document.querySelector("#main " + trigger.identity));
+  function closePane() {
+    if (!state.pane) return;
+    Object.assign(state, { paneToken: state.paneToken + 1, pane: null, paneStack: [] });
+    $("detail").hidden = true;
+    delete $("app").dataset.pane;
+    $("detail-body").replaceChildren();
+    const trigger = state.paneTrigger || {};
+    state.paneTrigger = null;
+    markSelected();
+    const target = (trigger.node && trigger.node.isConnected && trigger.node) || (trigger.identity && $("main").querySelector(trigger.identity));
     (target || $("view-title")).focus({ preventScroll: !target });
   }
-  function backDrawer() {
-    if (!state.drawerStack.length) return closeDrawer();
-    state.drawer = state.drawerStack.pop();
-    return renderDrawer({ focus: true });
+  function backPane() {
+    if (!state.paneStack.length) return closePane();
+    state.pane = state.paneStack.pop();
+    return renderPane({ focus: true });
   }
-  // On a narrow screen the drawer covers the page, so the page behind it takes no focus while the drawer is open.
-  function coverPage() {
-    const covered = Boolean(state.drawer) && window.innerWidth < 640;
-    for (const node of [$("rail"), document.querySelector(".column")]) node.inert = covered;
+  // The row that opened the pane stays marked through every render of the view.
+  function markSelected() {
+    for (const node of $("main").querySelectorAll("[data-selected]")) { node.removeAttribute("aria-current"); delete node.dataset.selected; }
+    const selector = state.pane && state.paneTrigger && state.paneTrigger.identity, row = selector && $("main").querySelector(selector);
+    if (row) { row.setAttribute("aria-current", "true"); row.dataset.selected = ""; }
   }
-  const openRecord = (id, trigger) => openDrawer("record", { id }, trigger);
-  const openWork = (id, trigger) => openDrawer("work", { id }, trigger);
+  // J and K open the next and the previous row of the kind that opened the pane.
+  function stepRow(by) {
+    const row = $("main").querySelector("[data-selected]");
+    const rows = row ? [...$("main").querySelectorAll(row.tagName)].filter((node) => node.className === row.className && node.dataset.key && node.getClientRects().length) : [];
+    const next = rows[rows.indexOf(row) + by];
+    if (next) { next.click(); next.scrollIntoView({ block: "nearest" }); }
+  }
+  const openRecord = (id, trigger) => openPane("record", { id }, trigger);
+  const openWork = (id, trigger) => openPane("work", { id }, trigger);
 
   // Forms.
   function field(label, control, hint) {
@@ -715,8 +736,8 @@ const Panel = (() => {
     $("menu-toggle").addEventListener("click", () => setMenu($("app").dataset.menu !== "open"));
     $("nav").addEventListener("click", (event) => { if (event.target.closest("a")) setMenu(false); });
     $("search").addEventListener("submit", (event) => { event.preventDefault(); const query = $("search-input").value.trim(); go("records", query ? { query } : {}); });
-    $("drawer-close").addEventListener("click", closeDrawer);
-    $("drawer-back").addEventListener("click", backDrawer);
+    $("detail-close").addEventListener("click", closePane);
+    $("detail-back").addEventListener("click", backPane);
     $("form").addEventListener("submit", submitForm);
     $("form-cancel").addEventListener("click", () => $("form-dialog").close());
     $("form-reload").addEventListener("click", reloadForm);
@@ -725,10 +746,11 @@ const Panel = (() => {
       if (event.defaultPrevented || $("form-dialog").open) return;
       if (event.key === "Escape" && $("app").dataset.menu === "open") { setMenu(false); $("menu-toggle").focus(); }
       else if (event.key === "Escape" && !$("activity").hidden) { setActivity(false); $("activity-toggle").focus(); }
-      else if (event.key === "Escape" && state.drawer) { event.preventDefault(); closeDrawer(); }
-      else if (event.key === "/" && !event.target.closest("input, textarea, select, [contenteditable]")) { event.preventDefault(); $("search-input").focus(); }
+      else if (event.key === "Escape" && state.pane) { event.preventDefault(); closePane(); }
+      else if (event.target.closest("input, textarea, select, [contenteditable]") || event.metaKey || event.ctrlKey || event.altKey) return;
+      else if (event.key === "/") { event.preventDefault(); $("search-input").focus(); }
+      else if (state.pane && /^[jk]$/i.test(event.key)) { event.preventDefault(); stepRow(event.key.toLowerCase() === "j" ? 1 : -1); }
     });
-    window.addEventListener("resize", coverPage);
     document.addEventListener("visibilitychange", () => { if (!document.hidden) poll(); });
   }
   function boot() {
@@ -749,10 +771,10 @@ const Panel = (() => {
   return {
     live, snapshot, colors: COLORS, Error: PanelError, FormError,
     canEdit, get, key, action, requestKey, health: () => state.health, onRevision: (handler) => revisionListeners.push(handler),
-    registerView: (name, definition) => views.set(name, definition), registerDrawer: (kind, definition) => drawers.set(kind, definition),
+    registerView: (name, definition) => views.set(name, definition), registerPane: (kind, definition) => panes.set(kind, definition),
     registerForm: (name, definition) => forms.set(name, definition),
     go, route: () => ({ name: state.route.name, params: { ...state.route.params } }), setParams, refresh,
-    openDrawer, closeDrawer, backDrawer, openRecord, openWork, openForm, formValues, field, input, textarea, select, filterField,
+    openPane, closePane, backPane, openRecord, openWork, openForm, formValues, field, input, textarea, select, filterField,
     h, icon, put, button, chip, kv, lower, badge, tone, link, markdown, words, term, template, date, count, progress, stateStrip, empty, errorState, toast, alert, clearAlert,
   };
 })();

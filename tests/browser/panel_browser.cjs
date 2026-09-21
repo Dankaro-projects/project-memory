@@ -53,15 +53,15 @@ function watch(page) {
   });
   return problems;
 }
-const settle = (page) => page.waitForFunction(() => !document.querySelector("#main .view.pending, .drawer-content.pending"));
-async function closeDrawer(page) {
-  if (await page.locator("#drawer").isHidden()) return;
-  await page.evaluate(() => Panel.closeDrawer());
-  await page.waitForFunction(() => document.getElementById("drawer").hidden);
+const settle = (page) => page.waitForFunction(() => !document.querySelector("#main .view.pending, .detail-content.pending"));
+async function closePane(page) {
+  if (await page.locator("#detail").isHidden()) return;
+  await page.evaluate(() => Panel.closePane());
+  await page.waitForFunction(() => document.getElementById("detail").hidden);
 }
 async function go(page, hash) {
-  // The drawer stays open across view changes by design, so each section starts from a closed drawer.
-  await closeDrawer(page);
+  // The pane stays open across view changes by design, so each section starts from a closed pane.
+  await closePane(page);
   await page.evaluate((value) => { location.hash = value; }, hash);
   await page.waitForFunction((name) => document.querySelector(`#main .view[data-view="${name}"]:not(.pending)`), hash.split("/")[0].slice(1));
   await settle(page);
@@ -129,9 +129,9 @@ async function shell(page, kind) {
   assert.deepEqual(await page.evaluate(() => [document.getElementById("activity").hidden, document.activeElement.id]), [true, "activity-toggle"]);
   await page.locator("#activity-toggle").click();
   await page.locator('#activity [data-key^="activity-work-"]').first().click();
-  await page.waitForFunction(() => !document.getElementById("drawer").hidden && document.getElementById("drawer-title").textContent !== "Loading");
+  await page.waitForFunction(() => !document.getElementById("detail").hidden && document.getElementById("detail-title").textContent !== "Loading");
   assert.equal(await page.locator("#activity").isHidden(), true);
-  await closeDrawer(page);
+  await closePane(page);
   step(`${kind}: Project activity shows the work by state, opens the work in progress and closes with Escape`);
 
   // No view scrolls the page at the three measured sizes. With More views folded the rail fits a window 640 pixels high.
@@ -183,32 +183,32 @@ async function views(page, kind, expected) {
   assert.match(await text(page, '[data-key="now-kind-machine_rules"]'), /Machine rules\s*1/);
   assert.ok((await page.locator('[data-key="now-kinds"]').boundingBox()).y < 600, `${kind}: the kinds of waiting items start below the first screen`);
   await page.click('[data-key="now-kind-blocked_work"]');
-  await page.waitForFunction(() => document.getElementById("drawer-title").textContent === "Blocked");
+  await page.waitForFunction(() => document.getElementById("detail-title").textContent === "Blocked");
   await settle(page);
-  assert.equal(await page.locator('#drawer-body [data-key^="now-attention-"]').count(), 2);
-  await closeDrawer(page);
+  assert.equal(await page.locator('#detail-body [data-key^="now-attention-"]').count(), 2);
+  await closePane(page);
   await page.click("[data-key=now-all-attention]");
-  await page.waitForSelector("#drawer-body [data-key^='now-attention-']");
+  await page.waitForSelector("#detail-body [data-key^='now-attention-']");
   // The ninth row is the proposed machine rule of the fixture, which waits in the Machine view.
-  assert.equal(await page.locator('#drawer-body [data-key^="now-attention-"]').count(), 9);
-  assert.match(await text(page, "#drawer-body [data-key^='now-attention-machine_rules']"), /1 proposed machine rule waits for your acceptance or refusal\.\s*Open the proposed rules/);
-  const nowText = await text(page, "#drawer-body");
-  await closeDrawer(page);
+  assert.equal(await page.locator('#detail-body [data-key^="now-attention-"]').count(), 9);
+  assert.match(await text(page, "#detail-body [data-key^='now-attention-machine_rules']"), /1 proposed machine rule waits for your acceptance or refusal\.\s*Open the proposed rules/);
+  const nowText = await text(page, "#detail-body");
+  await closePane(page);
   await page.click("[data-key=now-open-decisions]");
-  await page.waitForSelector("#drawer-body a[href='#decisions']");
-  await closeDrawer(page);
+  await page.waitForSelector("#detail-body a[href='#decisions']");
+  await closePane(page);
   assert.match(nowText, /occurred once after the lesson was accepted/);
   assert.match(nowText, /changed 1 file and awaits a merge decision/);
   step(`${kind}: Now keeps the first screen, names each action and counts a single event in the singular`);
 
   // Every row of the list opens something: the proposed lessons open as the first section of Learning.
   await page.click("[data-key=now-all-attention]");
-  await page.waitForSelector("#drawer-body [data-key^='now-attention-lessons_to_accept']");
-  await page.click("#drawer-body [data-key^='now-attention-lessons_to_accept']");
+  await page.waitForSelector("#detail-body [data-key^='now-attention-lessons_to_accept']");
+  await page.click("#detail-body [data-key^='now-attention-lessons_to_accept']");
   await page.waitForFunction(() => document.activeElement && document.activeElement.textContent === "Proposed lessons");
   assert.equal(await page.locator("#main section h3").first().textContent(), "Proposed lessons");
   assert.ok(!/section=/.test(page.url()), "the section stays in the route and would move the reader again");
-  await closeDrawer(page);
+  await closePane(page);
   step(`${kind}: the lessons row of Now opens the proposed lessons, which lead the Learning view`);
 
   await go(page, "#plan");
@@ -339,11 +339,11 @@ async function views(page, kind, expected) {
 
   if (kind === "product") {
     await page.locator('#main [data-key^="decision-event_"]').first().click();
-    await page.waitForFunction(() => /Lineage/.test(document.getElementById("drawer-body").textContent));
+    await page.waitForFunction(() => /Lineage/.test(document.getElementById("detail-body").textContent));
     await settle(page);
-    assert.equal(await page.locator("#drawer-body .lineage-list").count(), 1, "a lineage of dozens of records still opens as a small picture");
-    assert.match(await text(page, '#drawer-body [data-key$="-toggle"]'), /Show as graph/);
-    await closeDrawer(page);
+    assert.equal(await page.locator("#detail-body .lineage-list").count(), 1, "a lineage of dozens of records still opens as a small picture");
+    assert.match(await text(page, '#detail-body [data-key$="-toggle"]'), /Show as graph/);
+    await closePane(page);
     step(`${kind}: a decision lineage of dozens of records opens as the readable list`);
   }
 
@@ -477,23 +477,45 @@ async function views(page, kind, expected) {
   assert.match(await text(page, "#main"), /The project requirements are not established yet\./);
   step(`${kind}: Records and Requirements render their current state`);
 
-  // Beside an open drawer the header row keeps its controls in reach. On a narrow screen the header row is part of the
-  // frame, the Work filters stay folded, and the page behind the full width drawer takes no focus.
+  // Opening an item never covers the list on a wide screen: the pane sits beside the view and the opening row stays marked.
   await go(page, "#work");
-  await page.locator("#main .board button.item").first().click();
-  await page.waitForFunction(() => !document.getElementById("drawer").hidden && document.getElementById("drawer-title").textContent !== "Loading");
-  await settle(page);
-  const beside = await page.evaluate(() => [document.getElementById("search-input").getBoundingClientRect().right, document.getElementById("drawer").getBoundingClientRect().left]);
-  assert.ok(beside[0] <= beside[1], `${kind}: the drawer covers the search field at 1440 pixels: ${beside}`);
+  const cards = page.locator("#main .board button.item");
+  const loaded = () => page.waitForFunction(() => !document.getElementById("detail").hidden && document.getElementById("detail-title").textContent !== "Loading"
+    && !document.querySelector(".detail-content.pending"));
+  await cards.first().click();
+  await loaded();
+  const beside = await page.evaluate(() => ["main", "detail"].map((id) => { const box = document.getElementById(id).getBoundingClientRect(); return [Math.round(box.left), Math.round(box.right)]; }));
+  assert.ok(beside[0][1] > beside[0][0] + 300 && beside[0][1] <= beside[1][0], `${kind}: the pane covers the view at 1440 pixels: ${beside}`);
+  assert.equal(await cards.first().getAttribute("aria-current"), "true");
+  // The actions of the item stay pinned under the scrolling body, in reach at a window height of 640 pixels.
+  await page.setViewportSize({ width: 1600, height: 640 });
+  const pinned = await page.evaluate(() => { const body = document.querySelector("#detail .detail-scroll"), action = document.querySelector("#detail .detail-foot button").getBoundingClientRect();
+    return { scrolls: body.scrollHeight > body.clientHeight, top: action.top, bottom: action.bottom, height: window.innerHeight }; });
+  assert.ok(pinned.scrolls && pinned.top > 0 && pinned.bottom <= pinned.height, `${kind}: the first action of the pane is out of reach at 640 pixels: ${JSON.stringify(pinned)}`);
+  await fixedFrame(page, `${kind} work pane at 1600 by 640`);
+  // J and K open the next and the previous row of the kind that opened the pane, and start no back stack.
+  const first = await text(page, "#detail-title");
+  await page.keyboard.press("j");
+  await page.waitForFunction((title) => !["Loading", title].includes(document.getElementById("detail-title").textContent), first);
+  assert.deepEqual([await cards.nth(0).getAttribute("aria-current"), await cards.nth(1).getAttribute("aria-current")], [null, "true"]);
+  assert.equal(await page.locator("#detail-back").isHidden(), true);
+  await page.keyboard.press("k");
+  await page.waitForFunction((title) => document.getElementById("detail-title").textContent === title, first);
+  step(`${kind}: the pane opens beside the view, marks its row, pins its actions at 640 pixels and follows J and K`);
+
+  // Below 1180 pixels one pane shows at a time, and Escape returns to the view and to the row that opened the pane.
+  await page.setViewportSize({ width: 1000, height: 800 });
+  assert.deepEqual(await page.evaluate(() => [getComputedStyle(document.getElementById("main")).visibility, document.getElementById("detail").getBoundingClientRect().width > 600]), ["hidden", true]);
+  await fixedFrame(page, `${kind} work pane at 1000 by 800`);
+  await page.keyboard.press("Escape");
+  await page.waitForFunction(() => document.getElementById("detail").hidden && document.activeElement.matches("#main .board button.item"));
+  assert.deepEqual(await page.evaluate(() => [getComputedStyle(document.getElementById("main")).visibility, document.querySelectorAll("#main [data-selected]").length]), ["visible", 0]);
   await page.setViewportSize({ width: 500, height: 800 });
-  await page.waitForFunction(() => document.getElementById("rail").inert && document.querySelector(".column").inert, null, { timeout: 5000 });
-  await closeDrawer(page);
-  assert.deepEqual(await page.evaluate(() => [document.querySelector(".column").inert, getComputedStyle(document.querySelector(".topbar")).position]), [false, "static"]);
   await go(page, "#plan");
   await go(page, "#work");
   assert.equal(await page.locator("#work-filters").evaluate((node) => node.open), false);
   await page.setViewportSize({ width: 1440, height: 900 });
-  step(`${kind}: the drawer leaves the header row in reach, and a narrow screen folds the Work filters and keeps the page behind the drawer inert`);
+  step(`${kind}: below 1180 pixels one pane shows at a time, Escape returns to the opening row, and a narrow screen folds the Work filters`);
 
   for (const width of [1440, 768, 390, 320]) {
     for (const hash of ["#now", "#plan", "#work", "#architecture", "#decisions", "#learning", "#machine", "#hive", "#usage"]) {
@@ -511,36 +533,36 @@ async function editing(page, ids, posts) {
   const trigger = `[data-key="now-in_progress-${ids.story}"]`;
   await page.locator(trigger).focus();
   await page.keyboard.press("Enter");
-  await page.waitForFunction(() => document.getElementById("drawer-title").textContent === "Parse client files");
+  await page.waitForFunction(() => document.getElementById("detail-title").textContent === "Parse client files");
   await settle(page);
-  const drawer = await text(page, "#drawer-body");
+  const shown = await text(page, "#detail");
   for (const part of ["Intended result", "Done when", "Next step", "Acceptance criteria", "Scope and allowed paths", "src/app/**",
     "Dependencies", "Agent checks and delegated runs", "Lineage", "History", "Edit plan", "Allow paths", "Delegate", "Request check", "Comment"]) {
-    assert.ok(drawer.includes(part), "the work drawer lacks " + part);
+    assert.ok(shown.includes(part), "the work pane lacks " + part);
   }
   // The history stays closed until the reader opens it, and sections without content share one sentence.
-  assert.equal(await page.locator('#drawer-body [data-key="work-history"]').evaluate((node) => node.open), false);
-  const headings = await page.locator("#drawer-body h3").allTextContents();
-  const folded = await page.locator('#drawer-body [data-key="work-folded"]').allTextContents();
+  assert.equal(await page.locator('#detail-body [data-key="work-history"]').evaluate((node) => node.open), false);
+  const headings = await page.locator("#detail-body h3").allTextContents();
+  const folded = await page.locator('#detail-body [data-key="work-folded"]').allTextContents();
   for (const name of ["Dependencies", "Issues"]) {
     assert.notEqual(headings.includes(name), folded.join(" ").includes(name), "the section " + name + " is shown twice or not at all");
   }
   await page.keyboard.press("Escape");
-  await page.waitForFunction((selector) => document.getElementById("drawer").hidden && document.activeElement.matches(selector), trigger);
-  step("the keyboard opens the work drawer and Escape returns focus to the trigger");
+  await page.waitForFunction((selector) => document.getElementById("detail").hidden && document.activeElement.matches(selector), trigger);
+  step("the keyboard opens the work pane and Escape returns focus to the trigger");
 
-  // A change of priority needs no plan form: the drawer saves the complete plan with the one changed field.
+  // A change of priority needs no plan form: the pane saves the complete plan with the one changed field.
   await page.locator(trigger).click();
   await settle(page);
   await page.locator("#work-quick-priority").selectOption("high");
-  await page.waitForFunction(() => /High priority/.test(document.getElementById("drawer-body").textContent), null, { timeout: 15000 });
+  await page.waitForFunction(() => /High priority/.test(document.getElementById("detail-body").textContent), null, { timeout: 15000 });
   assert.equal(await page.locator(".toast").last().textContent(), "The priority is now high.");
   assert.equal(await page.locator("#form-dialog[open]").count(), 0);
   const kept = await page.evaluate(async (id) => (await Panel.get("work", { id })).card.plan, ids.story);
   assert.deepEqual([kept.priority, kept.paths, kept.autonomy], ["high", ["src/app/**"], "act"], "the quick edit lost a field of the plan");
   assert.equal(await page.locator("#work-quick-state option[value=done]").count(), 0, "the quick edit offers Done, which may start an agent check");
-  await closeDrawer(page);
-  step("the drawer changes the priority without the plan form and keeps every other field of the plan");
+  await closePane(page);
+  step("the pane changes the priority without the plan form and keeps every other field of the plan");
 
   // A conflict keeps the draft, and Reload saved version recovers it.
   await page.locator(trigger).click();
@@ -566,7 +588,7 @@ async function editing(page, ids, posts) {
   await page.locator("#form-save").click();
   await savedToast(page, /plan is saved/);
   step("Reload saved version draws the saved plan and the next save succeeds");
-  await closeDrawer(page);
+  await closePane(page);
 
   // Creating a work item from the Plan view.
   await go(page, "#plan");
@@ -652,8 +674,8 @@ async function editing(page, ids, posts) {
   await field(page, "reason").fill("The work item needs the brief.");
   await page.locator("#form-save").click();
   await savedToast(page, /docs\/brief\.md/);
-  step("the blocked path of a scope block is allowed from the scope blocks drawer of the Now view");
-  await closeDrawer(page);
+  step("the blocked path of a scope block is allowed from the scope blocks pane of the Now view");
+  await closePane(page);
 
   // The phase of the project, which decides who merges delegated work.
   await page.locator('[data-key="phase-change"]').click();
@@ -707,6 +729,37 @@ async function editing(page, ids, posts) {
   assert.match(page.url(), /#work/);
   step("a new revision keeps the open view and the focused work card");
 
+  // A live update keeps the selection, the scroll position of the view and of the pane, and the text typed into a field.
+  await page.setViewportSize({ width: 1600, height: 640 });
+  await page.locator(card).click();
+  await page.waitForFunction(() => document.getElementById("detail-title").textContent !== "Loading" && !document.querySelector(".detail-content.pending"));
+  const before = await page.evaluate(() => { const main = document.getElementById("main"), body = document.querySelector("#detail .detail-scroll");
+    main.scrollTop = 90; body.scrollTop = 120; return [main.scrollTop, body.scrollTop]; });
+  assert.ok(before[0] > 0 && before[1] > 0, `the view or the pane does not scroll at 640 pixels: ${before}`);
+  const update = async () => {
+    const from = await page.evaluate(() => Panel.health().revision);
+    await page.evaluate(async (id) => {
+      const work = await Panel.get("work", { id });
+      await Panel.action("comment", { episode_id: id, expected_version: work.card.version, text: "The browser check adds a second comment." }, Panel.requestKey("panel-check"));
+    }, ids.review);
+    await page.waitForFunction((value) => Panel.health().revision !== value, from);
+    await page.waitForTimeout(700);
+    await settle(page);
+  };
+  await update();
+  assert.deepEqual(await page.evaluate(() => [document.getElementById("main").scrollTop, document.querySelector("#detail .detail-scroll").scrollTop]), before);
+  assert.equal(await page.locator(card).getAttribute("aria-current"), "true");
+  await closePane(page);
+  await go(page, "#records");
+  await page.locator("#records-query").focus();
+  await page.keyboard.type("Parse");
+  await update();
+  assert.deepEqual(await page.evaluate(() => [document.activeElement.id, document.getElementById("records-query").value]), ["records-query", "Parse"]);
+  await page.locator("#records-query").fill("");
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await go(page, "#work");
+  step("a live update keeps the selected row, the scroll position of the view and of the pane, and the text typed into a field");
+
   // Focus that moves while a refresh is still loading has to survive the swap instead of falling back to the body.
   await page.route("**/api/board*", async (route) => { await new Promise((resolve) => setTimeout(resolve, 1200)); await route.continue(); });
   const slow = await page.evaluate(() => Panel.health().revision);
@@ -753,7 +806,7 @@ async function editing(page, ids, posts) {
   await page.waitForFunction(async (id) => ((await Panel.get("work", { id })).card.plan.paths || []).includes("docs/research/**"), ids.research, { timeout: 15000 });
   await page.waitForFunction(() => !document.getElementById("form-dialog").open || !document.getElementById("form-error").hidden, null, { timeout: 30000 });
   if (await page.locator("#form-dialog[open]").count()) await closeForm(page);
-  await closeDrawer(page);
+  await closePane(page);
   step("the delegation form takes the missing allowed paths and saves them in the plan before it delegates");
 }
 
@@ -771,9 +824,9 @@ async function closeForm(page) {
   await page.waitForFunction(() => !document.getElementById("form-dialog").open && !document.getElementById("form-fields").children.length);
 }
 async function openFocus(page, id) {
-  await closeDrawer(page);
+  await closePane(page);
   await page.evaluate((value) => Panel.openWork(value), id);
-  await page.waitForFunction(() => document.getElementById("drawer-title").textContent === "Design the export format");
+  await page.waitForFunction(() => document.getElementById("detail-title").textContent === "Design the export format");
   await settle(page);
   await page.waitForSelector('[data-key="work-focus"] [data-key="focus-report"]');
 }
@@ -821,7 +874,7 @@ async function focused(browser, directory) {
   await focusContent(page, "desktop");
   const wide = await boxes(page);
   assert.ok(Math.abs(wide[0].y - wide[1].y) < 2 && wide[1].x > wide[0].right, `the attempts are not side by side at 1440 pixels: ${JSON.stringify(wide)}`);
-  step("focus: the work drawer shows the problem, the check, both attempts side by side, the ruled out hypothesis and the report");
+  step("focus: the work pane shows the problem, the check, both attempts side by side, the ruled out hypothesis and the report");
 
   // A panel started by an assistant does not carry the actions of the user, so it names the reason instead of the buttons.
   const assistant = await page.evaluate(() => Boolean((Panel.health() || {}).assistant_started));
@@ -859,7 +912,7 @@ async function focused(browser, directory) {
   assert.ok(narrow[1].y > narrow[0].y, `the attempts do not stack on a 390 pixel screen: ${JSON.stringify(narrow)}`);
   assert.ok(narrow.every((box) => box.x >= 0 && box.right <= 390), `an attempt sits off a 390 pixel screen: ${JSON.stringify(narrow)}`);
   await focusContent(page, "phone");
-  await noOverflow(page, 390, "focus drawer");
+  await noOverflow(page, 390, "focus pane");
   step("focus: the attempts stack and stay on a 390 pixel screen");
   assert.deepEqual(problems, [], "the Focus checks logged console or page errors");
   await page.close();
@@ -910,9 +963,9 @@ async function hived(browser, fixture) {
   // Session flags are low risk decisions: a row decides one at once, and one dialog decides the rest with an optional reason.
   await go(page, "#now");
   await page.click("[data-key=now-all-attention]");
-  assert.match(await text(page, "#drawer-body [data-key^='now-attention-session_flags']"), /3 flagged session messages wait for your confirmation or dismissal\.\s*Open the flags/);
-  await page.click("#drawer-body [data-key^='now-attention-session_flags']");
-  await closeDrawer(page);
+  assert.match(await text(page, "#detail-body [data-key^='now-attention-session_flags']"), /3 flagged session messages wait for your confirmation or dismissal\.\s*Open the flags/);
+  await page.click("#detail-body [data-key^='now-attention-session_flags']");
+  await closePane(page);
   await page.waitForFunction(() => /3 open flags/.test((document.querySelector("#main .view:not(.pending) .sentence") || {}).textContent || ""));
   await page.click('[data-key="flag-dismissed-flag_fixture_3"]');
   await page.waitForFunction(() => /2 open flags/.test(document.querySelector("#main .view:not(.pending) .sentence").textContent), null, { timeout: 15000 });

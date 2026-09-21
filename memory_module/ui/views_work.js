@@ -1,10 +1,10 @@
 /*
  * Project Memory control panel: views_work.js registers the Now, Plan, Work and Decisions views and the "work" and
- * "decision" drawers. Buttons open the forms of forms.js: plan {episode_id} or {parent_id, item_type}, comment,
- * allow_paths {episode_id, paths}, delegate, review {episode_id, role} and answer_kickoff {question_ids}. The drawers
- * draw the lineage with Panel.lineageGraph of graphs.js, and runs open the "run" drawer of views_knowledge.js. A work item
+ * "decision" panes. Buttons open the forms of forms.js: plan {episode_id} or {parent_id, item_type}, comment,
+ * allow_paths {episode_id, paths}, delegate, review {episode_id, role} and answer_kickoff {question_ids}. The panes
+ * draw the lineage with Panel.lineageGraph of graphs.js, and runs open the "run" pane of views_knowledge.js. A work item
  * with a focused problem shows its check, its attempts side by side and its report, with the focus_check and
- * focus_start forms {episode_id}. Now opens the "now_list" drawer {kind, offset} and the reconcile {receipt_id, resolution}
+ * focus_start forms {episode_id}. Now opens the "now_list" pane {kind, offset} and the reconcile {receipt_id, resolution}
  * and reconcile_read_only forms; a blocked work item lists its unconfirmed calls with the same forms.
  */
 (() => {
@@ -26,8 +26,8 @@
   const section = (title, ...children) => h("section", { class: "stack" }, h("h3", null, title), ...children);
   const textList = (items) => h("ul", null, items.map((item) => h("li", null, typeof item === "string" ? item : JSON.stringify(item))));
 
-  const openDecision = (id, trigger) => P.openDrawer("decision", { id }, trigger);
-  const openRun = (run, trigger) => P.openDrawer("run", { id: run.id }, trigger);
+  const openDecision = (id, trigger) => P.openPane("decision", { id }, trigger);
+  const openRun = (run, trigger) => P.openPane("run", { id: run.id }, trigger);
   // A row that opens something: every child is shown inside one button with a stable key.
   const openItem = (key, handler, ...children) => button(children, key, handler, "item work-item");
   const openable = (id) => /^(episode|event|source|host|direction|check)_/.test(String(id));
@@ -187,10 +187,10 @@
   }
   const allLink = (href, text) => h("a", { href }, text);
 
-  // Now keeps each card short: five items, then a drawer with the rest. Decisions and scope blocks open from the view head.
+  // Now keeps each card short: five items, then a pane with the rest. Decisions and scope blocks open from the view head.
   const NOW_ITEMS = 5, BOARD_PAGE = 10;
   const clip = (items) => (items || []).slice(0, NOW_ITEMS);
-  const showAll = (kind, total, shown) => (total > shown ? button(`Show all ${total}`, "now-all-" + kind, (t) => P.openDrawer("now_list", { kind }, t), "small quiet") : null);
+  const showAll = (kind, total, shown) => (total > shown ? button(`Show all ${total}`, "now-all-" + kind, (t) => P.openPane("now_list", { kind }, t), "small quiet") : null);
   function unconfirmedItem(item) {
     const found = item.transcript || {}, suggested = found.suggested;
     const text = !found.found ? "No transcript entry was found for this call. Check its effect yourself."
@@ -224,8 +224,8 @@
         (counts[state] || 0) > clip(items).length ? allLink("#work/state=" + state, `Show all ${counts[state]} on the board`) : null);
       put(container,
         h("div", { class: "view-head" }, h("div", { class: "stack" }, h("p", { class: "sentence" }, nowSentence(now)), detail ? h("p", { class: "muted" }, detail) : null),
-          h("div", { class: "row" }, button(`Decisions (${decisions})`, "now-open-decisions", (t) => P.openDrawer("now_list", { kind: "decisions" }, t), "small"),
-            button(`Scope blocks (${blocks})`, "now-open-blocks", (t) => P.openDrawer("now_list", { kind: "scope_blocks" }, t), "small"))),
+          h("div", { class: "row" }, button(`Decisions (${decisions})`, "now-open-decisions", (t) => P.openPane("now_list", { kind: "decisions" }, t), "small"),
+            button(`Scope blocks (${blocks})`, "now-open-blocks", (t) => P.openPane("now_list", { kind: "scope_blocks" }, t), "small"))),
         P.stateStrip(counts, { legend: true }),
         await kickoffCard(now),
         await unconfirmedCard({}),
@@ -235,7 +235,7 @@
             (now.attention_kinds || []).length > 1 ? h("div", { class: "row", dataset: { key: "now-kinds" } }, now.attention_kinds.map((kind) => {
               const [tone, label, , open] = attentionOf(kind.type);
               return button([label, chip(String(kind.count), { dataset: { tone } })], "now-kind-" + kind.type,
-                (t) => (kind.entry ? open(kind.entry, t) : P.openDrawer("now_list", { kind: "attention", type: kind.type }, t)), "small");
+                (t) => (kind.entry ? open(kind.entry, t) : P.openPane("now_list", { kind: "attention", type: kind.type }, t)), "small");
             })) : null,
             listOf(clip(attention), attentionItem, "Nothing waits for you."),
             showAll("attention", now.attention_total || 0, clip(attention).length)),
@@ -247,14 +247,14 @@
             (agents.recent || []).length ? h("details", null, h("summary", null, "Recent runs"), listOf(agents.recent, (run) => runButton(run, "now-recent-"))) : null)));
   } });
   const NOW_LISTS = { decisions: "Latest decisions", scope_blocks: "Recent scope blocks", attention: "Waiting for you", agents: "Agents running" };
-  P.registerDrawer("now_list", { async render(body, params, ctx) {
+  P.registerPane("now_list", { async render(body, params, ctx) {
       // A snapshot holds the unfiltered response only.
       const offset = Number(params.offset || 0), type = params.type || "";
       const now = await P.get("now", { attention_offset: offset ? String(offset) : "", attention_type: P.live ? type : "" });
       if (type && !P.live) now.attention = (now.attention || []).filter((entry) => entry.type === type);
       ctx.setTitle(type ? attentionOf(type)[1] : NOW_LISTS[params.kind] || "List");
       ctx.setKind("Now");
-      const page = (to) => (t) => P.openDrawer("now_list", { kind: params.kind, type, offset: String(to) }, t);
+      const page = (to) => (t) => P.openPane("now_list", { kind: params.kind, type, offset: String(to) }, t);
       const lists = {
         decisions: () => [listOf(now.latest_decisions, (decision) => decisionItem(decision, "now-decision-"), "No decision is recorded."), allLink("#decisions", "Open all decisions")],
         scope_blocks: () => listOf(now.scope_blocks, scopeBlock, "No edit was blocked for being outside the allowed paths."),
@@ -405,7 +405,7 @@
       await draw();
   } });
 
-  // Work item drawer.
+  // Work item pane.
   const NEXT_BUTTONS = {
     plan: ["Edit plan", "plan"], review_plan: ["Edit plan", "plan"], propose: ["Edit plan", "plan"], review: ["Edit plan", "plan"],
     finalize: ["Mark as done", "plan", { state: "done" }], request_review: ["Request check", "review", { role: "outcome" }],
@@ -503,7 +503,7 @@
   function quickEdit(card, field, label, options) {
     const plan = card.plan, before = plan[field] || (field === "priority" ? "normal" : "backlog");
     return selectControl("work-quick-" + field, label, options.includes(before) ? options : [before, ...options], before, async (value) => {
-      const reason = `The user changed the ${field} from ${lower(P.words(before))} to ${lower(P.words(value))} in the drawer of the ${noun(1)}.`;
+      const reason = `The user changed the ${field} from ${lower(P.words(before))} to ${lower(P.words(value))} in the pane of the ${noun(1)}.`;
       try {
         await P.action("plan", { episode_id: card.id, expected_version: card.version, payload: P.planPayload(plan, { [field]: value }, reason) }, P.requestKey("plan"));
         P.toast(`The ${field} is now ${lower(P.words(value))}.`);
@@ -514,7 +514,7 @@
     : reviews.configured === false ? "No agent host is configured, so the work cannot be delegated." : "");
   // The shown state follows the evidence, so the first open issue explains a difference from the recorded state.
   const stateReason = (card) => { const issue = (card.issues || [])[0]; return issue ? "an issue is open: " + lower(issue.reason) : "its evidence requires it."; };
-  P.registerDrawer("work", { async render(body, params, ctx) {
+  P.registerPane("work", { async render(body, params, ctx) {
       const offset = remembered.history.get(params.id) || 0;
       const work = await P.get("work", { id: params.id });
       const card = work.card, plan = card.plan || null;
@@ -532,16 +532,18 @@
       const hasHistory = Boolean(history.error || history.total);
       const folded = [[Boolean(plan), "Scope and allowed paths"], [hasDependencies, "Dependencies"], [hasIssues, "Issues"],
         [hasRuns, "Agent checks and delegated runs"], [hasHistory, "History"]].filter(([present]) => !present).map(([, name]) => name);
+      // The next step and the actions of the item stay pinned under the scrolling body.
+      const next = nextAction(work, card), pinned = next && next.tagName === "BUTTON";
+      put(ctx.foot, pinned ? next : null, ctx.canEdit ? h("div", { class: "row" },
+        button("Edit plan", "work-edit", (t) => P.openForm("plan", workContext(card), t), "small"),
+        plan ? button("Allow paths", "work-allow", (t) => P.openForm("allow_paths", workContext(card), t), "small") : null,
+        plan ? button("Delegate", "work-delegate", (t) => P.openForm("delegate", workContext(card), t), "small", { disabled: Boolean(noDelegation) }) : null,
+        button("Request check", "work-check", (t) => P.openForm("review", workContext(card, { role: "outcome" }), t), "small"),
+        button("Comment", "work-comment", (t) => P.openForm("comment", workContext(card), t), "small")) : null);
       put(body,
         h("div", { class: "row" }, P.badge(card.state),
           chip(P.words(card.subject)), plan && plan.priority && plan.priority !== "normal" ? chip(P.words(plan.priority) + " priority") : null,
           plan && plan.owner ? chip("Owner: " + (plan.owner === "human" ? "person" : "agent")) : null, h("span", { class: "muted" }, "Version " + card.version)),
-        ctx.canEdit ? h("div", { class: "row" },
-          button("Edit plan", "work-edit", (t) => P.openForm("plan", workContext(card), t), "small"),
-          plan ? button("Allow paths", "work-allow", (t) => P.openForm("allow_paths", workContext(card), t), "small") : null,
-          plan ? button("Delegate", "work-delegate", (t) => P.openForm("delegate", workContext(card), t), "small", { disabled: Boolean(noDelegation) }) : null,
-          button("Request check", "work-check", (t) => P.openForm("review", workContext(card, { role: "outcome" }), t), "small"),
-          button("Comment", "work-comment", (t) => P.openForm("comment", workContext(card), t), "small")) : null,
         ctx.canEdit && noDelegation ? h("p", { class: "muted", dataset: { key: "work-delegate-blocked" } }, noDelegation) : null,
         ctx.canEdit && plan && !["done", "cancelled"].includes(plan.state) ? h("div", { class: "toolbar", dataset: { key: "work-quick" } },
           quickEdit(card, "state", "Recorded state", plan.owner === "human" ? [...QUICK_STATES.slice(0, 2), "in_progress", ...QUICK_STATES.slice(2)] : QUICK_STATES),
@@ -551,7 +553,7 @@
         kv([["Intended result", card.intent], ["Done when", card.done_when]]),
         h("section", { class: "notice", dataset: card.state === "blocked" ? { tone: "blocked" } : null }, h("h3", null, "Next step"),
           h("p", null, step.reason || "No next step is recorded."),
-          step.next_step && step.next_step.reason && step.next_step.reason !== step.reason ? h("p", { class: "muted" }, step.next_step.reason) : null, nextAction(work, card)),
+          step.next_step && step.next_step.reason && step.next_step.reason !== step.reason ? h("p", { class: "muted" }, step.next_step.reason) : null, pinned ? null : next),
         hasIssues ? section("Issues", listOf(card.issues, (issue, index) => h("div", { class: "stack" }, h("span", { class: "row" }, toneBadge("review", P.words(issue.type))), h("span", null, issue.reason),
           issue.source_id || issue.record_id ? button("Open the evidence", "work-issue-" + index, (t) => P.openRecord(issue.source_id || issue.record_id, t), "small") : null,
           issue.run_id ? button("Open the check", "work-issue-run-" + index, (t) => openRun({ id: issue.run_id, episode_id: card.id }, t), "small") : null))) : null,
@@ -575,7 +577,7 @@
             : reviews.current ? `The current ${P.words(reviews.current.role).toLowerCase()} check is ${P.words(reviews.current.state).toLowerCase()}.` : "No outcome check is required yet."),
           listOf(runs, (run) => runButton(run, "work-run-"), "No agent run is recorded."), reports) : null,
         focusHost, lineageHost,
-        // The history is the longest part of the drawer, so it starts closed. Paging keeps it open.
+        // The history is the longest part of the pane, so it starts closed. Paging keeps it open.
         !hasHistory ? null : h("details", { class: "stack", dataset: { key: "work-history" }, open: remembered.open.get("history-" + card.id) === true || offset > 0,
           on: { toggle: (event) => remembered.open.set("history-" + card.id, event.currentTarget.open) } },
         h("summary", null, h("h3", { class: "summary-title" }, "History"), history.total ? " " + P.count(history.total, "record") : ""),
@@ -635,7 +637,7 @@
         checkControl("decision-current", "Hide replaced decisions", filter.current, (value) => update("current", value))), results);
       redraw(results, draw);
   } });
-  P.registerDrawer("decision", { async render(body, params, ctx) {
+  P.registerPane("decision", { async render(body, params, ctx) {
       const { record } = await P.get("record", { id: params.id });
       const detail = record.detail || {}, payload = detail.payload || {}, outcome = record.outcome;
       const observed = outcome ? (outcome.detail || {}).payload || {} : null;
