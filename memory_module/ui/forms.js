@@ -369,10 +369,16 @@
   // Delegate a work item to an agent host.
   P.registerForm("delegate", { title: "Delegate the work", submitLabel: "Delegate",
     async render(fields, context) {
-      const card = await work(context.episode_id);
+      const card = context.card = await work(context.episode_id);
       const plan = card.plan || {};
-      fields.append(P.kv([[P.term("work_item"), card.title], ["Scope", plan.scope], ["Allowed paths", chips(plan.paths)]]),
+      // Missing paths and autonomy are asked for here and saved with the delegation, so the user does not repair the plan in another form first.
+      context.needsPaths = !(plan.paths || []).length;
+      context.needsAct = plan.autonomy !== "act";
+      fields.append(P.kv([[P.term("work_item"), card.title], ["Scope", plan.scope], ["Allowed paths", context.needsPaths ? null : chips(plan.paths)]]),
         hint("An agent works on a separate branch in a git worktree and can change only files that match the allowed paths. Another agent host reviews the result, and nothing is merged until you decide."));
+      if (context.needsPaths) fields.append(P.field("Allowed paths", list("paths", []), "This work item has no allowed paths yet. Write one pattern per line, such as docs/** or src/app/. They are saved in the plan."));
+      if (context.needsAct) fields.append(P.field("Let the agent act within the scope and the allowed paths", h("input", { type: "checkbox", name: "act" }),
+        "The plan lets agents prepare a proposal only. Delegation needs this permission, and it is saved in the plan."));
       fields.append(P.field("Agent host", choices("host", [["", "Choose an available host", "Project Memory uses the configured host first and the other host when it is unavailable."],
         ...((P.health() || {}).hosts || []).map((host) => [host.host, P.words(host.host), hostSentence(host), !host.installed])], "")),
       P.field("Time limit in seconds", P.input("max_seconds", "", { type: "number", min: "60", max: "14400", step: "60", placeholder: "1800", dataset: { number: "" } }),
@@ -380,10 +386,16 @@
       requireHosts();
       if (!card.plan) stop("Record a plan for this work item before delegating it.");
       if (["done", "cancelled"].includes(plan.state)) stop("This work item is finished, so it cannot be delegated.");
-      if (plan.autonomy !== "act") stop("Delegation requires the autonomy Act within the scope and allowed paths. Edit the plan first.");
-      if (!(plan.paths || []).length) stop("Delegation requires allowed paths. Edit the plan and add the paths that the work needs.");
     },
-    submit(values, context) {
+    async submit(values, context) {
+      if ((context.needsPaths || context.needsAct) && !context.prepared) {
+        if (context.needsPaths) need(values.paths, "Write at least one allowed path.");
+        if (context.needsAct && !values.act) throw new P.FormError("Let the agent act within the scope and the allowed paths, or cancel the delegation.");
+        const change = { autonomy: "act", ...(context.needsPaths ? { paths: values.paths } : {}) };
+        await P.action("plan", { episode_id: context.card.id, expected_version: context.card.version,
+          payload: P.planPayload(context.card.plan, change, "The user completed the plan in the delegation form.") }, P.requestKey("plan"));
+        context.prepared = true;
+      }
       return { operation: "delegate", data: timeLimit(values, { episode_id: context.episode_id, ...(values.host ? { host: values.host } : {}) }, 60, 14400) };
     },
     done: (result) => `The work is delegated to ${P.words(result.host)}. The run is ${P.words(result.state).toLowerCase()}.`,
@@ -658,16 +670,17 @@
     done: (result) => `The swarm is closed. Confirmed conclusions: ${Object.keys(result.confirmed).length} of ${result.conclusions}. Proposed lessons: ${result.proposals.length}.`,
   });
   // A flagged session message and a distilled proposal. Only the user decides them.
-  P.registerForm("session_flag", { title: "Decide the flag", submitLabel: "Save the decision",
+  P.registerForm("session_flag", { title: (context) => (context.flag_ids ? "Decide the " + context.flag_ids.length + " shown flags" : "Decide the flag"), submitLabel: "Save the decision",
     render(fields, context) {
       fields.append(P.field("Decision", choices("status", [["confirmed", "Confirm", "A record is missing for this direction."], ["dismissed", "Dismiss", "Nothing is missing."]], context.status)),
-        reasonField(), hint("Both decisions are kept, so the precision of the flags can be measured."));
+        reasonField("2", "Reason (optional)"), hint("Both decisions are kept, so the precision of the flags can be measured."));
     },
     submit(values, context) {
-      needAll(values, { status: "Confirm or dismiss the flag.", reason: "Write the reason." });
-      return { operation: "session_flag", data: { flag_id: context.flag_id, status: values.status, reason: values.reason } };
+      need(values.status, "Confirm or dismiss the flag.");
+      const data = { status: values.status, ...(values.reason ? { reason: values.reason } : {}) };
+      return context.flag_ids ? { operation: "session_flags", data: { ...data, flag_ids: context.flag_ids } } : { operation: "session_flag", data: { ...data, flag_id: context.flag_id } };
     },
-    done: (result) => "The flag is " + result.status + ".",
+    done: (result) => (result.decided ? P.count(result.decided, "flag") + (result.decided === 1 ? " is " : " are ") : "The flag is ") + result.status + ".",
   });
   P.registerForm("session_proposal", { title: "Decide the proposal", submitLabel: "Save the decision",
     async render(fields, context) {

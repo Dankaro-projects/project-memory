@@ -88,6 +88,7 @@ async function views(page, kind, expected) {
   assert.equal(await page.locator("[data-key=now-open-decisions]").count(), 1);
   assert.equal(await page.locator("[data-key=now-open-blocks]").count(), 1);
   assert.ok(await page.locator("#ledger .strip-part").count() >= 4, "the state ledger shows no work states");
+  assert.equal(await page.locator("#ledger a, #ledger button").count(), 0, "the ledger of 4 pixels still holds a link");
   step(`${kind}: Now states the project position, the kickoff checklist and the attention list`);
 
   // The checklist must not push the project position, the blocked work and the attention list below the first screen.
@@ -97,9 +98,20 @@ async function views(page, kind, expected) {
   assert.ok(firstEntry.y < 900, `${kind}: the attention list starts at ${Math.round(firstEntry.y)} pixels, below the first screen`);
   assert.equal(await page.locator('#main [data-key^="now-attention-"] .item-action').count(), 5);
   assert.match(await text(page, "#main .strip-legend"), /\d+ in progress/);
+  // The card leads the view with one button per kind, so a kind at the end of a long list is still on the first screen.
+  assert.equal(await page.locator("#main .now-grid > .card").first().getAttribute("class"), "card now-waiting");
+  assert.match(await text(page, '[data-key="now-kind-machine_rules"]'), /Machine rules\s*1/);
+  assert.ok((await page.locator('[data-key="now-kinds"]').boundingBox()).y < 600, `${kind}: the kinds of waiting items start below the first screen`);
+  await page.click('[data-key="now-kind-blocked_work"]');
+  await page.waitForFunction(() => document.getElementById("drawer-title").textContent === "Blocked");
+  await settle(page);
+  assert.equal(await page.locator('#drawer-body [data-key^="now-attention-"]').count(), 2);
+  await closeDrawer(page);
   await page.click("[data-key=now-all-attention]");
   await page.waitForSelector("#drawer-body [data-key^='now-attention-']");
-  assert.equal(await page.locator('#drawer-body [data-key^="now-attention-"]').count(), 8);
+  // The ninth row is the proposed machine rule of the fixture, which waits in the Machine view.
+  assert.equal(await page.locator('#drawer-body [data-key^="now-attention-"]').count(), 9);
+  assert.match(await text(page, "#drawer-body [data-key^='now-attention-machine_rules']"), /1 proposed machine rule waits for your acceptance or refusal\.\s*Open the proposed rules/);
   const nowText = await text(page, "#drawer-body");
   await closeDrawer(page);
   await page.click("[data-key=now-open-decisions]");
@@ -108,6 +120,16 @@ async function views(page, kind, expected) {
   assert.match(nowText, /occurred once after the lesson was accepted/);
   assert.match(nowText, /changed 1 file and awaits a merge decision/);
   step(`${kind}: Now keeps the first screen, names each action and counts a single event in the singular`);
+
+  // Every row of the list opens something: the proposed lessons open as the first section of Learning.
+  await page.click("[data-key=now-all-attention]");
+  await page.waitForSelector("#drawer-body [data-key^='now-attention-lessons_to_accept']");
+  await page.click("#drawer-body [data-key^='now-attention-lessons_to_accept']");
+  await page.waitForFunction(() => document.activeElement && document.activeElement.textContent === "Proposed lessons");
+  assert.equal(await page.locator("#main section h3").first().textContent(), "Proposed lessons");
+  assert.ok(!/section=/.test(page.url()), "the section stays in the route and would move the reader again");
+  await closeDrawer(page);
+  step(`${kind}: the lessons row of Now opens the proposed lessons, which lead the Learning view`);
 
   await go(page, "#plan");
   assert.match(await text(page, "#main .sentence"), /16 work items are planned in 7 phases\. 0 are done\./);
@@ -123,6 +145,9 @@ async function views(page, kind, expected) {
   assert.match(await text(page, "#main"), /Waits for \d+ prerequisite/);
   await page.locator("#work-tab-list").click();
   await page.waitForFunction(() => document.querySelectorAll("#main table.data tbody tr").length === 16);
+  // The switch is a pair of pressed buttons, because a tab role without a tab panel misleads assistive technology.
+  assert.equal(await page.locator("#work-tab-list").getAttribute("aria-pressed"), "true");
+  assert.equal(await page.locator("#main [role=tab]").count(), 0);
   await page.locator("#work-state").selectOption("blocked");
   await page.waitForFunction(() => document.querySelectorAll("#main table.data tbody tr").length === 2);
   assert.match(page.url(), /state=blocked/);
@@ -351,9 +376,44 @@ async function views(page, kind, expected) {
 
   await go(page, "#records");
   assert.ok(await page.locator("#main table.data").count() >= 1, "the records view lists no records");
+  // The filters apply on change, as in Work, and typing keeps the focus while the results update.
+  assert.equal(await page.locator("#records-apply").count(), 0);
+  await page.locator("#records-view").selectOption("decisions");
+  await page.waitForFunction(() => /in decisions match/.test((document.querySelector("#main .view:not(.pending) .sentence") || {}).textContent || ""));
+  assert.match(page.url(), /view=decisions/);
+  await page.locator("#records-query").pressSequentially("zzzz");
+  await page.waitForFunction(() => /^0 records in decisions/.test(document.querySelector("#main .view:not(.pending) .sentence").textContent));
+  assert.equal(await page.evaluate(() => document.activeElement.id), "records-query");
+  await page.locator("#records-clear").click();
+  await page.waitForFunction(() => /across all kinds/.test(document.querySelector("#main .view:not(.pending) .sentence").textContent));
+  step(`${kind}: the Records filters apply on change and keep the focus while the reader types`);
+  // A work item carries one state word everywhere: Records shows the board state, not a second vocabulary.
+  await page.locator("#records-view").selectOption("episodes");
+  await page.waitForFunction(() => /in work items match/.test(document.querySelector("#main .view:not(.pending) .sentence").textContent));
+  assert.equal(await page.locator('#main table.data .badge[data-state="blocked"]').count(), 2);
+  assert.equal(await page.locator('#main table.data .badge[data-state="active"], #main table.data .badge[data-state="settled"]').count(), 0);
+  step(`${kind}: Records shows the two blocked work items by their board state`);
   await go(page, "#requirements");
   assert.match(await text(page, "#main"), /The project requirements are not established yet\./);
   step(`${kind}: Records and Requirements render their current state`);
+
+  // Beside an open drawer the top bar keeps its controls in reach. On a narrow screen the top bar scrolls with the page,
+  // the Work filters stay folded, and the page behind the full width drawer takes no focus.
+  await go(page, "#work");
+  await page.locator("#main .board button.item").first().click();
+  await page.waitForFunction(() => !document.getElementById("drawer").hidden && document.getElementById("drawer-title").textContent !== "Loading");
+  await settle(page);
+  const beside = await page.evaluate(() => [document.getElementById("search-input").getBoundingClientRect().right, document.getElementById("drawer").getBoundingClientRect().left]);
+  assert.ok(beside[0] <= beside[1], `${kind}: the drawer covers the search field at 1440 pixels: ${beside}`);
+  await page.setViewportSize({ width: 500, height: 800 });
+  await page.waitForFunction(() => document.getElementById("rail").inert && document.querySelector(".column").inert, null, { timeout: 5000 });
+  await closeDrawer(page);
+  assert.deepEqual(await page.evaluate(() => [document.querySelector(".column").inert, getComputedStyle(document.querySelector(".topbar")).position]), [false, "static"]);
+  await go(page, "#plan");
+  await go(page, "#work");
+  assert.equal(await page.locator("#work-filters").evaluate((node) => node.open), false);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  step(`${kind}: the drawer leaves the top bar in reach, and a narrow screen folds the Work filters and frees the top of the page`);
 
   for (const width of [1440, 768, 390, 320]) {
     for (const hash of ["#now", "#plan", "#work", "#architecture", "#decisions", "#learning", "#machine", "#hive", "#usage"]) {
@@ -378,9 +438,29 @@ async function editing(page, ids, posts) {
     "Dependencies", "Agent checks and delegated runs", "Lineage", "History", "Edit plan", "Allow paths", "Delegate", "Request check", "Comment"]) {
     assert.ok(drawer.includes(part), "the work drawer lacks " + part);
   }
+  // The history stays closed until the reader opens it, and sections without content share one sentence.
+  assert.equal(await page.locator('#drawer-body [data-key="work-history"]').evaluate((node) => node.open), false);
+  const headings = await page.locator("#drawer-body h3").allTextContents();
+  const folded = await page.locator('#drawer-body [data-key="work-folded"]').allTextContents();
+  for (const name of ["Dependencies", "Issues"]) {
+    assert.notEqual(headings.includes(name), folded.join(" ").includes(name), "the section " + name + " is shown twice or not at all");
+  }
   await page.keyboard.press("Escape");
   await page.waitForFunction((selector) => document.getElementById("drawer").hidden && document.activeElement.matches(selector), trigger);
   step("the keyboard opens the work drawer and Escape returns focus to the trigger");
+
+  // A change of priority needs no plan form: the drawer saves the complete plan with the one changed field.
+  await page.locator(trigger).click();
+  await settle(page);
+  await page.locator("#work-quick-priority").selectOption("high");
+  await page.waitForFunction(() => /High priority/.test(document.getElementById("drawer-body").textContent), null, { timeout: 15000 });
+  assert.equal(await page.locator(".toast").last().textContent(), "The priority is now high.");
+  assert.equal(await page.locator("#form-dialog[open]").count(), 0);
+  const kept = await page.evaluate(async (id) => (await Panel.get("work", { id })).card.plan, ids.story);
+  assert.deepEqual([kept.priority, kept.paths, kept.autonomy], ["high", ["src/app/**"], "act"], "the quick edit lost a field of the plan");
+  assert.equal(await page.locator("#work-quick-state option[value=done]").count(), 0, "the quick edit offers Done, which may start an agent check");
+  await closeDrawer(page);
+  step("the drawer changes the priority without the plan form and keeps every other field of the plan");
 
   // A conflict keeps the draft, and Reload saved version recovers it.
   await page.locator(trigger).click();
@@ -577,6 +657,24 @@ async function editing(page, ids, posts) {
   await page.waitForFunction(() => document.getElementById("live-status").textContent === "Live", null, { timeout: 15000 });
   assert.equal(await page.locator("#alerts .alert").count(), 0);
   step("an update failure is reported and clears when the updates return");
+
+  // The delegation form asks for missing allowed paths itself and saves them in the plan, so it is no dead end.
+  await page.evaluate((id) => Panel.openWork(id), ids.research);
+  await page.waitForSelector('[data-key="work-delegate"]:not([disabled])');
+  await settle(page);
+  await page.locator('[data-key="work-delegate"]').click();
+  await page.waitForSelector("#form-dialog[open] textarea[name=paths]");
+  assert.equal(await page.locator("#form-save").isDisabled(), false, "the delegation form stops on the missing paths");
+  assert.equal(await page.locator("#form-fields input[name=act]").count(), 0, "the plan already lets the agent act");
+  await page.locator("#form-save").click();
+  await page.waitForFunction(() => /Write at least one allowed path\./.test(document.getElementById("form-error").textContent));
+  await field(page, "paths").fill("docs/research/**");
+  await page.locator("#form-save").click();
+  await page.waitForFunction(async (id) => ((await Panel.get("work", { id })).card.plan.paths || []).includes("docs/research/**"), ids.research, { timeout: 15000 });
+  await page.waitForFunction(() => !document.getElementById("form-dialog").open || !document.getElementById("form-error").hidden, null, { timeout: 30000 });
+  if (await page.locator("#form-dialog[open]").count()) await closeForm(page);
+  await closeDrawer(page);
+  step("the delegation form takes the missing allowed paths and saves them in the plan before it delegates");
 }
 
 // The Focus section runs on a separate product fixture with a finished focused problem, so the counts that the other
@@ -729,6 +827,26 @@ async function hived(browser, fixture) {
   const problems = watch(page);
   await page.goto(fixture.url);
   await page.waitForFunction(() => document.getElementById("live-status").textContent === "Live", null, { timeout: 20000 });
+  // Session flags are low risk decisions: a row decides one at once, and one dialog decides the rest with an optional reason.
+  await go(page, "#now");
+  await page.click("[data-key=now-all-attention]");
+  assert.match(await text(page, "#drawer-body [data-key^='now-attention-session_flags']"), /3 flagged session messages wait for your confirmation or dismissal\.\s*Open the flags/);
+  await page.click("#drawer-body [data-key^='now-attention-session_flags']");
+  await closeDrawer(page);
+  await page.waitForFunction(() => /3 open flags/.test((document.querySelector("#main .view:not(.pending) .sentence") || {}).textContent || ""));
+  await page.click('[data-key="flag-dismissed-flag_fixture_3"]');
+  await page.waitForFunction(() => /2 open flags/.test(document.querySelector("#main .view:not(.pending) .sentence").textContent), null, { timeout: 15000 });
+  assert.equal(await page.locator(".toast").last().textContent(), "The flag is dismissed.");
+  assert.equal(await page.locator("#form-dialog[open]").count(), 0, "a single flag still needs a dialog");
+  await page.click('[data-key="form:session_flag:dismissed"]');
+  await page.waitForSelector("#form-dialog[open]");
+  assert.equal(await text(page, "#form-title"), "Decide the 2 shown flags");
+  await page.locator("#form-save").click();
+  await savedToast(page, /2 flags are dismissed\./);
+  await page.waitForFunction(() => /0 open flags/.test(document.querySelector("#main .view:not(.pending) .sentence").textContent), null, { timeout: 15000 });
+  assert.match(await text(page, '[data-key="sessions-note"]'), /Of 3 decided flags, 0 were confirmed\./);
+  step("sessions: Now names the open flags, a row dismisses one flag without a dialog, and one dialog without a reason dismisses the rest");
+
   await go(page, "#hive");
   assert.equal(await text(page, "#main .sentence"), "1 swarm is recorded, and 1 is open.");
   const listed = await text(page, `[data-key="hive-swarm-${swarm}"]`);

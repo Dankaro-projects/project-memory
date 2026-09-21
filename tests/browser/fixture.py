@@ -41,7 +41,7 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from memory_module import Memory, architecture, codex_host, focus, graph, hive, hosts, machine, reviews, templates  # noqa: E402
+from memory_module import Memory, architecture, codex_host, focus, graph, hive, hosts, machine, reviews, sessions, templates  # noqa: E402
 from memory_module.planning import latest, save  # noqa: E402
 from memory_module.workspace import action  # noqa: E402
 
@@ -670,6 +670,15 @@ class Builder:
                                        addressee='user')
         self.ids['hive'] = {'swarm': swarm, 'entries': ids}
 
+    def session_flags(self):
+        """Three open flags of one finished session, so the Sessions view offers the row actions and the batch decision."""
+        sessions.ensure(self.m)
+        with self.m._write():
+            for turn, excerpt in enumerate(('No, keep the offset of the delivery day.', 'Do not change the export format.', 'Use the second file instead.'), start=1):
+                self.m.db.execute('INSERT INTO session_flags VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
+                                  (f'flag_fixture_{turn}', 'claude:fixture', turn, turn * 4, '2026-09-10T10:0%d:00+00:00' % turn,
+                                   'correction', excerpt, 'open', '2026-09-10T12:00:00+00:00', None, None, None))
+
     def machine_memory(self):
         """One rule already accepted into the machine memory and one proposal that awaits the user."""
         accepted = machine.propose(self.m, **ACCEPTED_RULE, basis='Two delegated runs changed work that nobody had named.',
@@ -762,6 +771,7 @@ def build(kind, output, with_focus=False, with_hive=False):
         builder.machine_memory()
         builder.usage_ledger()
         if with_hive:
+            builder.session_flags()
             builder.open_hive_swarm()
         if with_focus:
             builder.focused_problem()

@@ -1,5 +1,31 @@
 # Changelog
 
+## Unreleased
+
+The work item drawer states the reason first. A usability review on 21 September 2026 measured 3,412 pixels of drawer content for an example item without a plan, with the issues below two empty sections. The drawer now shows the next step, the issues and the criteria that wait for confirmation before its reference sections, names the sections without content in one sentence, and keeps the history closed until the reader opens it. The same item now measures 1,461 pixels, which includes the sentence that explains its recorded state. The sprint and the parent item are shown by title, and links to other records show the title of the record in place of its identifier.
+
+Now lists every kind of decision that waits for the user. Session flags, session proposals and proposed machine rules waited in their own views and Now did not mention them, and the rows for too many rules and for a rule without effect had no label and opened nothing. Each kind now has a row with its count under Waiting for you, and every row opens the place where the user decides it. A row alone was not enough: on this project the list held 37 rows, the card showed five, and the row for 42 open session flags was the last one, so the first screen looked unchanged. The card now leads the view at full width with one button per kind and its count, a button opens the list of that kind or its single target, and the count of the card adds up every kind, 91 here in place of 37 rows. The row for proposed lessons opens the Proposed lessons section, which now leads the Learning view.
+
+A low risk decision needs no dialog. Each session flag needed a dialog and a typed reason, so a project with 42 open flags needed 42 of each. A flag is now confirmed or dismissed from its row, the reason is optional, and the shown flags are dismissed together with the new `session_flags` action and one optional reason. One refused flag refuses the whole batch. The counts of confirmed and dismissed flags keep their meaning. The Sessions view states the true number of open flags; it counted only the 20 flags it showed. A tool call whose transcript holds a result is reconciled as the transcript suggests with one button, and another result opens the existing form; the row offered four result buttons before and the form asked for the same choice again.
+
+State and priority change from the drawer of a work item. A change of priority needed the complete plan form with its required scope, next action and reason. Two selects now save the complete plan with the one changed field and a stated reason. Done and cancelled stay in the plan form, because they close the work and Done can start an agent check.
+
+The delegation form is no dead end. The form opened and then refused a work item without allowed paths or without the permission to act, and the user repaired the plan in another form by hand. The form now asks for the missing paths and the permission itself and saves them in the plan before it delegates. The drawer disables Delegate, with the reason beside it, for finished work and for a project without an agent host.
+
+A work item shows one state word. Plan and Work showed the board state, while Records showed the record status, so one item read Review in Plan and Settled in Records. Records and the record drawer now show the board state of a work item, and the drawer explains in a sentence why a shown state differs from the recorded one.
+
+The Records filters apply on change, as the filters of Work, Plan and Decisions do, and typing keeps the focus while the results update. The Apply filters button is gone and Clear stays.
+
+Narrow screens keep more room for content. At a width of 500 pixels the fixed top bar took 147 of 695 pixels and the Work filters about 250 more. Below 900 pixels the top bar now scrolls with the page, below 640 pixels the Work filters stay folded until the reader opens them, and the page behind a full width drawer takes no keyboard focus. From 1360 pixels the top bar keeps its status, lifecycle and search beside an open drawer, which covered them before.
+
+Four accessibility corrections. The ledger under the top bar held links 4 pixels high; it is now decorative and the legend of Now keeps the same links. The placeholder text measures 5.29 to 1 on white in place of 3.62 to 1. The Board and List switch of Work is a pair of pressed buttons, because it used the tab role without a tab panel. The alert of a failed update writes its text only when the text changes, so an alert region is not announced again on every attempt. The announcement itself is not tested with a screen reader.
+
+A scoped snapshot opens on a view it holds. A snapshot scoped by subject or work item opened on Now, which such a snapshot leaves out. It now opens on the first view of the rail that it holds, and the rail marks the views it leaves out. The error of an export that exceeds its record limit names the options `--subject` and `--episode`.
+
+Visible text says work item. Three server texts that the panel shows called a work item an episode. Learning, Hive and Machine each state their purpose in one sentence under their summary.
+
+The interface budget holds a named allowance for these changes: the joined scripts grew by 9,983 code characters to 243,457 and the stylesheet by 372, after the three attention tables of Now were merged into one. The cap of 10,000 is a decision of the orchestrator that the user has not yet confirmed.
+
 ## 0.6.0b7 (18 September 2026)
 
 Version 0.6.0b6 was tagged but not published. Its release run failed on Windows, because the guidance added for receipt evidence made the review prompt longer than the command line limit of cmd.exe. The guidance now travels in the evidence packet. This release carries the changes below.

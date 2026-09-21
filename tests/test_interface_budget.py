@@ -45,11 +45,23 @@ SESSIONS_LIMIT = 8_000
 # board columns, and forms.js by 1,672 with the reconcile and reconcile_read_only forms. The allowance is 4,100 and 1,700.
 PANEL_ACTIONS_ALLOWANCE = {'views': 4_100, 'forms.js': 1_700}
 PANEL_ACTIONS_LIMIT = 8_000
-ALLOWANCES = (FOCUS_ALLOWANCE, HIVE_ALLOWANCE, USAGE_ALLOWANCE, SESSIONS_ALLOWANCE, PANEL_ACTIONS_ALLOWANCE)
+# Allowance for the usability review of 21 September 2026: at most 10,000 code characters of JavaScript and 400 of stylesheet.
+# The eleven work items of the review cover the reordered work drawer, the Waiting for you card of Now with one button per
+# kind, flag and reconciliation decisions without a dialog, quick edits of state and priority, the delegation form that takes
+# missing paths, Records filters on change, the narrow screen layout, the accessibility corrections and the snapshot start
+# view. Measured on 21 September 2026 against main at ba1fc4d, after the three attention tables of Now were merged into one:
+# views_work.js grew by 5,530, views_knowledge.js by 1,946, forms.js by 1,269 and core.js by 1,238, and panel.css grew from
+# 26,962 to 27,334. The orchestrator first decided a cap of 8,000 and raised it to 10,000 when the measurement was known;
+# the user has not yet confirmed the cap.
+USABILITY_ALLOWANCE = {'views': 7_400, 'forms.js': 1_300, 'core.js': 1_300}
+USABILITY_LIMIT = 10_000
+USABILITY_STYLE_ALLOWANCE = 400
+ALLOWANCES = (FOCUS_ALLOWANCE, HIVE_ALLOWANCE, USAGE_ALLOWANCE, SESSIONS_ALLOWANCE, PANEL_ACTIONS_ALLOWANCE, USABILITY_ALLOWANCE)
 TOTAL_SCRIPT_CHARACTERS = 196_000 + sum(sum(allowance.values()) for allowance in ALLOWANCES)
-FILE_BUDGETS = {'core.js': 36_000, 'forms.js': 37_000 + sum(allowance.get('forms.js', 0) for allowance in ALLOWANCES), 'graphs.js': 41_000}
+FILE_BUDGETS = {'core.js': 36_000 + sum(allowance.get('core.js', 0) for allowance in ALLOWANCES),
+                'forms.js': 37_000 + sum(allowance.get('forms.js', 0) for allowance in ALLOWANCES), 'graphs.js': 41_000}
 VIEW_CHARACTERS = 82_000 + sum(allowance.get('views', 0) for allowance in ALLOWANCES)
-STYLE_CHARACTERS = 27_000
+STYLE_CHARACTERS = 27_000 + USABILITY_STYLE_ALLOWANCE
 SHELL_CHARACTERS = 6_600
 
 
@@ -128,6 +140,20 @@ class InterfaceBudgetTests(unittest.TestCase):
         work = (UI / 'views_work.js').read_text(encoding='utf-8')
         self.assertIn('P.registerDrawer("now_list"', work)
         self.assertIn('async function unconfirmedCard(params)', work)
+
+    def test_the_budget_is_measured_with_the_usability_changes_in_place(self):
+        # The usability allowance pays for these parts, so the budget may not be met by removing them.
+        self.assertLessEqual(sum(USABILITY_ALLOWANCE.values()), USABILITY_LIMIT)
+        self.assertLessEqual(USABILITY_STYLE_ALLOWANCE, 400)
+        work = (UI / 'views_work.js').read_text(encoding='utf-8')
+        knowledge = (UI / 'views_knowledge.js').read_text(encoding='utf-8')
+        for part in ('P.actButton = ', 'P.planPayload = ', 'function quickEdit(card, field, label, options)', 'dataset: { key: "work-folded" }',
+                     'session_flags: ["review", "Session flags"'):
+            self.assertIn(part, work)
+        for part in ('function titledButton(id, options = {})', 'anchored("proposed", section("Proposed lessons"', '"Dismiss the " + flags.length + " shown flags"'):
+            self.assertIn(part, knowledge)
+        self.assertIn('context.needsPaths', (UI / 'forms.js').read_text(encoding='utf-8'))
+        self.assertIn('function coverPage()', (UI / 'core.js').read_text(encoding='utf-8'))
 
 
 if __name__ == '__main__':

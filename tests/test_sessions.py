@@ -187,6 +187,23 @@ class SessionTests(Fixture):
         with self.assertRaises(Conflict):
             sessions.decide_flag(self.m, flag['id'], 'confirmed', 'Changed my mind.')
 
+    def test_the_user_decides_a_flag_without_a_reason_and_several_flags_together(self):
+        self.transcript('s1', self.basic())
+        self.transcript('s2', self.basic(session='s2'))
+        sessions.collect(self.m, found=self.found, now='2026-09-10T12:00:00+00:00')
+        first, second = sessions.flags(self.m)
+        decided = workspace.action(self.m, 'session_flag', {'flag_id': first['id'], 'status': 'dismissed'}, 'panel-flag-no-reason')
+        self.assertEqual((decided['status'], decided['reason']), ('dismissed', ''))
+        with self.assertRaises(Conflict):
+            workspace.action(self.m, 'session_flags', {'flag_ids': [second['id'], first['id']], 'status': 'confirmed'}, 'panel-flags-refused')
+        self.assertEqual(sessions.precision(self.m)['open'], 1, 'One refused flag refuses the whole batch.')
+        batch = workspace.action(self.m, 'session_flags', {'flag_ids': [second['id']], 'status': 'dismissed',
+                                                           'reason': 'These were recorded elsewhere.'}, 'panel-flags-1')
+        self.assertEqual((batch['decided'], batch['flag_ids']), (1, [second['id']]))
+        self.assertEqual((sessions.precision(self.m)['dismissed'], sessions.precision(self.m)['open']), (2, 0))
+        with self.assertRaises(InvalidRecord):
+            workspace.action(self.m, 'session_flags', {'flag_ids': [], 'status': 'dismissed'}, 'panel-flags-empty')
+
     def test_a_record_written_in_the_window_prevents_a_flag(self):
         self.transcript('s1', self.basic())
         episode = self.m.start('Parser', 'Build the parser.', 'code', 'The parser works.', subject='code')
@@ -315,6 +332,9 @@ class SessionTests(Fixture):
              'when': '', 'do': '', 'because': '', 'exceptions': ''}]})
         view = api.ENDPOINTS['sessions'](self.m, {})
         self.assertEqual((len(view['digests']), len(view['flags']), len(view['proposals'])), (1, 1, 1))
+        # Now names both kinds with their counts, so the user finds them without opening the Sessions view.
+        waiting = {item['type']: item['count'] for item in api.now(self.m, {})['attention'] if item['type'].startswith('session_')}
+        self.assertEqual(waiting, {'session_flags': 1, 'session_proposals': 1})
         flag = workspace.action(self.m, 'session_flag', {'flag_id': view['flags'][0]['id'], 'status': 'confirmed',
                                                          'reason': 'The refusal was never recorded.'}, 'panel-flag-1')
         self.assertEqual((flag['status'], flag['decided_by']), ('confirmed', 'workspace-user'))

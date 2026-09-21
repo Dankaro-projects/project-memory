@@ -168,6 +168,13 @@ class ApiTests(unittest.TestCase):
                          'failure_without_lesson', 'work_to_review', 'lessons_to_accept'):
             self.assertIn(expected, kinds)
         self.assertLessEqual(len(value['attention']), 20)
+        # Now leads with one entry per kind, and the list narrows to one kind.
+        by_kind = {item['type']: item for item in value['attention_kinds']}
+        self.assertEqual((by_kind['blocked_work']['count'], by_kind['blocked_work']['rows'], 'entry' in by_kind['blocked_work']), (2, 2, False))
+        self.assertEqual(by_kind['lessons_to_accept']['entry']['type'], 'lessons_to_accept')
+        self.assertEqual(value['attention_count'], sum(item['count'] for item in value['attention_kinds']))
+        blocked = api.now(self.m, {'attention_type': 'blocked_work'})
+        self.assertEqual(([item['type'] for item in blocked['attention']], blocked['attention_total']), (['blocked_work'] * 2, 2))
         self.assertEqual(value['lessons_to_accept'], 1)
         self.assertEqual(value['failures_without_lesson'], 1)
         self.assertEqual(value['recurrences'], 1)
@@ -401,6 +408,7 @@ class ApiTests(unittest.TestCase):
         self.assertEqual([item['id'] for item in value['promotions']], [proposal['id']])
         self.assertEqual((value['proposed_total'], value['exists']), (1, False))
         self.assertEqual(value['promotions'][0]['rule']['do'], RULE['do'])
+        self.assertEqual([item['count'] for item in api.now(self.m, {})['attention'] if item['type'] == 'machine_rules'], [1])
         self.assertFalse(Path(os.environ[machine.DATABASE_VARIABLE]).exists())
 
     def test_usage_endpoint_reads_the_ledger_read_only_and_the_revision_follows_it(self):

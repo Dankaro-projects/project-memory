@@ -23,6 +23,7 @@
   const number = (n) => Number(n || 0).toLocaleString("en-GB");
   const isAre = (n) => (n === 1 ? "is" : "are");
   const sentence = (text) => h("p", { class: "sentence" }, text);
+  const purpose = (text) => h("p", { class: "muted" }, text);
   const heading = (text, extra) => h("div", { class: "row kn-heading" }, h("h3", null, text), extra || null);
   const section = (title, extra, ...children) => h("section", { class: "stack" }, heading(title, extra), children);
   const counted = (n, noun) => h("span", { class: "muted" }, P.count(n, noun));
@@ -38,6 +39,12 @@
   const grid = (list, render, message) => (list.length ? h("div", { class: "grid" }, list.map(render)) : P.empty(message));
   const openButton = (label, id, options = {}) => button(label, (options.prefix || "open-") + id,
     (trigger) => (options.work ? P.openWork(id, trigger) : P.openRecord(id, trigger)), options.class || "quiet kn-link");
+  // A link shows the identifier of its record until the title is read.
+  function titledButton(id, options = {}) {
+    const node = openButton(options.label || id, id, options);
+    P.get("record", { id }).then(({ record }) => { if (record && record.title) node.textContent = record.title; }, () => {});
+    return node;
+  }
   const actionButton = (label, key, open, tone) => button(label, key, open, ["small", tone]);
   const openForm = (name, context) => (trigger) => P.openForm(name, context, trigger);
   const openRun = (id) => (trigger) => P.openDrawer("run", { id }, trigger);
@@ -147,6 +154,7 @@
       grid(roles, (role) => rolePanel(role, value.roles[role], data.effectiveness || [], (value.counts || {})[role] || 0, value.max_rules || 0),
         "No instruction text is available in this snapshot."));
   }
+  const anchored = (name, node) => { node.dataset.section = name; return node; };
   P.registerView("learning", { title: "Learning", async render(container, params, ctx) {
       const offset = Number(params.lesson_offset) || 0, data = await P.get("learning", offset ? { offset: String(offset) } : {});
       const proposed = data.proposed_lessons || { lessons: [], total: 0 }, failures = data.failures_without_lesson || [];
@@ -155,21 +163,31 @@
       const weak = (data.effectiveness || []).filter((rule) => rule.state === "ineffective").length;
       put(container, sentence([P.count(data.guards_total || 0, "accepted guard") + " " + isAre(data.guards_total || 0) + " active",
         ineffective ? ", and " + P.count(ineffective, "guard") + " recorded a recurrence" : "", ". ", weak ? P.count(weak, "rule") + " " + isAre(weak) + " judged ineffective and " + (weak === 1 ? "waits" : "wait") + " for your decision. " : "",
-        P.count(proposed.total, "proposed lesson") + " " + (proposed.total === 1 ? "awaits" : "await") + " your decision."].join("")), instructionsSection(data));
+        P.count(proposed.total, "proposed lesson") + " " + (proposed.total === 1 ? "awaits" : "await") + " your decision."].join("")),
+        purpose("A lesson is a rule learned from a failure. An accepted lesson with triggers is a guard, which reminds agents when their work matches it."));
       const byLesson = Object.fromEntries((data.recurrences || []).map((entry) => [entry.lesson_id, entry]));
       const guards = [...(data.guards || [])].sort((a, b) => (b.recurrences || 0) - (a.recurrences || 0));
+      // The decisions come first, and a link from Now names the section to focus.
+      put(container, anchored("proposed", section("Proposed lessons", counted(proposed.total, "lesson"),
+        grid(proposed.lessons, (lesson) => proposedCard(lesson, ctx), "No proposed lesson awaits a decision."),
+        pager({ offset, count: proposed.lessons.length, total: proposed.total, more: proposed.more, limit: PAGE }, "lessons",
+          (next) => P.go("learning", { ...params, lesson_offset: next ? String(next) : "" })))));
       put(container, section("Accepted guards", counted(data.guards_total || 0, "guard"),
         grid(guards, (guard) => guardCard(guard, byLesson[guard.lesson_id], ctx), "No lesson has been accepted as a guard yet."),
         data.guards_more ? h("p", { class: "muted" }, "Only the first " + guards.length + " guards are shown.") : null));
-      put(container, section("Proposed lessons", counted(proposed.total, "lesson"),
-        grid(proposed.lessons, (lesson) => proposedCard(lesson, ctx), "No proposed lesson awaits a decision."),
-        pager({ offset, count: proposed.lessons.length, total: proposed.total, more: proposed.more, limit: PAGE }, "lessons",
-          (next) => P.go("learning", { ...params, lesson_offset: next ? String(next) : "" }))));
       put(container, section("Failures without lessons", counted(failures.length, "failure"),
         listOf(failures, (item) => [h("div", { class: "row" }, openButton(item.title || item.episode_id, item.episode_id, { work: true, prefix: "failure-work-" }),
           P.badge("failed", P.words(item.severity) + " severity")), h("p", null, item.observed), h("div", { class: "row" }, item.failure_type ? chips([item.failure_type], "Failure type ") : null,
           h("span", { class: "muted" }, P.date(item.created_at)), openButton("Open the outcome", item.outcome_id, { class: "small", prefix: "failure-" }))],
         "Every failed outcome has a lesson or a later complete result.")));
+      put(container, anchored("instructions", instructionsSection(data)));
+      if (params.section) ctx.onShown(() => {
+        const target = container.querySelector('[data-section="' + CSS.escape(params.section) + '"] h3');
+        if (target) { target.tabIndex = -1; target.scrollIntoView({ block: "start" }); target.focus({ preventScroll: true }); }
+        // The section is left out of the route afterwards, so a later update does not move the reader again.
+        const { section: shownSection, ...rest } = params;
+        P.setParams(rest);
+      });
       const changes = data.scope_changes || [];
       put(container, section("Scope widened by agents", counted(changes.length, "change"),
         listOf(changes, (item) => [h("div", { class: "row" }, openButton(episodeTitle(item.episode_id), item.episode_id, { work: true, prefix: "scope-work-" }),
@@ -182,7 +200,7 @@
         listOf(signals, (signal, index) => [h("div", { class: "row" }, h("strong", null, P.words(signal.type)), signal.failure_type ? chips([signal.failure_type], "Failure type ") : null),
           signal.type === "repeated_failure" ? h("p", null, "The failure was recorded " + P.count(signal.failure_count, "time") + " in " + P.count(signal.assessed, "assessed outcome") + ", of which " + number(signal.successful) + " succeeded.") : null,
           h("p", { class: "muted" }, signal.reason),
-          h("div", { class: "row" }, (signal.record_ids || []).map((id, position) => openButton("Record " + (position + 1), id, { class: "small", prefix: "signal-" + index + "-" })))], "No signal is recorded.")));
+          h("div", { class: "row" }, (signal.record_ids || []).map((id, position) => titledButton(id, { label: "Record " + (position + 1), class: "small", prefix: "signal-" + index + "-" })))], "No signal is recorded.")));
   } });
 
   // Agents.
@@ -309,7 +327,7 @@
   function recordTable(records) {
     return table(["Title", "Kind", "Status", "Subject", P.term("work_item"), "Date"], records.map((record) => h("tr", null,
       cell("Title", button(record.title || record.id, "record-" + record.id, (trigger) => openRecordAny(record, trigger), "quiet kn-link")),
-      cell("Kind", record.kind === "episode" ? P.term("work_item") : P.words(record.kind)), cell("Status", P.badge(record.status)), cell("Subject", P.words(record.subject)),
+      cell("Kind", record.kind === "episode" ? P.term("work_item") : P.words(record.kind)), cell("Status", P.badge(record.state || record.status)), cell("Subject", P.words(record.subject)),
       cell(P.term("work_item"), record.episode_id && record.episode_id !== record.id ? episodeTitle(record.episode_id) : null), dateCell("Date", record.date))));
   }
   function recordFilters(params, view) {
@@ -323,15 +341,20 @@
       P.field("From", P.input("from", params.from, { id: "records-from", type: "date" })),
       P.field("To", P.input("to", params.to, { id: "records-to", type: "date" })),
       P.field("Order", P.select("order", [["newest", "Newest first"], ["oldest", "Oldest first"], ["title", "Title"]], params.order || "newest", { id: "records-order" })),
-      h("div", { class: "row" }, h("button", { type: "submit", class: "primary", id: "records-apply" }, "Apply filters"),
-        h("button", { type: "button", class: "quiet", id: "records-clear", on: { click: () => P.go("records", {}) } }, "Clear")));
-    form.addEventListener("submit", (event) => {
-      event.preventDefault();
+      h("div", { class: "row" }, h("button", { type: "button", class: "quiet", id: "records-clear", on: { click: () => P.go("records", {}) } }, "Clear")));
+    // The filters apply on change, as in Work. The refresh keeps the focus and the caret, so typing continues.
+    let timer = null;
+    const apply = (event) => {
+      if (event) event.preventDefault();
       const values = P.formValues(form);
       if (values.order === "newest") values.order = "";
       if (values.view === "all") values.view = "";
-      P.go("records", values);
-    });
+      P.setParams(values);
+      P.refresh();
+    };
+    form.addEventListener("submit", apply);
+    form.addEventListener("change", () => apply());
+    form.addEventListener("input", (event) => { if (event.target.type === "search") { clearTimeout(timer); timer = setTimeout(apply, 200); } });
     const active = FILTERS.some((name) => params[name]) || view !== "all";
     return h("details", { class: "kn-filter-box", id: "records-filters", open: active || window.innerWidth >= 640 },
       h("summary", null, active ? "Filters are applied" : "Filters"), form);
@@ -407,7 +430,7 @@
   function referenceList(page) {
     return page.records.length ? h("ul", { class: "list" }, page.records.map((record) => h("li", { class: "row" },
       button(record.title || record.id, "related-" + record.id, (trigger) => openRecordAny(record, trigger), "quiet kn-link"),
-      h("span", { class: "muted" }, P.words(record.kind)), P.badge(record.status)))) : P.empty("No other record refers to this record.");
+      h("span", { class: "muted" }, P.words(record.kind)), P.badge(record.state || record.status)))) : P.empty("No other record refers to this record.");
   }
   P.registerDrawer("record", { async render(body, params, ctx) {
       const [{ record }, related] = await Promise.all([P.get("record", { id: params.id }),
@@ -415,7 +438,7 @@
       const detail = record.detail || {}, payload = detail.payload || {};
       ctx.setTitle(record.title || record.id);
       ctx.setKind(record.kind === "episode" ? P.term("work_item") : P.words(record.kind));
-      put(body, h("div", { class: "row" }, P.badge(record.status), h("span", { class: "chip" }, P.words(record.subject)), h("span", { class: "muted" }, P.date(record.date))),
+      put(body, h("div", { class: "row" }, P.badge(record.state || record.status), h("span", { class: "chip" }, P.words(record.subject)), h("span", { class: "muted" }, P.date(record.date))),
         h("p", { class: "mono muted" }, record.id));
       if (record.kind === "lesson" && ctx.canEdit) {
         const lesson = { ...payload, id: record.id, episode_id: record.episode_id };
@@ -439,14 +462,14 @@
           h("p", null, openButton(record.outcome.title, record.outcome.id, { prefix: "drawer-outcome-" }))));
       }
       const chain = [["Replaces", detail.supersedes], ["Replaced by", detail.replaced_by], ["Decision", detail.decision_id]].filter(([, id]) => id);
-      if (chain.length) put(body, h("dl", { class: "kv" }, chain.map(([label, id]) => [h("dt", null, label), h("dd", null, openButton(id, id, { prefix: "drawer-chain-" }))])));
+      if (chain.length) put(body, h("dl", { class: "kv" }, chain.map(([label, id]) => [h("dt", null, label), h("dd", null, titledButton(id, { prefix: "drawer-chain-" }))])));
       if (record.kind === "source") put(body, typeof detail.body === "string" ? sourceText(record.id, detail)
         : section("Content", null, h("p", { class: "muted" }, "The source text is not included in this snapshot.")));
       const evidence = detail.evidence || [];
       put(body, section("Evidence", counted(evidence.length, "reference"), listOf(evidence, (ref) => [h("div", { class: "row" }, openButton(ref.title || ref.source_id, ref.source_id, { prefix: "evidence-" }),
         ref.status ? P.badge(ref.status) : null, ref.origin ? h("span", { class: "muted" }, P.words(ref.origin)) : null), ref.reason ? h("p", { class: "muted" }, ref.reason) : null],
       "No evidence is attached to this record.")));
-      if ((detail.links || []).length) put(body, section("Earlier records", null, listOf(detail.links, (ref) => [openButton(ref.event_id, ref.event_id, { prefix: "link-" }),
+      if ((detail.links || []).length) put(body, section("Earlier records", null, listOf(detail.links, (ref) => [titledButton(ref.event_id, { prefix: "link-" }),
         ref.reason ? h("p", { class: "muted" }, ref.reason) : null])));
       put(body, section("Referenced by", related instanceof Error ? null : counted(related.total, "record"),
         related instanceof Error ? failed(related) : referenceList(related),
@@ -527,7 +550,8 @@
       const waiting = promotions.filter((item) => item.state === "proposed"), decided = promotions.filter((item) => item.state !== "proposed");
       put(container, sentence((data.exists ? P.count(data.rules_total || 0, "rule") + " " + isAre(data.rules_total || 0) + " in force on " + data.machine + ", promoted from "
         + P.count(data.projects_total || 0, "project") + ". " : "No machine memory exists on this computer yet. ")
-        + P.count(waiting.length, "proposal") + " from this project " + (waiting.length === 1 ? "awaits" : "await") + " your decision."));
+        + P.count(waiting.length, "proposal") + " from this project " + (waiting.length === 1 ? "awaits" : "await") + " your decision."),
+        purpose("The machine memory holds the rules that you promoted from single projects, so that they reach every project on this computer."));
       put(container, h("div", { class: "notice", dataset: { key: "machine-isolation" } },
         h("p", null, data.note), data.error ? h("p", null, "The machine memory could not be read: " + data.error) : null,
         h("p", { class: "muted" }, "Database: " + data.database)));
@@ -665,7 +689,8 @@
     const data = await P.get("hive", { limit: "50" });
     const swarms = data.swarms || [], opened = swarms.filter((swarm) => swarm.state === "open").length;
     put(container, sentence(data.total ? `${P.count(data.total, "swarm")} ${isAre(data.total)} recorded, and ${opened} ${isAre(opened)} open.`
-      : "No swarm is recorded yet. A swarm opens when agents start to work together on one problem."));
+      : "No swarm is recorded yet. A swarm opens when agents start to work together on one problem."),
+      purpose("The hive is the shared record of agents that work on one problem together. Each group of agents is a swarm, and its entries read as a conversation."));
     if (ctx.canEdit && swarms.some((swarm) => swarm.state !== "open")) {
       put(container, (P.health() || {}).assistant_started
         ? h("div", { class: "notice", dataset: { key: "hive-purge-refused" } }, h("p", null, "This control panel was started from inside an assistant session, so it does not purge swarms. Start the control panel from your own terminal with project-memory view to purge closed swarms."))
@@ -760,18 +785,23 @@
         return;
       }
       const counts = data.counts || {}, digests = data.digests || [], flags = data.flags || [], proposals = data.proposals || [];
-      const decided = counts.confirmed + counts.dismissed;
+      const decided = counts.confirmed + counts.dismissed, open = Math.max(counts.open || 0, flags.length);
       put(container, sentence(data.reading ? P.count(digests.length, "session digest") + " " + isAre(digests.length) + " shown, with "
-        + P.count(flags.length, "open flag") + " and " + P.count(proposals.length, "pending proposal") + "."
+        + P.count(open, "open flag") + " and " + P.count(proposals.length, "pending proposal") + "."
         : "Session reading is switched off for this project. Run project-memory sessions on to switch it on."),
       h("div", { class: "notice", dataset: { key: "sessions-note" } }, h("p", null, data.note),
         h("p", { class: "muted" }, decided ? "Of " + decided + " decided flags, " + counts.confirmed + " were confirmed." : "No flag is decided yet."),
         h("p", { class: "muted" }, "Run project-memory sessions distill to ask a host for proposals. Run project-memory handoff before a fresh session.")),
-      section("Flagged directions", counted(flags.length, "flag"), listOf(flags, (flag) => [
+      section("Flagged directions", counted(open, "flag"),
+        open > flags.length ? h("p", { class: "muted" }, "The newest " + flags.length + " of " + open + " open flags are shown.") : null,
+        ctx.canEdit && flags.length > 1 ? h("div", { class: "row" }, P.formButton("Dismiss the " + flags.length + " shown flags", "session_flag",
+          { flag_ids: flags.map((flag) => flag.id), status: "dismissed" }, { class: "small" })) : null,
+        listOf(flags, (flag) => [
         h("div", { class: "row" }, P.chip(P.words(flag.category)), P.badge("review", "Low confidence"), h("span", { class: "muted" }, flag.session_key + ", line " + flag.line + ", " + P.date(flag.at))),
         h("p", null, flag.excerpt),
-        ctx.canEdit ? h("div", { class: "row" }, P.formButton("Confirm", "session_flag", { flag_id: flag.id, status: "confirmed" }, { class: "small" }),
-          P.formButton("Dismiss", "session_flag", { flag_id: flag.id, status: "dismissed" }, { class: "small quiet" })) : null], "No flag waits for a decision.")),
+        ctx.canEdit ? h("div", { class: "row" }, ["confirmed", "dismissed"].map((status) => P.actButton(status === "confirmed" ? "Confirm" : "Dismiss", "flag-" + status + "-" + flag.id,
+          "session_flag", { flag_id: flag.id, status }, (result) => "The flag is " + result.status + ".", "small")),
+          P.formButton("Decide with a reason", "session_flag", { flag_id: flag.id }, { class: "small quiet" })) : null], "No flag waits for a decision.")),
       section("Proposals", counted(proposals.length, "proposal"), listOf(proposals, (item) => [
         h("div", { class: "row" }, P.chip(P.words(item.slot)), P.chip(P.words(item.confidence) + " confidence"), h("span", { class: "muted" }, item.pointers.file + ", lines " + item.pointers.lines.join(", "))),
         h("p", null, item.text),

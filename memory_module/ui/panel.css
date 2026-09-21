@@ -96,7 +96,7 @@ input, select, textarea {
 }
 textarea { min-height: 96px; resize: vertical; width: 100%; }
 input[type="checkbox"], input[type="radio"] { min-height: 0; accent-color: var(--dk-color-accent); }
-input::placeholder, textarea::placeholder { color: #8a867f; }
+input::placeholder, textarea::placeholder { color: #6f6b65; }
 
 /* Shell */
 .template-notice { max-width: 640px; margin: 64px auto; padding: 0 var(--dk-space-4); }
@@ -121,6 +121,7 @@ input::placeholder, textarea::placeholder { color: #8a867f; }
   color: var(--dk-color-ink); text-decoration: none; border-radius: var(--dk-radius);
   border: 1px solid transparent; border-left: 3px solid transparent;
 }
+.nav-omitted { color: var(--dk-color-support); font-style: italic; }
 .nav-link:hover { background: rgba(17, 17, 17, 0.04); }
 .nav-link[aria-current="page"] {
   font-weight: 700; background: var(--dk-color-white);
@@ -160,7 +161,7 @@ button.phase-button:hover { background: var(--dk-color-white); border-color: var
 .ledger { position: absolute; left: 0; right: 0; bottom: -1px; height: 4px; display: flex; gap: 1px; background: var(--dk-color-border); }
 .strip { display: flex; gap: 2px; min-height: 4px; }
 .strip-part { flex: 1 1 0; min-width: 4px; background: var(--tone, var(--dk-status-backlog)); }
-.strip-part:hover { filter: brightness(0.85); }
+a.strip-part:hover { filter: brightness(0.85); }
 .card .strip, .view .strip { height: 8px; border-radius: 4px; overflow: hidden; }
 /* The strip alone carries no meaning, so a view states each state and its count in words. */
 .strip-legend { gap: var(--dk-space-2) var(--dk-space-4); }
@@ -197,7 +198,8 @@ button.phase-button:hover { background: var(--dk-color-white); border-color: var
   @keyframes drawer-in { from { transform: translateX(24px); opacity: 0; } }
 }
 @media (min-width: 1360px) {
-  .shell[data-drawer="open"] .main { padding-right: calc(var(--drawer-width) + var(--dk-space-8)); }
+  .shell[data-drawer="open"] .main, .shell[data-drawer="open"] .topbar { padding-right: calc(var(--drawer-width) + var(--dk-space-8)); }
+  .shell[data-drawer="open"] .topbar { flex-wrap: wrap; }
 }
 
 /* Form dialog */
@@ -236,8 +238,8 @@ legend { padding: 0 var(--dk-space-1); font-weight: 700; }
 .toolbar { display: flex; flex-wrap: wrap; align-items: flex-end; gap: var(--dk-space-3); }
 .toolbar .field { min-width: min(180px, 100%); }
 .tabs { display: flex; flex-wrap: wrap; gap: var(--dk-space-1); border-bottom: 1px solid var(--dk-color-border); }
-.tabs [role="tab"] { min-height: 40px; border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; color: var(--dk-color-support); }
-.tabs [role="tab"][aria-selected="true"] { color: var(--dk-color-ink); border-bottom-color: var(--dk-color-accent); }
+.tabs button { min-height: 40px; border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; color: var(--dk-color-support); }
+.tabs [aria-pressed="true"], .tabs [aria-selected="true"] { color: var(--dk-color-ink); border-bottom-color: var(--dk-color-accent); }
 .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr)); gap: var(--dk-space-4); }
 .card { min-width: 0; padding: var(--dk-space-4); background: var(--dk-color-white); border: 1px solid var(--dk-color-border); border-radius: var(--dk-radius); display: grid; gap: var(--dk-space-3); align-content: start; }
 .card > h3 { font-size: 14px; display: flex; align-items: center; justify-content: space-between; gap: var(--dk-space-2); }
@@ -313,7 +315,8 @@ table.data th button { min-height: 0; padding: 0; border: 0; background: transpa
   .shell[data-menu="open"] .rail { display: block; }
   .rail .brand { display: none; }
   .menu-toggle { display: inline-flex; }
-  .topbar { flex-wrap: wrap; gap: var(--dk-space-2) var(--dk-space-3); padding: 10px var(--dk-space-4); }
+  .topbar { position: static; flex-wrap: wrap; gap: var(--dk-space-2) var(--dk-space-3); padding: 10px var(--dk-space-4); }
+  .ledger { position: static; flex-basis: 100%; order: 5; }
   .alerts { padding: 0 var(--dk-space-4); }
   .main { padding: var(--dk-space-5) var(--dk-space-4) 48px; }
 }
@@ -383,7 +386,8 @@ button.item.work-item, .work-item { display: grid; grid-template-columns: minmax
 /* Each row of the attention list names what opens, because the whole row is the button. */
 .item-action { font-weight: 700; color: var(--dk-color-accent); }
 button.item:hover .item-action { text-decoration: underline; }
-.now-grid { grid-template-columns: repeat(auto-fill, minmax(min(100%, 340px), 1fr)); }
+.now-grid, .now-waiting .list { grid-template-columns: repeat(auto-fill, minmax(min(100%, 340px), 1fr)); }
+.now-waiting { grid-column: 1 / -1; }
 .card.kickoff { border-color: var(--dk-color-accent); }
 /* The checklist stays one card high until the reader opens it, so the project state keeps the first screen. */
 .kickoff-detail[open] > summary { margin-bottom: var(--dk-space-3); }
@@ -403,6 +407,7 @@ button.item:hover .item-action { text-decoration: underline; }
 .tree details.acceptance { margin: 0 0 var(--dk-space-2) 40px; font-size: 13px; }
 .tree details.acceptance ol { margin: var(--dk-space-1) 0 0; padding-left: 20px; }
 details > summary { cursor: pointer; font-weight: 700; }
+summary > h3 { display: inline; }
 /* Five columns fit a 1440 pixel window. Where they do not, the shadows at the edges show that the board scrolls sideways. */
 .board {
   display: grid; grid-auto-flow: column; grid-auto-columns: minmax(200px, 1fr); gap: var(--dk-space-3);
@@ -415,9 +420,9 @@ details > summary { cursor: pointer; font-weight: 700; }
 }
 .board-column { min-width: 0; display: grid; gap: var(--dk-space-2); padding: var(--dk-space-3); background: var(--dk-color-surface); border-top: 3px solid var(--tone); border-radius: var(--dk-radius); }
 .board-column > h3 { display: flex; align-items: center; justify-content: space-between; font-size: 13px; }
-.board-column .list { gap: var(--dk-space-2); }
-.board-column .list > li { padding: 0; border-top: 0; }
-.board-column button.item { background: var(--dk-color-white); border-color: var(--dk-color-border); }
+.board-column .list, .now-waiting .list { gap: var(--dk-space-2); }
+.board-column .list > li, .now-waiting .list > li { padding: 0; border-top: 0; }
+.board-column button.item, .now-waiting button.item { height: 100%; background: var(--dk-color-white); border-color: var(--dk-color-border); }
 .compare { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--dk-space-3); }
 .compare .kv { grid-template-columns: minmax(0, 1fr); gap: 2px; }
 @media (max-width: 639px) {

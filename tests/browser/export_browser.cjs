@@ -95,7 +95,7 @@ const drawer = (page) => page.locator("#drawer-body .drawer-content:not(.pending
       // The rest of the attention list opens in the drawer from the embedded response of the Now view.
       await page.click("[data-key=now-all-attention]");
       await page.waitForSelector("#drawer-body [data-key^='now-attention-']");
-      assert.equal(await page.locator('#drawer-body [data-key^="now-attention-"] .item-action').count(), 8);
+      assert.equal(await page.locator('#drawer-body [data-key^="now-attention-"] .item-action').count(), 9);
       await page.evaluate(() => Panel.closeDrawer());
       step(`${kind}: the snapshot counts a single event in the singular and names the action of every attention entry`);
 
@@ -150,6 +150,20 @@ const drawer = (page) => page.locator("#drawer-body .drawer-content:not(.pending
       step(`${kind}: the snapshot made no network request and logged no error`);
       await page.close();
     }
+
+    // A snapshot scoped by subject leaves Now out, so it opens on the first view it holds and marks the others in the rail.
+    const whole = snapshot("product", path.join(directory, "scoped"));
+    const scopedFile = path.join(directory, "scoped.html");
+    execFileSync(PYTHON, ["-m", "memory_module.cli", "view", "--db", whole.database, "--project", whole.project, "--subject", "code", "--no-open", "--output", scopedFile],
+      { cwd: ROOT, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
+    const scoped = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    await scoped.goto(pathToFileURL(scopedFile).href);
+    await scoped.waitForFunction(() => document.getElementById("view-title").textContent === "Work" && !document.querySelector("#main .view.pending"));
+    assert.ok(await scoped.locator("#main .board-column").count() >= 1, "the scoped snapshot opens on a view without content");
+    assert.equal(await scoped.locator('.nav-link[data-nav="now"]').getAttribute("aria-label"), "Now, not included in this snapshot");
+    assert.equal(await scoped.locator('.nav-link[data-nav="work"]').getAttribute("aria-label"), null);
+    await scoped.close();
+    step("a snapshot scoped by subject opens on Work and marks the views it leaves out");
 
     // The unrendered template explains how to open the panel instead of showing an empty page.
     const template = await browser.newPage();

@@ -103,7 +103,9 @@ def row(memory, rid, *, body_offset=None):
                 'episode_id': '', 'detail': detail}
     if rid.startswith('episode_'):
         detail = memory.episode(rid)
+        # The panel shows a work item by its board state everywhere, so the record carries it. A sprint has none.
         return {'id': rid, 'kind': 'episode', 'subject': detail['subject'], 'status': detail['status'],
+                'state': card_states(memory).get(rid),
                 'title': detail['title'], 'date': detail['created_at'], 'episode_id': rid, 'detail': detail}
     if rid.startswith('host_'):
         if not codex_host.exists(memory):
@@ -441,13 +443,43 @@ def now(memory, params):
     if lessons:
         attention.append({'type': 'lessons_to_accept', 'id': lessons[0], 'count': len(lessons),
                           'reason': f'{len(lessons)} proposed lessons await your acceptance or rejection.'})
+    # Decisions that wait in the Sessions and Machine views are named here as well, so Now lists every kind that waits for the user.
+    from . import machine as machine_store, sessions as session_store
+    open_flags = session_store.precision(memory)['open']
+    if open_flags:
+        attention.append({'type': 'session_flags', 'id': None, 'count': open_flags,
+                          'reason': f'{open_flags} flagged session message{"" if open_flags == 1 else "s"} '
+                                    f'wait{"s" if open_flags == 1 else ""} for your confirmation or dismissal.'})
+    pending = len(session_store.proposals(memory, status='pending', limit=200))
+    if pending:
+        attention.append({'type': 'session_proposals', 'id': None, 'count': pending,
+                          'reason': f'{pending} proposal{"" if pending == 1 else "s"} from earlier sessions '
+                                    f'wait{"s" if pending == 1 else ""} for your acceptance or rejection.'})
+    promoted = len(machine_store.promotions(memory, state='proposed', limit=200))
+    if promoted:
+        attention.append({'type': 'machine_rules', 'id': None, 'count': promoted,
+                          'reason': f'{promoted} proposed machine rule{"" if promoted == 1 else "s"} '
+                                    f'wait{"s" if promoted == 1 else ""} for your acceptance or refusal.'})
+    # The list can be long, so Now leads with one entry per kind: how many items wait, in how many rows, and the row itself
+    # when there is only one. attention_type narrows the paged list to one kind.
+    kinds = {}
+    for item in attention:
+        kind = kinds.setdefault(item['type'], {'type': item['type'], 'count': 0, 'rows': 0, 'entry': item})
+        kind['count'] += item.get('count', 1)
+        kind['rows'] += 1
+    for kind in kinds.values():
+        if kind['rows'] > 1:
+            del kind['entry']
+    wanted = _text(params, 'attention_type', limit=50)
+    listed = [item for item in attention if item['type'] == wanted] if wanted else attention
     runs = active_runs(memory)
     from . import delegation
     recent = delegation.runs(memory, limit=5)['runs']
     result = {'project': memory.project, 'counts': counts, 'total': len(items), 'truncated': found['truncated'],
               'in_progress': _sorted_summaries(by_state['in_progress']), 'blocked': _sorted_summaries(by_state['blocked']),
               'review': _sorted_summaries(by_state['review']), 'ready': _sorted_summaries(by_state['ready']),
-              'attention': attention[offset:offset + ATTENTION_LIMIT], 'attention_total': len(attention), 'attention_offset': offset,
+              'attention': listed[offset:offset + ATTENTION_LIMIT], 'attention_total': len(listed), 'attention_offset': offset,
+              'attention_kinds': list(kinds.values()), 'attention_count': sum(kind['count'] for kind in kinds.values()),
               'agents': {'active': runs, 'recent': recent},
               'latest_decisions': [_decision_summary(record) for record in latest_decisions(memory, limit=5)['records']],
               'scope_blocks': scope_blocks(memory, limit=5), 'scope_changes': guards.scope_changes(memory, limit=5),

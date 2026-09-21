@@ -102,7 +102,7 @@ def _scope(memory, *, episode_id, subject, since, until, max_records):
     """The ids of every record inside the export scope, bounded by max_records."""
     from . import codex_host
     from .direction import history
-    too_many = 'Export exceeds max_records. Select a work item, subject or date range.'
+    too_many = 'Export exceeds max_records. Select a work item with --episode or a subject with --subject.'
     where, arguments = _where([('episode_id', episode_id, '='), ('subject', subject, '='),
                                ('created_at', since, '>='), ('created_at', until, '<=')])
     event_rows = memory.db.execute('SELECT id,kind FROM events' + where + ' ORDER BY created_at,rowid LIMIT ?',
@@ -142,7 +142,7 @@ def _scope(memory, *, episode_id, subject, since, until, max_records):
     directions = ['direction_' + str(revision['version']) for revision in revisions['revisions']]
     total = len(events) + len(episodes) + len(sources) + len(receipts) + len(directions)
     if total > max_records:
-        raise InvalidRecord('Export exceeds max_records including work items, evidence, host receipts and project revisions. Narrow its scope.')
+        raise InvalidRecord('Export exceeds max_records including work items, evidence, host receipts and project revisions. Narrow its scope with --subject or --episode.')
     return {'episodes': episodes, 'events': events, 'decisions': decisions, 'sources': sorted(sources),
             'receipts': receipts, 'directions': directions, 'total': total}
 

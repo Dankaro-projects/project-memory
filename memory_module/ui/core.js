@@ -59,7 +59,7 @@
  *     Panel.count(n, one, many), Panel.progress(fraction, label), Panel.stateStrip(counts, {legend}),
  *     Panel.empty(message), Panel.errorState(error), Panel.toast(message, tone), Panel.alert, Panel.clearAlert.
  *
- * panel.css classes: view, view-head, sentence, row, stack, toolbar, tabs (role tab, aria-selected), grid, card,
+ * panel.css classes: view, view-head, sentence, row, stack, toolbar, tabs (aria-pressed buttons, or role tab with a tab panel), grid, card,
  *   proposed, list, chip, kv, empty, notice, badge, table-wrap with table.data, progress, graph, graph.compact,
  *   graph-layout, graph-side, legend, document, source-text, field, form-grid, hint, muted, mono; buttons primary, quiet, danger, small, item.
  */
@@ -244,7 +244,8 @@ const Panel = (() => {
   function alert(message, id = "general") {
     const node = findAlert(id) || $("alerts").appendChild(h("div", { class: "alert", dataset: { alert: id } }, h("p"),
       h("button", { type: "button", class: "small", on: { click: () => clearAlert(id) } }, "Dismiss")));
-    node.querySelector("p").textContent = message;
+    // An alert region is announced on every change, so an unchanged message is not written again.
+    if (node.querySelector("p").textContent !== message) node.querySelector("p").textContent = message;
   }
   function clearAlert(id = "general") { const node = findAlert(id); if (node) node.remove(); }
   function errorState(error) {
@@ -319,13 +320,17 @@ const Panel = (() => {
     state.template = await get("kickoff").then((value) => value.template || null, () => (now && now.kickoff && now.kickoff.template) || null);
     if (state.template) $("app").dataset.template = state.template;
   }
+  // A scoped snapshot leaves views out. The rail marks them, and the snapshot opens on the first view it holds.
+  const omitted = (name) => !live && (snapshot.omitted || []).some((entry) => entry.key === (name === "dependencies" ? "work_graph" : name));
   function buildNav() {
     const entries = NAV.map(([name, title, section]) => [name, (views.get(name) || {}).title || title, section]);
     for (const [name, view] of views) if (!NAV.some((entry) => entry[0] === name) && view.section) entries.push([name, view.title || words(name), view.section]);
     const groups = new Map();
     for (const [name, title, section] of entries) {
       if (!groups.has(section)) groups.set(section, []);
-      groups.get(section).push(h("li", null, h("a", { class: "nav-link", href: "#" + name, dataset: { nav: name } }, title)));
+      const missing = omitted(name);
+      groups.get(section).push(h("li", null, h("a", { class: ["nav-link", missing && "nav-omitted"], href: "#" + name, dataset: { nav: name },
+        "aria-label": missing ? title + ", not included in this snapshot" : null }, title)));
     }
     $("nav").replaceChildren(...[...groups].map(([section, items]) => h("div", { class: "nav-group" }, h("h2", null, section), h("ul", null, items))));
   }
@@ -358,7 +363,8 @@ const Panel = (() => {
     updatePhase();
     await loadTemplate();
     const counts = await get("now").then((now) => now.counts || {}, () => ({}));
-    $("ledger").replaceChildren(...stateStrip(counts).childNodes);
+    // The thin ledger only decorates the top bar, and the legend of Now holds its links.
+    $("ledger").replaceChildren(...STRIP.filter((name) => counts[name]).map((name) => h("span", { class: "strip-part", dataset: { tone: name }, style: { flexGrow: String(counts[name]) } })));
     $("ledger").hidden = !STRIP.some((name) => counts[name]);
   }
   function setStatus(kind, message) {
@@ -370,7 +376,7 @@ const Panel = (() => {
     else clearAlert("updates");
   }
   function setMenu(open) {
-    if (open) $("app").style.setProperty("--menu-top", Math.round(document.querySelector(".topbar").getBoundingClientRect().bottom) + "px");
+    if (open) $("app").style.setProperty("--menu-top", Math.max(0, Math.round(document.querySelector(".topbar").getBoundingClientRect().bottom)) + "px");
     $("app").dataset.menu = open ? "open" : "closed";
     $("menu-toggle").setAttribute("aria-expanded", String(open));
   }
@@ -421,7 +427,8 @@ const Panel = (() => {
     const container = h("div", { class: "view pending", dataset: { view: name } });
     const done = await renderInto($("main"), container, (shown) => views.get(name).render(container, { ...params }, context(shown)),
       token, () => state.renderToken, options.keep);
-    if (done && options.focus) $("view-title").focus({ preventScroll: true });
+    // A view that moved the reader to one of its sections keeps that focus; otherwise the title announces the new view.
+    if (done && options.focus && !$("main").contains(document.activeElement)) $("view-title").focus({ preventScroll: true });
   }
   function refresh() { renderView({ keep: true }); renderDrawer({ keep: true }); }
 
@@ -460,6 +467,7 @@ const Panel = (() => {
     state.drawer = { kind, params: { ...params } };
     $("drawer").hidden = false;
     $("app").dataset.drawer = "open";
+    coverPage();
     return renderDrawer({ focus: true });
   }
   async function renderDrawer(options = {}) {
@@ -484,6 +492,7 @@ const Panel = (() => {
     $("drawer").hidden = true;
     delete $("app").dataset.drawer;
     $("drawer-body").replaceChildren();
+    coverPage();
     const trigger = state.drawerTrigger || {};
     state.drawerTrigger = null;
     const target = (trigger.node && trigger.node.isConnected && trigger.node) || (trigger.identity && document.querySelector("#main " + trigger.identity));
@@ -493,6 +502,11 @@ const Panel = (() => {
     if (!state.drawerStack.length) return closeDrawer();
     state.drawer = state.drawerStack.pop();
     return renderDrawer({ focus: true });
+  }
+  // On a narrow screen the drawer covers the page, so the page behind it takes no focus while the drawer is open.
+  function coverPage() {
+    const covered = Boolean(state.drawer) && window.innerWidth < 640;
+    for (const node of [$("rail"), document.querySelector(".column")]) node.inert = covered;
   }
   const openRecord = (id, trigger) => openDrawer("record", { id }, trigger);
   const openWork = (id, trigger) => openDrawer("work", { id }, trigger);
@@ -663,6 +677,7 @@ const Panel = (() => {
       else if (event.key === "Escape" && state.drawer) { event.preventDefault(); closeDrawer(); }
       else if (event.key === "/" && !event.target.closest("input, textarea, select, [contenteditable]")) { event.preventDefault(); $("search-input").focus(); }
     });
+    window.addEventListener("resize", coverPage);
     document.addEventListener("visibilitychange", () => { if (!document.hidden) poll(); });
   }
   function boot() {
@@ -670,7 +685,10 @@ const Panel = (() => {
     bindEvents();
     state.route = parseHash();
     $("mode-label").textContent = live ? "Local control panel" : "Read only snapshot";
-    if (!live) { setStatus("snapshot"); updateShell(); renderView(); return; }
+    if (!live) {
+      if (!location.hash && omitted(state.route.name)) state.route = { name: (NAV.find(([name]) => !omitted(name)) || NAV[0])[0], params: {} };
+      setStatus("snapshot"); updateShell(); renderView(); return;
+    }
     setStatus("connecting");
     $("main").replaceChildren(empty("The control panel is connecting to the local server."));
     poll();

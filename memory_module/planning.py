@@ -243,9 +243,9 @@ def save(memory, kind, *, payload, actor, evidence, episode_id=None, expected_ve
         payload['session_id'] = session_id
     if episode_id:
         if expected_version is None or any(x is not None for x in (title, objective, criterion)):
-            raise InvalidRecord('An update needs expected_version. Episode intent is fixed; create linked work for a changed objective.')
+            raise InvalidRecord('An update needs expected_version. The intended result of a work item is fixed; create a linked work item for a changed objective.')
         if subject is not None and subject != memory.episode(episode_id)['subject']:
-            raise InvalidRecord('A work plan cannot change its episode subject.')
+            raise InvalidRecord('A plan cannot change the subject of its work item.')
     else:
         if expected_version is not None:
             raise InvalidRecord('A new work item does not take expected_version.')
@@ -279,7 +279,7 @@ def card(memory, episode_id):
     problems = []
     recorded = plan['state'] if plan else ('done' if episode['status'] == 'settled' else 'cancelled' if episode['status'] == 'abandoned' else 'backlog')
     if not plan:
-        problems.append({'type': 'plan_missing', 'reason': 'This existing episode has no recorded next action or autonomous scope.'})
+        problems.append({'type': 'plan_missing', 'reason': 'This work item has no recorded plan, so it has no next action and no scope for agents.'})
     else:
         for reason in memory.review_reasons(plan['id']):
             problems.append({'type': 'intent_review', **reason})

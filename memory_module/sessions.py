@@ -703,6 +703,9 @@ def detect_gaps(memory, key, *, now=None):
     return created
 
 
+FLAG_BATCH = 100
+
+
 def flags(memory, *, session_key=None, status=None, limit=50):
     if not exists(memory):
         return []
@@ -720,9 +723,21 @@ def decide_flag(memory, flag_id, status, reason, *, actor=USER_ACTOR):
     from . import codex_host
     if status not in {'confirmed', 'dismissed'}:
         raise InvalidRecord('Confirm or dismiss the flag.', statuses=['confirmed', 'dismissed'])
-    _text(reason, 'reason', 2000)
+    # The status alone measures the precision of the flags, so the reason is optional.
+    reason = reason or ''
+    if reason:
+        _text(reason, 'reason', 2000)
     with memory._write():
         return _decide_flag(memory, flag_id, status, reason, actor)
+
+
+def decide_flags(memory, flag_ids, status, reason, *, actor=USER_ACTOR):
+    """The user decides several flags with one status and one optional reason. One refused flag refuses them all."""
+    if not isinstance(flag_ids, list) or not 1 <= len(flag_ids) <= FLAG_BATCH or not all(isinstance(item, str) for item in flag_ids):
+        raise InvalidRecord(f'Name 1 to {FLAG_BATCH} flags.')
+    with memory._write():
+        decided = [decide_flag(memory, flag_id, status, reason, actor=actor) for flag_id in dict.fromkeys(flag_ids)]
+    return {'status': status, 'decided': len(decided), 'flag_ids': [row['id'] for row in decided]}
 
 
 def _decide_flag(memory, flag_id, status, reason, actor):

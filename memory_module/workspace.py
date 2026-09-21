@@ -18,7 +18,7 @@ from .shared import prior_result, run_summary, store_result
 
 KEY_REUSED = 'This action key was already used for different changes.'
 RECORD_OPERATIONS = ('plan', 'sprint', 'comment', 'requirements', 'lesson_review', 'allow_paths', 'link', 'component',
-                     'answer_kickoff', 'instructions', 'phase', 'reassess', 'session_flag', 'session_proposal',
+                     'answer_kickoff', 'instructions', 'phase', 'reassess', 'session_flag', 'session_flags', 'session_proposal',
                      'confirm_criterion')
 RUN_OPERATIONS = ('delegate', 'merge', 'discard', 'review', 'cancel_run', 'request_work_review', 'focus_check', 'focus_start',
                   'hive_post', 'hive_close', 'hive_purge', 'reconcile', 'reconcile_read_only')
@@ -39,7 +39,8 @@ FIELDS = {
     'instructions': ({'role', 'text'}, {'reason', 'actor'}),
     'phase': ({'phase', 'reason'}, set()),
     'reassess': ({'decision_id', 'assessment', 'reason'}, {'outcome_id'}),
-    'session_flag': ({'flag_id', 'status', 'reason'}, set()),
+    'session_flag': ({'flag_id', 'status'}, {'reason'}),
+    'session_flags': ({'flag_ids', 'status'}, {'reason'}),
     'session_proposal': ({'proposal_id', 'status', 'reason'}, {'episode_id', 'expected_version'}),
     'confirm_criterion': ({'episode_id', 'criterion', 'statement'}, set()),
     'reconcile': ({'receipt_id', 'resolution', 'reason'}, set()),
@@ -69,7 +70,8 @@ MESSAGES = {
     'instructions': 'Select the role and write the base instructions. The reason is optional.',
     'phase': 'Select the phase of the project and write the reason for the change.',
     'reassess': 'Select the decision, the new assessment and the reason. The outcome you reviewed is optional.',
-    'session_flag': 'Select the flagged message, confirm or dismiss it, and give the reason.',
+    'session_flag': 'Select the flagged message and confirm or dismiss it. The reason is optional.',
+    'session_flags': 'Name the flagged messages and confirm or dismiss them together. The reason is optional.',
     'session_proposal': 'Select the proposal, accept or reject it, and give the reason. Acceptance needs the work item and its current version.',
     'confirm_criterion': 'Select the work item and the criterion, and write your confirmation.',
     'reconcile': 'Select the tool call, its resolution and the reason.',
@@ -427,7 +429,13 @@ def reassess(memory, data, request_key):
 def session_flag(memory, data, request_key):
     """Confirm or dismiss a possible unrecorded direction. Both are kept, so the precision of the flags can be measured."""
     from . import sessions
-    return sessions.decide_flag(memory, data['flag_id'], data['status'], data['reason'], actor=USER)
+    return sessions.decide_flag(memory, data['flag_id'], data['status'], data.get('reason'), actor=USER)
+
+
+def session_flags(memory, data, request_key):
+    """Confirm or dismiss several flags together, so a long list does not need one dialog for each flag."""
+    from . import sessions
+    return sessions.decide_flags(memory, data['flag_ids'], data['status'], data.get('reason'), actor=USER)
 
 
 def session_proposal(memory, data, request_key):
@@ -446,7 +454,7 @@ def confirm_criterion(memory, data, request_key):
 RECORD_HANDLERS = {'plan': plan, 'sprint': sprint, 'comment': comment, 'requirements': requirements,
                    'lesson_review': lesson_review, 'allow_paths': allow_paths, 'link': link, 'component': component,
                    'answer_kickoff': answer_kickoff, 'instructions': instructions, 'phase': phase, 'reassess': reassess,
-                   'session_flag': session_flag, 'session_proposal': session_proposal,
+                   'session_flag': session_flag, 'session_flags': session_flags, 'session_proposal': session_proposal,
                    'confirm_criterion': confirm_criterion}
 
 
