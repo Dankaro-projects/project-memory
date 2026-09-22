@@ -4,8 +4,9 @@
  * allow_paths {episode_id, paths}, delegate, review {episode_id, role} and answer_kickoff {question_ids}. The panes
  * draw the lineage with Panel.lineageGraph of graphs.js, and runs open the "run" pane of views_knowledge.js. A work item
  * with a focused problem shows its check, its attempts side by side and its report, with the focus_check and
- * focus_start forms {episode_id}. Now opens the "decide" pane {kind, id} for a lesson, a flag or a proposal, and the reconcile {receipt_id, resolution}
- * and reconcile_read_only forms; a blocked work item lists its unconfirmed calls with the same forms.
+ * focus_start forms {episode_id}. Now opens the "decide" pane {kind, id} for a lesson, a flag or a proposal, which Learning
+ * and Sessions of views_knowledge.js open too, and the reconcile {receipt_id, resolution} and reconcile_read_only forms;
+ * a blocked work item lists its unconfirmed calls with the same forms. Panel.viewTabs draws the tabs of a list view.
  */
 (() => {
   "use strict";
@@ -151,7 +152,7 @@
   // One row per kind: tone, label, what the row opens in words (null names the work item) and the action that opens it.
   const openRecordOf = (entry, trigger) => (entry.id && openable(entry.id) ? P.openRecord(entry.id, trigger) : null);
   const openWorkOf = (entry, trigger) => P.openWork(entry.id, trigger), openCaptures = () => P.go("records", { view: "captures" });
-  const openRules = () => P.go("learning", { section: "instructions" }), openSessions = () => P.go("sessions");
+  const openRules = () => P.go("learning", { tab: "instructions" }), openSessions = () => P.go("sessions");
   const ATTENTION = {
     scope_block: ["blocked", "Edit blocked", null, (entry, trigger) => (entry.episode_id ? P.openWork(entry.episode_id, trigger) : openRecordOf(entry, trigger))],
     blocked_work: ["blocked", "Blocked", null, openWorkOf], work_to_review: ["review", "Needs review", null, openWorkOf],
@@ -159,7 +160,7 @@
     agent_follow_up: ["review", "Agent follow up", "agent run", openRecordOf], guard_recurrence: ["blocked", "Repeated failure", "lesson", openRecordOf],
     failure_without_lesson: ["blocked", "Failure without a lesson", "outcome", openRecordOf],
     capture_failure: ["blocked", "Recording failed", "captures", openCaptures], recording_gap: ["review", "Recording gap", "captures", openCaptures],
-    lessons_to_accept: ["review", "Lessons to accept", "proposed lessons", () => P.go("learning", { section: "proposed" })],
+    lessons_to_accept: ["review", "Lessons to accept", "proposed lessons", () => P.go("learning", { tab: "proposed" })],
     rules_over_cap: ["review", "Too many rules", "instructions", openRules], rule_ineffective: ["review", "Rule without effect", "instructions", openRules],
     session_flags: ["review", "Session flags", "flags", openSessions], session_proposals: ["review", "Session proposals", "proposals", openSessions],
     machine_rules: ["review", "Machine rules", "proposed rules", () => P.go("machine")] };
@@ -214,6 +215,15 @@
     session_proposals: ["sessions", (data) => data.proposals, (item) => [item.text, P.words(item.slot) + ", " + lower(P.words(item.confidence)) + " confidence"],
       "A proposal from an earlier session becomes a record only when you accept it."] };
   const NOW_EXTRA = { unconfirmed: "Needs reconciliation", kickoff: "Kickoff", decisions: "Latest decisions", scope_blocks: "Scope blocks" };
+  // The tabs of a list view: one button per tab with its count and tone, the selected tab pressed and brought into sight.
+  P.viewTabs = (label, prefix, tabs, selected, open, ctx) => {
+    const node = h("div", { class: "tabs view-tabs", role: "group", "aria-label": label }, tabs.map((entry) => button([entry.label,
+      typeof entry.count === "number" ? chip(String(entry.count), entry.tone ? { dataset: { tone: entry.tone } } : null) : null], prefix + entry.id, () => open(entry.id), null,
+    { "aria-pressed": String(entry === selected) })));
+    // The row of tabs scrolls sideways, so the selected tab is brought into sight.
+    ctx.onShown(() => node.querySelector('[aria-pressed="true"]').scrollIntoView({ block: "nearest", inline: "nearest" }));
+    return node;
+  };
   P.registerView("now", { title: "Now", async render(container, params, ctx) {
       const now = await P.get("now"), waiting = now.attention_count || 0, kinds = now.attention_kinds || [];
       ctx.setSummary(waiting ? `${waiting} ${verb(waiting, "item waits", "items wait")} for you.` : "Nothing waits for you.");
@@ -224,11 +234,7 @@
         ...Object.keys(NOW_EXTRA).filter((id) => extra[id]).map((id) => ({ id, label: NOW_EXTRA[id], count: id === "unconfirmed" ? Number(unconfirmed.dataset.total) : id === "scope_blocks" ? (now.scope_blocks || []).length : null }))];
       const tab = tabs.find((entry) => entry.id === params.kind) || tabs[0], offset = Number(params.offset) || 0;
       container.classList.add("list-view");
-      put(container, h("div", { class: "tabs now-tabs", role: "group", "aria-label": "What waits for you, by kind" }, tabs.map((entry) => button([entry.label,
-        entry.count === null ? null : chip(String(entry.count), entry.tone ? { dataset: { tone: entry.tone } } : null)], "now-kind-" + entry.id, () => P.go("now", { kind: entry.id }), null,
-      { "aria-pressed": String(entry === tab) }))));
-      // The row of tabs scrolls sideways, so the selected tab is brought into sight.
-      ctx.onShown(() => container.querySelector('.now-tabs [aria-pressed="true"]').scrollIntoView({ block: "nearest", inline: "nearest" }));
+      put(container, P.viewTabs("What waits for you, by kind", "now-kind-", tabs, tab, (id) => P.go("now", { kind: id }), ctx));
       if (!tab.kind) { put(container, h("div", { class: "list-pane" }, paneBody("rows", typeof extra[tab.id] === "function" ? extra[tab.id]() : extra[tab.id]))); return; }
       // The rows of a decided kind come from the view that owns them, and every other kind pages through the response of Now.
       const type = tab.id, [tone, label, target, open] = attentionOf(type);
@@ -654,35 +660,40 @@
     return reasons;
   }
   const assessmentOf = (record) => (record.outcome ? ((record.outcome.detail || {}).payload || {}).assessment || "unknown" : "none");
-  P.registerView("decisions", { title: "Decisions", async render(container, params) {
+  // Decisions fill the frame: the filters sit in the head, one row per decision carries its outcome badge and its review
+  // marker, the count stays in the foot, and a row opens the decision beside the list.
+  P.registerView("decisions", { title: "Decisions", async render(container, params, ctx) {
       const page = await P.get("records", { view: "decisions", limit: "100" }), records = page.records || [];
       const filter = { query: params.query || "", outcome: params.outcome || "", review: params.review === "1", current: params.current === "1" };
-      const results = h("div", { class: "stack" });
+      const results = h("section", { class: "list-pane" }), head = h("div", { class: "list-head" });
       const draw = () => {
         const query = filter.query.toLowerCase();
         const shown = records.filter((record) => (!filter.outcome || assessmentOf(record) === filter.outcome) && (!filter.review || reviewReasons(record).length)
           && (!filter.current || !(record.detail || {}).replaced_by) && (!query || (record.title + " " + (record.episode_title || "") + " " + JSON.stringify((record.detail || {}).payload || {})).toLowerCase().includes(query)));
-        return [h("p", { class: "muted", role: "status" }, `The list shows ${shown.length} of ${P.count(page.total || 0, "decision")}.` +
-          (page.more ? ` Only the first ${records.length} are loaded. Search the records to find earlier decisions.` : "")),
-        listOf(shown, (record) => {
+        return [shown.length ? h("ul", { class: "pane-rows", dataset: { scroll: "rows" } }, shown.map((record) => {
           const reasons = reviewReasons(record);
-          return openItem("decision-" + record.id, (t) => openDecision(record.id, t),
-            h("span", { class: "row" }, outcomeBadge(record.outcome && assessmentOf(record)), record.status !== "recorded" ? P.badge(record.status) : null,
-              reasons.length ? toneBadge("review", "Needs review", "needs-review-marker") : null),
-            h("strong", null, record.title), h("span", { class: "muted" }, [record.episode_title, P.date(record.date)].filter(Boolean).join(". ")),
-            reasons.length ? h("span", null, reasons.join(" ")) : null);
-        }, records.length ? "No decision matches these filters." : "No decision is recorded.")];
+          return h("li", null, P.paneRow("decision-" + record.id, "decisions", record.title, h("span", { class: "row" }, outcomeBadge(record.outcome && assessmentOf(record)),
+            record.status !== "recorded" ? P.badge(record.status) : null, reasons.length ? toneBadge("review", "Needs review", "needs-review-marker") : null,
+            h("span", { class: "muted" }, [record.episode_title, P.date(record.date), ...reasons].filter(Boolean).join(". "))), (t) => openDecision(record.id, t)));
+        })) : h("div", { class: "pane-rows" }, P.empty(records.length ? "No decision matches these filters." : "No decision is recorded.")),
+        paneFoot(h("p", { role: "status" }, `The list shows ${shown.length} of ${P.count(page.total || 0, "decision")}.` +
+          (page.more ? ` Only the first ${records.length} are loaded. Search the records to find earlier decisions.` : "")))];
       };
-      const update = (name, value) => { filter[name] = value; P.setParams({ query: filter.query, outcome: filter.outcome, review: filter.review ? "1" : "", current: filter.current ? "1" : "" }); redraw(results, draw); };
-      const bad = records.filter((record) => assessmentOf(record) === "bad").length;
-      const review = records.filter((record) => reviewReasons(record).length).length;
-      put(container, h("p", { class: "sentence" }, `${P.count(page.total || 0, "decision")} ${verb(page.total || 0, "is", "are")} recorded. ` +
-        `${bad} ${verb(bad, "has", "have")} a bad outcome and ${review} ${verb(review, "needs", "need")} review.`),
-      h("div", { class: "toolbar" }, searchControl("decision-query", "Search", filter.query, (value) => update("query", value)),
+      const update = (name, value) => { filter[name] = value; P.setParams({ query: filter.query, outcome: filter.outcome, review: filter.review ? "1" : "", current: filter.current ? "1" : "" });
+        if (name !== "query") redraw(head, drawHead); redraw(results, draw); };
+      const drawHead = () => filterBox("decision-filters", Boolean(filter.query || filter.outcome || filter.review || filter.current),
+        searchControl("decision-query", "Search", filter.query, (value) => update("query", value)),
         selectControl("decision-outcome", "Outcome", [["", "All outcomes"], ["good", "Good"], ["bad", "Bad"], ["mixed", "Mixed"], ["unknown", "Unknown"], ["pending", "Pending"], ["none", "No outcome recorded"]],
           filter.outcome, (value) => update("outcome", value)),
         checkControl("decision-review", "Only decisions that need review", filter.review, (value) => update("review", value)),
-        checkControl("decision-current", "Hide replaced decisions", filter.current, (value) => update("current", value))), results);
+        checkControl("decision-current", "Hide replaced decisions", filter.current, (value) => update("current", value)));
+      const bad = records.filter((record) => assessmentOf(record) === "bad").length;
+      const review = records.filter((record) => reviewReasons(record).length).length;
+      ctx.setSummary(`${P.count(page.total || 0, "decision")} ${verb(page.total || 0, "is", "are")} recorded. ` +
+        `${bad} ${verb(bad, "has", "have")} a bad outcome and ${review} ${verb(review, "needs", "need")} review.`);
+      container.classList.add("list-view");
+      put(container, head, results);
+      redraw(head, drawHead);
       redraw(results, draw);
   } });
   P.registerPane("decision", { async render(body, params, ctx) {

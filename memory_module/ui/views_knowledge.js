@@ -1,13 +1,14 @@
 /*
  * Project Memory control panel: views_knowledge.js registers the Learning, Agents, Machine, Records and Requirements
- * views and the "record" and "run" panes. Buttons open the forms of forms.js: lesson_review {lesson_id, status},
- * instructions {role}, merge, discard, cancel_run and request_work_review {run_id}, requirements {}, promotion
- * {promotion_id, status}, machine_rule {rule_id}, and reassess {decision_id, outcome_id} next to each counted recurrence.
- * A snapshot holds records {view, limit: 100} for each view, so the Records view filters and pages those in the
- * browser. A snapshot carries no machine response, because the machine memory stays on the computer that holds it.
- * The Hive view lists the swarms and shows one swarm as a timeline; it opens hive_post {swarm_id, move, target},
- * hive_close {swarm_id} and hive_purge {}. The Usage view reads usage {} and offers no action. The Sessions view reads
- * sessions {} and opens session_flag {flag_id, status} and session_proposal {proposal_id, status}.
+ * views and the "record", "run", "guard" and "instructions" panes. Buttons open the forms of forms.js: lesson_review
+ * {lesson_id, status}, instructions {role}, merge, discard, cancel_run and request_work_review {run_id}, requirements {},
+ * promotion {promotion_id, status}, machine_rule {rule_id}, and reassess {decision_id, outcome_id} next to each counted
+ * recurrence. Learning and Sessions are tabs of rows in the frame; a lesson, a flag and a proposal are decided in the
+ * "decide" pane of views_work.js. A snapshot holds records {view, limit: 100} for each view, so the Records view filters
+ * and pages those in the browser. A snapshot carries no machine response, because the machine memory stays on the
+ * computer that holds it, and no sessions response. The Hive view lists the swarms and shows one swarm as a timeline; it
+ * opens hive_post {swarm_id, move, target}, hive_close {swarm_id} and hive_purge {}. The Usage view reads usage {} and
+ * offers no action. The Sessions view reads sessions {} and opens session_flag {flag_ids, status} for the shown flags.
  */
 (() => {
   "use strict";
@@ -69,7 +70,8 @@
   // A section that loads on its own, so a missing snapshot key does not hide the rest of the view.
   const failed = (error) => (error && error.notIncluded ? h("p", { class: "muted" }, "This part is not included in this snapshot.") : P.errorState(error));
 
-  // Learning.
+  // Learning: one tab for each part of the response. A proposed lesson is decided in the shared "decide" pane of
+  // views_work.js, a guard and the instructions of a role open the panes of this file, and a failure opens its outcome.
   function lessonText(lesson) {
     return [h("p", null, h("strong", null, lesson.do || "No action is recorded.")),
       h("p", { class: "muted" }, "When " + lower(lesson.when)),
@@ -78,34 +80,30 @@
   }
   const lower = (text) => (text ? text.charAt(0).toLowerCase() + text.slice(1) : "no condition is recorded.");
   // Guards name their paths and rules name their roles; both name their keywords and failure type.
+  const triggerParts = (item, first) => [...(item[first] || []).map((value) => (first === "paths" ? "Path " : "Role ") + value), ...(item.keywords || []).map((value) => "Keyword " + value),
+    ...(item.failure_type ? ["Failure type " + item.failure_type] : [])];
   function triggerChips(item, first, empty) {
-    const parts = [...chips(item[first], first === "paths" ? "Path " : "Role "), ...chips(item.keywords, "Keyword "), ...chips(item.failure_type ? [item.failure_type] : [], "Failure type ")];
+    const parts = triggerParts(item, first).map((part) => h("span", { class: "chip mono" }, part));
     return parts.length ? h("div", { class: "row" }, parts) : empty;
   }
   const lessonReview = (lesson, status) => openForm("lesson_review", { lesson_id: lesson.id, status });
-  function guardCard(guard, recurrence, ctx) {
-    const count = guard.recurrences || 0;
-    return h("article", { class: "card kn-guard", dataset: { tone: count ? "blocked" : "guarded" } },
-      h("h3", null, h("span", null, P.words(guard.pattern_type || "guard")), count ? P.badge("blocked", "Recurred " + P.count(count, "time")) : P.badge("guarded", "Active guard")),
-      lessonText(guard), triggerChips(guard, "paths", h("p", { class: "muted" }, "No triggers are recorded for this guard.")),
+  // The guard pane: the lesson, its triggers, and every counted recurrence with its Reassess action.
+  P.registerPane("guard", { async render(body, params, ctx) {
+      const data = await P.get("learning"), guard = (data.guards || []).find((entry) => entry.lesson_id === params.id);
+      ctx.setKind("Guard");
+      if (!guard) { ctx.setTitle("This guard is not listed"); put(body, h("p", { class: "muted" }, "Select another row of the list.")); return; }
+      const count = guard.recurrences || 0, recurrence = (data.recurrences || []).find((entry) => entry.lesson_id === params.id) || {};
+      ctx.setTitle(guard.do || "No action is recorded.");
+      put(body, h("div", { class: "row" }, h("span", { class: "chip" }, P.words(guard.pattern_type || "guard")), count ? P.badge("blocked", "Recurred " + P.count(count, "time")) : P.badge("guarded", "Active guard"),
+        h("span", { class: "muted" }, "Accepted " + P.date(guard.accepted_at))),
+      lessonText(guard).slice(1), triggerChips(guard, "paths", h("p", { class: "muted" }, "No triggers are recorded for this guard.")),
       count ? h("div", { class: "notice", dataset: { tone: "blocked" } },
         h("p", null, "The failure type " + (guard.failure_type || "of this guard") + " was recorded " + P.count(count, "time") + " after this lesson was accepted on " + P.date(guard.accepted_at) + "."),
-        h("ul", { class: "kn-plain" }, ((recurrence || {}).outcomes || []).map((outcome) => h("li", null, openButton(outcome.observed || outcome.id, outcome.id, { prefix: "recurrence-" }), " ", h("span", { class: "muted" }, P.date(outcome.created_at)), " ",
-          P.formButton("Reassess", "reassess", { decision_id: outcome.decision_id, outcome_id: outcome.id }, { class: "small" }))))) : null,
-      h("div", { class: "row" }, openButton("Open the lesson", guard.lesson_id, { class: "small", prefix: "guard-" }),
+        h("ul", { class: "kn-plain" }, (recurrence.outcomes || []).map((outcome) => h("li", null, openButton(outcome.observed || outcome.id, outcome.id, { prefix: "recurrence-" }), " ", h("span", { class: "muted" }, P.date(outcome.created_at)), " ",
+          P.formButton("Reassess", "reassess", { decision_id: outcome.decision_id, outcome_id: outcome.id }, { class: "small" }))))) : null);
+      put(ctx.foot, h("div", { class: "row" }, openButton("Open the lesson", guard.lesson_id, { class: "small", prefix: "guard-" }),
         ctx.canEdit ? actionButton("Retire", "retire-" + guard.lesson_id, lessonReview({ id: guard.lesson_id }, "retired")) : null));
-  }
-  function proposedCard(lesson, ctx) {
-    return h("article", { class: "card proposed" },
-      h("h3", null, h("span", null, P.words(lesson.pattern_type || "lesson")), P.badge("proposed")),
-      lessonText(lesson),
-      h("p", { class: "muted" }, "Proposed by " + (lesson.actor || "an agent") + " on " + P.date(lesson.created_at) + "."),
-      h("div", { class: "row" }, h("span", { class: "muted" }, P.term("work_item") + ":"), openButton(lesson.episode_title || lesson.episode_id, lesson.episode_id, { work: true, prefix: "lesson-work-" })),
-      lesson.evidence && lesson.evidence.length ? h("ul", { class: "kn-plain" }, lesson.evidence.map((ref) => h("li", null, openButton(ref.title || ref.source_id, ref.source_id, { prefix: "lesson-evidence-" + lesson.id + "-" }), h("span", { class: "muted" }, " " + ref.reason)))) : null,
-      h("div", { class: "row" }, openButton("Open the lesson", lesson.id, { class: "small", prefix: "proposed-" }),
-        ctx.canEdit ? [actionButton("Accept", "accept-" + lesson.id, lessonReview(lesson, "accepted"), "primary"),
-          actionButton("Reject", "reject-" + lesson.id, lessonReview(lesson, "rejected")), actionButton("Retire", "retire-" + lesson.id, lessonReview(lesson, "retired"), "quiet")] : null));
-  }
+  } });
   // Instructions: the text each agent role receives, the rules composed into it and the rules left out.
   const RULE_STATE = { effective: "ready", unproven: "backlog", ineffective: "blocked" };
   const VERDICTS = ["pass", "changes_required", "uncertain", "pending"];
@@ -123,80 +121,82 @@
         h("span", { class: "chip" }, "Recurrences before " + (rule.recurrences_before || 0) + ", after " + (rule.recurrences_after || 0))) : null,
       rule.note ? h("p", { class: "muted" }, rule.note) : null);
   }
-  function rolePanel(role, value, rules, accepted, max) {
-    const omitted = value.omitted || [], mine = rules.filter((rule) => (rule.roles || []).indexOf(role) >= 0);
-    const found = (id) => mine.find((rule) => rule.lesson_id === id) || { lesson_id: id };
-    const composed = (value.rule_ids || []).map(found);
-    const waiting = mine.filter((rule) => !has(value.rule_ids, rule.lesson_id) && !has(omitted, rule.lesson_id));
-    const saved = String(value.base_source || "").indexOf("instructions-base:") === 0;
-    return h("article", { class: "card kn-role", dataset: { key: "instructions-" + role } },
-      h("h3", null, h("span", null, P.words(role)), P.badge("guarded", P.count(accepted, "rule"))),
-      h("p", null, "This prompt carries " + P.count(composed.length, "rule") + " and uses " + number(value.used || 0) + " of "
-        + number(value.budget || 0) + " characters. The whole text is " + number(value.characters || 0) + " characters."),
-      P.progress(value.budget ? (value.used || 0) / value.budget : 0, "Character budget of the " + role + " rules"),
-      waiting.length ? h("p", { class: "muted" }, P.count(waiting.length, "further accepted rule") + " " + isAre(waiting.length)
-        + " composed only into a run that matches the triggers.") : null,
-      accepted > max ? h("p", { class: "muted" }, "This role has more than " + P.count(max, "accepted rule") + ", so one prompt cannot carry all of them.") : null,
-      h("h4", null, "Base text"),
-      h("p", { class: "muted" }, saved ? "You saved version " + value.base_version + " of this text in this project."
-        : value.base_source === "none" ? "No base text is shipped for this role."
-          : "The shipped file " + value.base_source + " is in force. No project version is saved."),
-      h("pre", { class: "source-text kn-base", dataset: { key: "base-" + role } }, value.base || "No base text is recorded."),
-      h("div", { class: "row" }, P.formButton("Edit the base text", "instructions", { role }, { class: "small" })),
-      h("h4", null, "Rules in force"),
-      composed.length ? h("ul", { class: "list" }, composed.map((rule) => ruleEntry(rule, role))) : P.empty("No rule is composed into this prompt."),
-      waiting.length ? [h("h4", null, "Rules that wait for a matching run"), h("ul", { class: "list" }, waiting.map((rule) => ruleEntry(rule, role)))] : null,
-      omitted.length ? [h("h4", null, "Rules left out"), h("ul", { class: "list" }, omitted.map((entry) => ruleEntry(found(entry.lesson_id), role, entry.reason)))] : null);
-  }
-  function instructionsSection(data) {
-    const value = data.instructions || {}, roles = Object.keys(value.roles || {});
-    return section("Instructions", counted(roles.length, "role"), value.note ? h("p", { class: "muted" }, value.note) : null,
-      grid(roles, (role) => rolePanel(role, value.roles[role], data.effectiveness || [], (value.counts || {})[role] || 0, value.max_rules || 0),
-        "No instruction text is available in this snapshot."));
-  }
-  const anchored = (name, node) => { node.dataset.section = name; return node; };
+  // The instructions pane of one role: its budget, its base text and its rules. The base text is edited in a dialog.
+  P.registerPane("instructions", { async render(body, params, ctx) {
+      const data = await P.get("learning"), value = data.instructions || {}, role = params.role, item = (value.roles || {})[role];
+      ctx.setKind("Instructions");
+      ctx.setTitle(P.words(role) + " role");
+      if (!item) { put(body, h("p", { class: "muted" }, "No instruction text is available for this role.")); return; }
+      const rules = data.effectiveness || [], accepted = (value.counts || {})[role] || 0, max = value.max_rules || 0;
+      const omitted = item.omitted || [], mine = rules.filter((rule) => (rule.roles || []).indexOf(role) >= 0);
+      const found = (id) => mine.find((rule) => rule.lesson_id === id) || { lesson_id: id };
+      const composed = (item.rule_ids || []).map(found);
+      const waiting = mine.filter((rule) => !has(item.rule_ids, rule.lesson_id) && !has(omitted, rule.lesson_id));
+      const saved = String(item.base_source || "").indexOf("instructions-base:") === 0;
+      put(body, h("div", { class: "stack kn-role", dataset: { key: "instructions-" + role } },
+        h("div", { class: "row" }, P.badge("guarded", P.count(accepted, "accepted rule")), h("span", { class: "muted" }, "This prompt carries " + P.count(composed.length, "rule") + " and uses " + number(item.used || 0) + " of "
+          + number(item.budget || 0) + " characters. The whole text is " + number(item.characters || 0) + " characters.")),
+        P.progress(item.budget ? (item.used || 0) / item.budget : 0, "Character budget of the " + role + " rules"),
+        waiting.length ? h("p", { class: "muted" }, P.count(waiting.length, "further accepted rule") + " " + isAre(waiting.length) + " composed only into a run that matches the triggers.") : null,
+        accepted > max ? h("p", { class: "muted" }, "This role has more than " + P.count(max, "accepted rule") + ", so one prompt cannot carry all of them.") : null,
+        h("h4", null, "Base text"),
+        h("p", { class: "muted" }, saved ? "You saved version " + item.base_version + " of this text in this project."
+          : item.base_source === "none" ? "No base text is shipped for this role."
+            : "The shipped file " + item.base_source + " is in force. No project version is saved."),
+        h("pre", { class: "source-text kn-base", dataset: { key: "base-" + role } }, item.base || "No base text is recorded."),
+        h("h4", null, "Rules in force"),
+        composed.length ? h("ul", { class: "list" }, composed.map((rule) => ruleEntry(rule, role))) : P.empty("No rule is composed into this prompt."),
+        waiting.length ? [h("h4", null, "Rules that wait for a matching run"), h("ul", { class: "list" }, waiting.map((rule) => ruleEntry(rule, role)))] : null,
+        omitted.length ? [h("h4", null, "Rules left out"), h("ul", { class: "list" }, omitted.map((entry) => ruleEntry(found(entry.lesson_id), role, entry.reason)))] : null));
+      put(ctx.foot, P.formButton("Edit the base text", "instructions", { role }, { class: "small" }));
+  } });
+  const LEARNING_TABS = [["proposed", "Proposed lessons", "review"], ["guards", "Guards", "guarded"], ["failures", "Failures without a lesson", "blocked"],
+    ["instructions", "Instructions", null], ["scope", "Scope changes", null], ["signals", "Signals", null]];
   P.registerView("learning", { title: "Learning", async render(container, params, ctx) {
       const offset = Number(params.lesson_offset) || 0, data = await P.get("learning", offset ? { offset: String(offset) } : {});
       const proposed = data.proposed_lessons || { lessons: [], total: 0 }, failures = data.failures_without_lesson || [];
       const ineffective = (data.guards || []).filter((guard) => guard.recurrences > 0).length;
       // A rule can be judged ineffective by the verdicts of its runs alone, with no recurrence recorded.
       const weak = (data.effectiveness || []).filter((rule) => rule.state === "ineffective").length;
-      put(container, sentence([P.count(data.guards_total || 0, "accepted guard") + " " + isAre(data.guards_total || 0) + " active",
+      ctx.setSummary([P.count(data.guards_total || 0, "accepted guard") + " " + isAre(data.guards_total || 0) + " active",
         ineffective ? ", and " + P.count(ineffective, "guard") + " recorded a recurrence" : "", ". ", weak ? P.count(weak, "rule") + " " + isAre(weak) + " judged ineffective and " + (weak === 1 ? "waits" : "wait") + " for your decision. " : "",
-        P.count(proposed.total, "proposed lesson") + " " + (proposed.total === 1 ? "awaits" : "await") + " your decision."].join("")),
-        purpose("A lesson is a rule learned from a failure. An accepted lesson with triggers is a guard, which reminds agents when their work matches it."));
-      const byLesson = Object.fromEntries((data.recurrences || []).map((entry) => [entry.lesson_id, entry]));
+        P.count(proposed.total, "proposed lesson") + " " + (proposed.total === 1 ? "awaits" : "await") + " your decision."].join(""));
       const guards = [...(data.guards || [])].sort((a, b) => (b.recurrences || 0) - (a.recurrences || 0));
-      // The decisions come first, and a link from Now names the section to focus.
-      put(container, anchored("proposed", section("Proposed lessons", counted(proposed.total, "lesson"),
-        grid(proposed.lessons, (lesson) => proposedCard(lesson, ctx), "No proposed lesson awaits a decision."),
-        pager({ offset, count: proposed.lessons.length, total: proposed.total, more: proposed.more, limit: PAGE }, "lessons",
-          (next) => P.go("learning", { ...params, lesson_offset: next ? String(next) : "" })))));
-      put(container, section("Accepted guards", counted(data.guards_total || 0, "guard"),
-        grid(guards, (guard) => guardCard(guard, byLesson[guard.lesson_id], ctx), "No lesson has been accepted as a guard yet."),
-        data.guards_more ? h("p", { class: "muted" }, "Only the first " + guards.length + " guards are shown.") : null));
-      put(container, section("Failures without lessons", counted(failures.length, "failure"),
-        listOf(failures, (item) => [h("div", { class: "row" }, openButton(item.title || item.episode_id, item.episode_id, { work: true, prefix: "failure-work-" }),
-          P.badge("failed", P.words(item.severity) + " severity")), h("p", null, item.observed), h("div", { class: "row" }, item.failure_type ? chips([item.failure_type], "Failure type ") : null,
-          h("span", { class: "muted" }, P.date(item.created_at)), openButton("Open the outcome", item.outcome_id, { class: "small", prefix: "failure-" }))],
-        "Every failed outcome has a lesson or a later complete result.")));
-      put(container, anchored("instructions", instructionsSection(data)));
-      if (params.section) ctx.onShown(() => {
-        const target = container.querySelector('[data-section="' + CSS.escape(params.section) + '"] h3');
-        if (target) { target.tabIndex = -1; target.scrollIntoView({ block: "start" }); target.focus({ preventScroll: true }); }
-        // The section is left out of the route afterwards, so a later update does not move the reader again.
-        const { section: shownSection, ...rest } = params;
-        P.setParams(rest);
-      });
-      const changes = data.scope_changes || [];
-      put(container, section("Scope widened by agents", counted(changes.length, "change"),
-        listOf(changes, (item) => [h("div", { class: "row" }, openButton(episodeTitle(item.episode_id), item.episode_id, { work: true, prefix: "scope-work-" }),
-          h("span", { class: "muted" }, P.date(item.created_at))), h("p", null, "The actor " + item.actor + " added " + P.count(item.added.length, "path") + " to the allowed paths."),
-        h("div", { class: "row" }, chips(item.added)), item.reason ? h("p", { class: "muted" }, "Reason: " + item.reason) : null,
-        h("div", null, openButton("Open the plan revision", item.plan_id, { class: "small", prefix: "scope-plan-" }))], "No agent has added allowed paths to a work item.")));
-      const signals = (data.signals || {}).signals || [];
-      put(container, section("Signals", counted(signals.length, "signal"),
-        (data.signals || {}).note ? h("p", { class: "muted" }, data.signals.note) : null,
+      const value = data.instructions || {}, roles = Object.keys(value.roles || {}), changes = data.scope_changes || [], signals = (data.signals || {}).signals || [];
+      const counts = { proposed: proposed.total, guards: data.guards_total || 0, failures: failures.length, instructions: roles.length, scope: changes.length, signals: signals.length };
+      const tabs = LEARNING_TABS.map(([id, label, tone]) => ({ id, label, count: counts[id], tone: counts[id] ? tone : null }));
+      // A link from Now names its tab as section, which the tabs replaced.
+      const tab = tabs.find((entry) => entry.id === (params.tab || params.section)) || tabs[0];
+      container.classList.add("list-view");
+      put(container, P.viewTabs("The parts of Learning", "learning-tab-", tabs, tab, (id) => P.go("learning", { tab: id }), ctx));
+      const list = (rows, note, empty, foot) => P.listPane({ title: tab.label, count: tab.count, tone: tab.tone, note, rows, empty, foot });
+      const region = (...children) => h("div", { class: "list-pane" }, h("div", { class: "pane-rows pane-body", dataset: { scroll: "rows" } }, children));
+      const turn = (to) => () => P.go("learning", { tab: "proposed", lesson_offset: to ? String(to) : "" });
+      if (tab.id === "proposed") put(container, list(proposed.lessons.map((lesson) => P.paneRow("lesson-row-" + lesson.id, "learning", lesson.do || "No action is recorded.",
+        P.words(lesson.pattern_type || "lesson") + ", proposed by " + (lesson.actor || "an agent") + " on " + P.date(lesson.created_at) + ". From: " + (lesson.episode_title || lesson.episode_id),
+        (trigger) => P.openPane("decide", { kind: "lessons_to_accept", id: lesson.id, from: lesson.episode_title }, trigger))),
+      "A lesson is a rule learned from a failure. A row decides the lesson in the pane, and an accepted lesson with triggers is a guard, which reminds agents when their work matches it.",
+      "No proposed lesson awaits a decision.", [h("span", null, proposed.lessons.length ? "Showing " + (offset + 1) + " to " + (offset + proposed.lessons.length) + " of " + proposed.total + "." : ""),
+        P.live && (offset || proposed.more) ? h("span", { class: "row" }, offset ? button("Previous " + PAGE, "lessons-previous", turn(Math.max(0, offset - PAGE)), "small") : null,
+          proposed.more ? button("Next " + PAGE, "lessons-next", turn(offset + PAGE), "small") : null) : null]));
+      else if (tab.id === "guards") put(container, list(guards.map((guard) => P.paneRow("guard-row-" + guard.lesson_id, "learning", guard.do || "No action is recorded.",
+        (guard.recurrences ? "Recurred " + P.count(guard.recurrences, "time") : "Active guard") + ". " + (triggerParts(guard, "paths").join(", ") || "No triggers are recorded") + ".",
+        (trigger) => P.openPane("guard", { id: guard.lesson_id }, trigger))),
+      "A guard that recorded a recurrence is listed first, with its recurrences and their Reassess action in the pane." + (data.guards_more ? " Only the first " + guards.length + " guards are shown." : ""),
+      "No lesson has been accepted as a guard yet."));
+      else if (tab.id === "failures") put(container, list(failures.map((item) => P.paneRow("failure-row-" + item.outcome_id, "decisions", item.observed || item.title,
+        P.words(item.severity) + " severity" + (item.failure_type ? ", failure type " + item.failure_type : "") + ". " + (item.title || item.episode_id) + ", " + P.date(item.created_at),
+        (trigger) => P.openRecord(item.outcome_id, trigger))),
+      "A failed outcome that no lesson followed. A row opens the outcome with its " + P.term("work_item").toLowerCase() + ".", "Every failed outcome has a lesson or a later complete result."));
+      else if (tab.id === "instructions") put(container, list(roles.map((role) => { const item = value.roles[role];
+        return P.paneRow("instructions-row-" + role, "agents", P.words(role) + " role", P.count((value.counts || {})[role] || 0, "accepted rule") + ", " + (item.rule_ids || []).length + " in this prompt, "
+          + number(item.used || 0) + " of " + number(item.budget || 0) + " characters used.", (trigger) => P.openPane("instructions", { role }, trigger)); }),
+      value.note, "No instruction text is available in this snapshot."));
+      else if (tab.id === "scope") put(container, region(listOf(changes, (item) => [h("div", { class: "row" }, openButton(episodeTitle(item.episode_id), item.episode_id, { work: true, prefix: "scope-work-" }),
+        h("span", { class: "muted" }, P.date(item.created_at))), h("p", null, "The actor " + item.actor + " added " + P.count(item.added.length, "path") + " to the allowed paths."),
+      h("div", { class: "row" }, chips(item.added)), item.reason ? h("p", { class: "muted" }, "Reason: " + item.reason) : null,
+      h("div", null, openButton("Open the plan revision", item.plan_id, { class: "small", prefix: "scope-plan-" }))], "No agent has added allowed paths to a " + P.term("work_item").toLowerCase() + ".")));
+      else put(container, region((data.signals || {}).note ? h("p", { class: "muted" }, data.signals.note) : null,
         listOf(signals, (signal, index) => [h("div", { class: "row" }, h("strong", null, P.words(signal.type)), signal.failure_type ? chips([signal.failure_type], "Failure type ") : null),
           signal.type === "repeated_failure" ? h("p", null, "The failure was recorded " + P.count(signal.failure_count, "time") + " in " + P.count(signal.assessed, "assessed outcome") + ", of which " + number(signal.successful) + " succeeded.") : null,
           h("p", { class: "muted" }, signal.reason),
@@ -776,44 +776,41 @@
         : P.empty("No run of this project records a routing decision yet.")));
   } });
 
-  // Sessions: the digests of finished sessions, the flagged directions that no record followed, and distilled proposals.
-  // Flags open session_flag {flag_id, status}; proposals open session_proposal {proposal_id, status}.
+  // Sessions: tabs for the flagged directions that no record followed, the distilled proposals and the digests of
+  // finished sessions. A flag and a proposal are decided in the shared "decide" pane of views_work.js, and a digest opens
+  // its record. The shown flags are dismissed together with session_flag {flag_ids, status}.
+  const SESSION_TABS = [["flags", "Flags", "review"], ["proposals", "Proposals", "review"], ["digests", "Digests", null]];
   P.registerView("sessions", { title: "Sessions", section: "Oversight", async render(container, params, ctx) {
       let data;
       try {
         data = await P.get("sessions");
       } catch (error) {
-        put(container, failed(error));
+        put(container, P.errorState(error));
         return;
       }
       const counts = data.counts || {}, digests = data.digests || [], flags = data.flags || [], proposals = data.proposals || [];
-      const decided = counts.confirmed + counts.dismissed, open = Math.max(counts.open || 0, flags.length);
-      put(container, sentence(data.reading ? P.count(digests.length, "session digest") + " " + isAre(digests.length) + " shown, with "
+      const decided = (counts.confirmed || 0) + (counts.dismissed || 0), open = Math.max(counts.open || 0, flags.length);
+      ctx.setSummary(data.reading ? P.count(digests.length, "session digest") + " " + isAre(digests.length) + " shown, with "
         + P.count(open, "open flag") + " and " + P.count(proposals.length, "pending proposal") + "."
-        : "Session reading is switched off for this project. Run project-memory sessions on to switch it on."),
-      h("div", { class: "notice", dataset: { key: "sessions-note" } }, h("p", null, data.note),
-        h("p", { class: "muted" }, decided ? "Of " + decided + " decided flags, " + counts.confirmed + " were confirmed." : "No flag is decided yet."),
-        h("p", { class: "muted" }, "Run project-memory sessions distill to ask a host for proposals. Run project-memory handoff before a fresh session.")),
-      section("Flagged directions", counted(open, "flag"),
-        open > flags.length ? h("p", { class: "muted" }, "The newest " + flags.length + " of " + open + " open flags are shown.") : null,
-        ctx.canEdit && flags.length > 1 ? h("div", { class: "row" }, P.formButton("Dismiss the " + flags.length + " shown flags", "session_flag",
-          { flag_ids: flags.map((flag) => flag.id), status: "dismissed" }, { class: "small" })) : null,
-        listOf(flags, (flag) => [
-        h("div", { class: "row" }, P.chip(P.words(flag.category)), P.badge("review", "Low confidence"), h("span", { class: "muted" }, flag.session_key + ", line " + flag.line + ", " + P.date(flag.at))),
-        h("p", null, flag.excerpt),
-        ctx.canEdit ? h("div", { class: "row" }, ["confirmed", "dismissed"].map((status) => P.actButton(status === "confirmed" ? "Confirm" : "Dismiss", "flag-" + status + "-" + flag.id,
-          "session_flag", { flag_id: flag.id, status }, (result) => "The flag is " + result.status + ".", "small")),
-          P.formButton("Decide with a reason", "session_flag", { flag_id: flag.id }, { class: "small quiet" })) : null], "No flag waits for a decision.")),
-      section("Proposals", counted(proposals.length, "proposal"), listOf(proposals, (item) => [
-        h("div", { class: "row" }, P.chip(P.words(item.slot)), P.chip(P.words(item.confidence) + " confidence"), h("span", { class: "muted" }, item.pointers.file + ", lines " + item.pointers.lines.join(", "))),
-        h("p", null, item.text),
-        ctx.canEdit ? h("div", { class: "row" }, P.formButton("Accept", "session_proposal", { proposal_id: item.id, status: "accepted" }, { class: "small" }),
-          P.formButton("Reject", "session_proposal", { proposal_id: item.id, status: "rejected" }, { class: "small quiet" })) : null], "No proposal is pending.")),
-      section("Session digests", counted(digests.length, "digest"), digests.length
-        ? table(["Session", "Last activity", "Messages", "Files", "Failed commands", "Open flags"], digests.map((item) => h("tr", { dataset: { key: "session-" + item.session_key } },
-          cell("Session", button(item.session_key, "session-open-" + item.source_id, (trigger) => P.openRecord(item.source_id, trigger), "quiet kn-link")),
-          dateCell("Last activity", item.last_at), cell("Messages", number(item.messages)), cell("Files", number(item.files)),
-          cell("Failed commands", number(item.failures)), cell("Open flags", number(item.open_flags)))))
-        : P.empty("No session of this project is collected yet.")));
+        : "Session reading is switched off for this project. Run project-memory sessions on to switch it on.");
+      const items = { flags, proposals, digests };
+      const tabs = SESSION_TABS.map(([id, label, tone]) => ({ id, label, count: id === "flags" ? open : items[id].length, tone: items[id].length ? tone : null }));
+      const tab = tabs.find((entry) => entry.id === params.tab) || tabs[0];
+      container.classList.add("list-view");
+      put(container, P.viewTabs("The parts of Sessions", "sessions-tab-", tabs, tab, (id) => P.go("sessions", { tab: id }), ctx));
+      const decide = (kind, id) => (trigger) => P.openPane("decide", { kind, id }, trigger);
+      const rows = tab.id === "flags" ? flags.map((flag) => P.paneRow("session-row-" + flag.id, "sessions", "“" + flag.excerpt + "”",
+        P.words(flag.category) + ", " + flag.session_key + ", line " + flag.line + ", " + P.date(flag.at), decide("session_flags", flag.id)))
+        : tab.id === "proposals" ? proposals.map((item) => P.paneRow("session-row-" + item.id, "sessions", item.text,
+          P.words(item.slot) + ", " + P.lower(P.words(item.confidence)) + " confidence, " + item.pointers.file, decide("session_proposals", item.id)))
+          : digests.map((item) => P.paneRow("session-digest-" + item.session_key, "records", item.session_key, "Last activity " + P.date(item.last_at) + ". " + P.count(item.messages, "message") + ", "
+            + P.count(item.files, "file") + ", " + P.count(item.failures, "failed command") + ", " + P.count(item.open_flags, "open flag") + ".", (trigger) => P.openRecord(item.source_id, trigger)));
+      const notes = { flags: data.note, proposals: "A proposal from an earlier session becomes a record only when you accept it. Run project-memory sessions distill to ask a host for proposals.",
+        digests: "A row opens the digest record of the session. Run project-memory handoff before a fresh session." };
+      const empties = { flags: "No flag waits for a decision.", proposals: "No proposal is pending.", digests: "No session of this project is collected yet." };
+      put(container, P.listPane({ title: tab.label, count: tab.count, tone: tab.tone, note: notes[tab.id], rows, empty: empties[tab.id],
+        foot: tab.id !== "flags" ? null : [h("span", { dataset: { key: "sessions-note" } }, (open > flags.length ? "The newest " + flags.length + " of " + open + " open flags are shown. " : "")
+          + (decided ? "Of " + decided + " decided flags, " + counts.confirmed + " were confirmed." : "No flag is decided yet.")),
+        ctx.canEdit && flags.length > 1 ? P.formButton("Dismiss the " + flags.length + " shown flags", "session_flag", { flag_ids: flags.map((flag) => flag.id), status: "dismissed" }, { class: "small" }) : null] }));
   } });
 })();

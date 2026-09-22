@@ -229,9 +229,9 @@ a.strip-part:hover { filter: brightness(0.85); }
 /* List pane: a view of this kind fills the pane of the view, its head and foot stay in place and only its rows scroll. */
 .main:has(> .list-view:not(.pending)) { display: flex; padding: 0; overflow: hidden; }
 .view.list-view:not(.pending) { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 0; }
-.tabs.now-tabs { flex: none; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; padding: var(--dk-space-2) var(--dk-space-3) 0; }
-.tabs.now-tabs button { flex: none; min-height: 44px; border-bottom-width: 3px; border-radius: var(--dk-radius) var(--dk-radius) 0 0; white-space: nowrap; }
-.tabs.now-tabs [aria-pressed="true"] { color: var(--dk-color-accent-text); background: var(--dk-color-accent-soft); }
+.tabs.view-tabs { flex: none; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; padding: var(--dk-space-2) var(--dk-space-3) 0; }
+.tabs.view-tabs button { flex: none; min-height: 44px; border-bottom-width: 3px; border-radius: var(--dk-radius) var(--dk-radius) 0 0; white-space: nowrap; }
+.tabs.view-tabs [aria-pressed="true"] { color: var(--dk-color-accent-text); background: var(--dk-color-accent-soft); }
 .list-pane { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .pane-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 14px; padding: 14px var(--dk-space-5) var(--dk-space-3); border-bottom: 1px solid var(--dk-color-border); }
 .pane-head h2 { display: flex; align-items: center; gap: 10px; font-size: 19px; letter-spacing: -0.02em; }
@@ -253,6 +253,8 @@ button.pane-row:hover { background: #f8fafb; }
 .pane-row > .icon:last-child { color: var(--dk-color-support); }
 .pane-row strong, .pane-row .muted { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pane-row strong { font-size: 15px; letter-spacing: -0.01em; }
+/* The badges of a row stay on one line with its text, which is cut with an ellipsis. */
+.pane-row .row { flex-wrap: nowrap; gap: 6px; }
 .pane-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--dk-space-2); padding: 10px var(--dk-space-5); color: var(--dk-color-support); border-top: 1px solid var(--dk-color-border); }
 /* The decision of the pane: a reason field of one line that grows, and two buttons of equal weight in width. */
 .detail-foot textarea { height: 40px; min-height: 40px; max-height: 120px; }
@@ -415,8 +417,6 @@ table.data th button { min-height: 0; padding: 0; border: 0; background: transpa
 .kn-role h4 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--dk-color-support); }
 .kn-role .list > li { padding: var(--dk-space-2) 0; }
 .kn-base { max-height: 220px; margin: 0; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
-.kn-guard[data-tone="blocked"] { border-color: #f3c5c0; border-left: 3px solid var(--tone); }
-.kn-guard[data-tone="guarded"] { border-left: 3px solid var(--tone); }
 .kn-pager { justify-content: flex-end; }
 .kn-pager > span { margin-right: auto; }
 .kn-filters .field { flex: 1 1 160px; }

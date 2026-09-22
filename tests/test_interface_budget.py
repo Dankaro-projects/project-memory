@@ -78,7 +78,13 @@ USABILITY_STYLE_ALLOWANCE = 400
 # and gained 682, a growth of 540 to 33,572, with the list head, the board as its own scrolling region and the wider
 # summary of the header. The stylesheet allowance now uses 6,300 of its cap of 8,000 while three items that move views
 # are still open.
-REDESIGN_ALLOWANCE = {'views': 6_250, 'core.js': 6_400}
+# Measured against 76487d9 after Sessions, Learning and Decisions moved into the frame: views_knowledge.js lost 11,261 code
+# characters with the sections and cards of Learning and Sessions, and gained 12,738 with their tabs and rows, the guard
+# pane and the instructions pane, a growth of 1,477. views_work.js lost 2,580 with the list of Decisions and the tabs of
+# Now, and gained 3,350 with the filter head and the rows of Decisions and the shared Panel.viewTabs, a growth of 770.
+# panel.css lost 523 and gained 486, a reduction of 37 to 33,535, so the stylesheet allowance stays at 6,300 while two
+# items that move views are still open. The view allowance grows by 2,250 for the measured 2,247.
+REDESIGN_ALLOWANCE = {'views': 8_500, 'core.js': 6_400}
 REDESIGN_LIMIT = 20_000
 REDESIGN_STYLE_ALLOWANCE = 6_300
 REDESIGN_STYLE_LIMIT = 8_000
@@ -180,7 +186,8 @@ class InterfaceBudgetTests(unittest.TestCase):
         for part in ('P.actButton = ', 'P.planPayload = ', 'function quickEdit(card, field, label, options)', 'dataset: { key: "work-folded" }',
                      'session_flags: ["review", "Session flags"'):
             self.assertIn(part, work)
-        for part in ('function titledButton(id, options = {})', 'anchored("proposed", section("Proposed lessons"', '"Dismiss the " + flags.length + " shown flags"'):
+        # The Proposed lessons tab replaced the section that the link of Now opened.
+        for part in ('function titledButton(id, options = {})', '["proposed", "Proposed lessons", "review"]', '"Dismiss the " + flags.length + " shown flags"'):
             self.assertIn(part, knowledge)
         self.assertIn('context.needsPaths', (UI / 'forms.js').read_text(encoding='utf-8'))
         # The pane replaced the drawer that covered the page, so the stylesheet now hides the view behind a full width pane.
@@ -201,8 +208,13 @@ class InterfaceBudgetTests(unittest.TestCase):
         work = (UI / 'views_work.js').read_text(encoding='utf-8')
         # Work and Plan fill the frame with a shared filter box, the rows of Work and the foot of each view.
         for part in ('ctx.setSummary(', 'const filterBox = (id, filtered, ...fields)', 'const paneBody = (name, ...children)', 'function listNode(cards, st)',
-                     'selectControl("work-sort", "Sort by", COLUMNS'):
+                     'selectControl("work-sort", "Sort by", COLUMNS', 'P.viewTabs = (label, prefix, tabs, selected, open, ctx)', 'filterBox("decision-filters"'):
             self.assertIn(part, work)
+        # Sessions, Learning and Decisions are tabs or a filter head with rows, and a lesson, a flag and a proposal share the decide pane.
+        knowledge = (UI / 'views_knowledge.js').read_text(encoding='utf-8')
+        for part in ('P.registerPane("guard"', 'P.registerPane("instructions"', 'const LEARNING_TABS = ', 'const SESSION_TABS = ',
+                     'P.openPane("decide", { kind: "lessons_to_accept"', 'decide("session_flags", flag.id)', 'decide("session_proposals", item.id)'):
+            self.assertIn(part, knowledge)
         self.assertIn('.list-head {', (UI / 'panel.css').read_text(encoding='utf-8'))
 
 

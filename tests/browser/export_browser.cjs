@@ -99,7 +99,7 @@ const pane = (page) => page.locator("#detail-body .detail-content:not(.pending)"
       const tabs = await page.evaluate(async () => {
         const kinds = (await Panel.get("now")).attention_kinds;
         return { expected: kinds.map((entry) => [entry.type, entry.count]), rows: kinds.reduce((sum, entry) => sum + entry.entries.length, 0),
-          shown: [...document.querySelectorAll(".now-tabs button .chip")].slice(0, kinds.length).map((node) => [node.parentNode.dataset.key.replace("now-kind-", ""), Number(node.textContent)]) };
+          shown: [...document.querySelectorAll(".view-tabs button .chip")].slice(0, kinds.length).map((node) => [node.parentNode.dataset.key.replace("now-kind-", ""), Number(node.textContent)]) };
       });
       assert.deepEqual(tabs.shown, tabs.expected);
       assert.equal(tabs.rows, 9);
@@ -125,6 +125,17 @@ const pane = (page) => page.locator("#detail-body .detail-content:not(.pending)"
       assert.equal(await page.evaluate(() => Panel.openForm("plan", {})), null);
       assert.equal(await page.locator("#form-dialog").evaluate((node) => node.open), false);
       step(`${kind}: no view offers an edit control and no form can be opened`);
+
+      // A snapshot holds no sessions response, so the Sessions view states that instead of failing, and Learning keeps its tabs.
+      await go(page, "#sessions");
+      assert.match(await text(page, "#main .notice"), /This content is not included in this snapshot\./);
+      await go(page, "#learning/tab=instructions");
+      assert.equal(await page.locator('#main [data-key^="instructions-row-"]').count(), 3);
+      await page.locator('[data-key="instructions-row-worker"]').click();
+      await page.waitForFunction(() => document.querySelector('#detail [data-key="instructions-worker"]') && !document.querySelector(".detail-content.pending"));
+      assert.equal(await page.locator("#detail .detail-foot button").count(), 0);
+      await page.evaluate(() => Panel.closePane());
+      step(`${kind}: the snapshot states that Sessions is not included, and the instructions of a role open without an edit action`);
 
       // A record that the snapshot does not hold says so instead of failing.
       await page.evaluate(() => Panel.openRecord("event_missing_from_this_snapshot"));

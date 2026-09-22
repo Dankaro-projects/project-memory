@@ -164,7 +164,7 @@ async function views(page, kind, expected) {
   const tabs = await page.evaluate(async () => {
     const now = await Panel.get("now");
     return { kinds: now.attention_kinds.map((entry) => [entry.type, entry.count]), total: now.attention_count,
-      shown: [...document.querySelectorAll(".now-tabs button")].map((node) => [node.dataset.key.replace("now-kind-", ""), node.querySelector(".chip") ? Number(node.querySelector(".chip").textContent) : null]) };
+      shown: [...document.querySelectorAll(".view-tabs button")].map((node) => [node.dataset.key.replace("now-kind-", ""), node.querySelector(".chip") ? Number(node.querySelector(".chip").textContent) : null]) };
   });
   assert.deepEqual(tabs.shown.slice(0, tabs.kinds.length), tabs.kinds);
   assert.deepEqual(tabs.shown.slice(tabs.kinds.length).map((tab) => tab[0]), ["kickoff", "decisions", "scope_blocks"]);
@@ -351,11 +351,19 @@ async function views(page, kind, expected) {
   assert.equal(await page.locator("#dep-tab-packages").count(), kind === "product" ? 1 : 0);
   step(`${kind}: the dependency graph is readable and the package tab appears only where packages exist`);
 
+  // Decisions in the frame: the filters sit in the head, each row carries its badges, and a filter keeps its route parameter.
   await go(page, "#decisions");
-  assert.match(await text(page, "#main .sentence"), /3 decisions are recorded\. 2 have a bad outcome and 1 needs review\./);
-  assert.equal(await page.locator('#main [data-key^="decision-event_"]').count(), 3);
-  assert.equal(await page.locator('#main [data-state="needs-review-marker"]').count(), 1);
-  step(`${kind}: Decisions list 3 decisions with outcome badges and the review marker`);
+  assert.match(await text(page, "#view-summary"), /3 decisions are recorded\. 2 have a bad outcome and 1 needs review\./);
+  assert.equal(await page.locator('#main .pane-row[data-key^="decision-event_"]').count(), 3);
+  assert.equal(await page.locator('#main .pane-row [data-state="needs-review-marker"]').count(), 1);
+  assert.equal(await page.locator("#main .list-head #decision-filters").count(), 1);
+  assert.match(await text(page, "#main .pane-foot"), /The list shows 3 of 3 decisions\./);
+  await page.locator("#decision-review").check();
+  await page.waitForFunction(() => document.querySelectorAll("#main .pane-row").length === 1);
+  assert.match(page.url(), /review=1/);
+  await page.locator("#decision-review").uncheck();
+  await page.waitForFunction(() => document.querySelectorAll("#main .pane-row").length === 3);
+  step(`${kind}: Decisions list 3 decisions as rows with outcome badges and the review marker under a filter head`);
 
   if (kind === "product") {
     await page.locator('#main [data-key^="decision-event_"]').first().click();
@@ -367,38 +375,61 @@ async function views(page, kind, expected) {
     step(`${kind}: a decision lineage of dozens of records opens as the readable list`);
   }
 
+  // Learning in the frame: one tab per part, the guards as rows, and the guard with the recurrence in the pane with its Reassess action.
   await go(page, "#learning");
-  const learning = await text(page, "#main");
-  assert.match(learning, /2 accepted guards are active, and 1 guard recorded a recurrence\./);
-  assert.match(learning, /Recurred 1 time/);
-  assert.match(learning, /Failures without lessons/);
-  assert.equal(await page.locator('#main .kn-guard[data-tone="blocked"] [data-key^="form:reassess:"]').count(), 1,
-    `${kind}: the counted recurrence has no Reassess action next to it`);
-  assert.equal(await page.locator('#main [data-key^="form:reassess:"]').first().innerText(), "Reassess");
-  step(`${kind}: Learning shows the accepted guards, the recurrence with its Reassess action and the failures without lessons`);
+  assert.match(await text(page, "#view-summary"), /2 accepted guards are active, and 1 guard recorded a recurrence\./);
+  assert.deepEqual((await page.locator("#main .view-tabs button").allTextContents()).map((label) => label.replace(/\d+$/, "")),
+    ["Proposed lessons", "Guards", "Failures without a lesson", "Instructions", "Scope changes", "Signals"]);
+  assert.equal(await page.locator('#main [data-key="learning-tab-proposed"][aria-pressed="true"]').count(), 1);
+  const learningTab = async (name) => {
+    await page.click(`[data-key="learning-tab-${name}"]`);
+    await page.waitForFunction((key) => { const node = document.querySelector(`#main .view:not(.pending) [data-key="${key}"]`); return node && node.getAttribute("aria-pressed") === "true"; }, "learning-tab-" + name);
+    await settle(page);
+  };
+  await learningTab("guards");
+  assert.match(await text(page, "#main .pane-row"), /Recurred 1 time/);
+  await page.locator("#main .pane-row").first().click();
+  await page.waitForFunction(() => document.getElementById("detail-kind").textContent === "Guard" && !document.querySelector(".detail-content.pending"));
+  assert.equal(await page.locator('#detail [data-key^="form:reassess:"]').count(), 1, `${kind}: the counted recurrence has no Reassess action next to it`);
+  assert.equal(await page.locator('#detail [data-key^="form:reassess:"]').first().innerText(), "Reassess");
+  assert.deepEqual(await page.locator("#detail .detail-foot button").allTextContents(), ["Open the lesson", "Retire"]);
+  await closePane(page);
+  await learningTab("failures");
+  assert.equal(await page.locator("#main .pane-row").count(), 1);
+  // The links of Now name a section, which the tabs replaced, so the section still selects its tab.
+  await go(page, "#learning/section=instructions");
+  assert.equal(await page.locator('#main [data-key="learning-tab-instructions"][aria-pressed="true"]').count(), 1);
+  step(`${kind}: Learning shows its parts as tabs, the guard with the recurrence opens in the pane with its Reassess action, and a section link selects its tab`);
 
-  // Instructions: one panel per role with its base text, its rules, its omissions and its budget.
-  assert.equal(await page.locator('#main [data-key^="instructions-"]').count(), 3);
-  const assistant = await text(page, '[data-key="instructions-assistant"]');
+  // Instructions: one row per role, and the pane of a role holds its base text, its rules, its omissions and its budget.
+  assert.equal(await page.locator('#main [data-key^="instructions-row-"]').count(), 3);
+  const role = async (name) => {
+    await page.click(`[data-key="instructions-row-${name}"]`);
+    await page.waitForFunction((key) => document.querySelector(`#detail [data-key="${key}"]`) && !document.querySelector(".detail-content.pending"), "instructions-" + name);
+    return text(page, `#detail [data-key="instructions-${name}"]`);
+  };
+  const assistant = await role("assistant");
   assert.match(assistant, /This prompt carries 1 rule and uses \d+ of 600 characters\./);
   assert.match(assistant, /The shipped file agents\/assistant\.md is in force\./);
   assert.match(assistant, /2 runs composed it/);
-  const reviewer = await text(page, '[data-key="instructions-reviewer"]');
+  const reviewer = await role("reviewer");
   assert.match(reviewer, /You saved version 1 of this text in this project\./);
   assert.match(reviewer, /Give one verdict of pass, changes required or uncertain\./);
   assert.match(reviewer, /Unproven/);
-  const worker = await text(page, '[data-key="instructions-worker"]');
+  const worker = await role("worker");
   assert.match(worker, /uses \d+ of 1,200 characters/);
   assert.match(worker, /1 further accepted rule is composed only into a run that matches the triggers\./);
   assert.match(worker, /Ineffective/);
   assert.match(worker, /Recurrences before 1, after 1/);
-  step(`${kind}: the Instructions section states the base text, the rules in force and the budget of each role`);
+  assert.equal(await page.locator('#detail .detail-foot [data-key="form:instructions:worker"]').count(), 1);
+  step(`${kind}: the Instructions tab opens each role in the pane with its base text, its rules in force, its budget and the edit action in the foot`);
 
   // On a phone the base text scrolls inside its own block and the rules stay on screen.
+  await role("reviewer");
   await page.setViewportSize({ width: 390, height: 900 });
   await page.waitForTimeout(250);
   const panel = await page.evaluate(() => {
-    const card = document.querySelector('[data-key="instructions-reviewer"]');
+    const card = document.querySelector('#detail [data-key="instructions-reviewer"]');
     const base = card.querySelector(".kn-base");
     const rule = card.querySelector(".kn-rule");
     return { card: card.getBoundingClientRect().right, base: base.getBoundingClientRect().right,
@@ -408,7 +439,8 @@ async function views(page, kind, expected) {
   assert.ok(panel.base <= 390, `${kind}: the base text block ends at ${Math.round(panel.base)} pixels on a 390 pixel screen`);
   assert.ok(panel.rule !== null && panel.rule <= 390, `${kind}: a composed rule sits off a 390 pixel screen: ${panel.rule}`);
   await page.setViewportSize({ width: 1440, height: 900 });
-  step(`${kind}: the Instructions section keeps the base text and the rules on a 390 pixel screen`);
+  await closePane(page);
+  step(`${kind}: the instructions pane keeps the base text and the rules on a 390 pixel screen`);
 
   await go(page, "#agents");
   assert.match(await text(page, "#main .sentence"), /configured hosts can run work now/);
@@ -575,6 +607,25 @@ async function views(page, kind, expected) {
   await page.setViewportSize({ width: 1440, height: 900 });
   step(`${kind}: Work as a board and as a list and Plan scroll only inside their rows at ${FRAMES.map((size) => size.join(" by ")).join(", ")} pixels, with and without the pane, and the primary action stays in reach`);
 
+  // Learning and Decisions fill the frame the same way, with and without the pane. A lesson, a guard and the
+  // instructions of a role keep their primary action in the foot of the pane; the decision pane has no action.
+  for (const [width, height] of FRAMES) {
+    await page.setViewportSize({ width, height });
+    for (const [hash, expected] of [["#learning", "Decide a lesson"], ["#learning/tab=guards", "Guard"], ["#learning/tab=instructions", "Instructions"], ["#decisions", "Decision"]]) {
+      await go(page, hash);
+      await page.waitForSelector("#main .pane-row");
+      await fixedFrame(page, `${kind} ${hash} at ${width} by ${height}`);
+      assert.ok(await page.evaluate(() => { const main = document.getElementById("main"); return main.scrollHeight <= main.clientHeight; }), `${kind} ${hash} at ${width} by ${height}: the view scrolls outside its rows`);
+      await page.locator("#main .pane-row").first().click();
+      await loaded();
+      await fixedFrame(page, `${kind} ${hash} with the pane at ${width} by ${height}`);
+      assert.equal(await page.evaluate(() => document.getElementById("detail-kind").textContent), expected);
+      if (hash !== "#decisions") assert.ok(await inReach(page, "#detail .detail-foot button"), `${kind} ${hash} at ${width} by ${height}: the primary action of the item is out of reach`);
+    }
+  }
+  await page.setViewportSize({ width: 1440, height: 900 });
+  step(`${kind}: Learning and Decisions scroll only inside their rows at ${FRAMES.map((size) => size.join(" by ")).join(", ")} pixels, with and without the pane, and the primary action stays in reach`);
+
   for (const width of [1440, 768, 390, 320]) {
     for (const hash of ["#now", "#plan", "#work", "#architecture", "#decisions", "#learning", "#machine", "#hive", "#usage"]) {
       await go(page, hash);
@@ -665,9 +716,14 @@ async function editing(page, ids, posts) {
   await page.waitForFunction(() => /17 work items are planned/.test(document.getElementById("view-summary").textContent));
   step("a new work item is created from the Plan view and the plan counts it");
 
-  // Accepting a proposed lesson with its triggers.
+  // Accepting a proposed lesson with its triggers: the row opens the decision, the full lesson opens from it, and the
+  // form of the full lesson takes the triggers.
   await go(page, "#learning");
-  await page.locator(`[data-key="accept-${ids.proposed_lesson}"]`).click();
+  await page.locator(`[data-key="lesson-row-${ids.proposed_lesson}"]`).click();
+  await page.waitForFunction(() => document.getElementById("detail-kind").textContent === "Decide a lesson" && !document.querySelector(".detail-content.pending"));
+  await page.locator('[data-key="decide-open"]').click();
+  await page.waitForSelector('#detail [data-key="pane-accept"]');
+  await page.locator('[data-key="pane-accept"]').click();
   await page.waitForSelector("#form-dialog[open] textarea[name=reason]");
   assert.equal(await page.locator("input[name=status][value=accepted]").isChecked(), true);
   await field(page, "reason").fill("The practice prevents unclear release notes.");
@@ -677,20 +733,31 @@ async function editing(page, ids, posts) {
   await field(page, "role_reviewer").check();
   await page.locator("#form-save").click();
   await savedToast(page, /lesson is accepted/);
-  await page.waitForFunction(() => /3 accepted guards are active/.test(document.querySelector("#main .view:not(.pending)").textContent), null, { timeout: 15000 });
-  assert.match(await text(page, "#main"), /release note/);
+  await page.waitForFunction(() => /3 accepted guards are active/.test(document.getElementById("view-summary").textContent), null, { timeout: 15000 });
+  await closePane(page);
+  const learningTab = async (name) => {
+    await page.click(`[data-key="learning-tab-${name}"]`);
+    await page.waitForFunction((key) => { const node = document.querySelector(`#main .view:not(.pending) [data-key="${key}"]`); return node && node.getAttribute("aria-pressed") === "true"; }, "learning-tab-" + name);
+    await settle(page);
+  };
+  await learningTab("guards");
+  assert.match(await text(page, "#main .pane-rows"), /release note/);
   const guard = await page.evaluate(async (id) => {
     const learning = await Panel.get("learning");
     return learning.guards.find((entry) => entry.lesson_id === id);
   }, ids.proposed_lesson);
   assert.deepEqual([guard.paths, guard.keywords, guard.failure_type, guard.roles],
     [["docs/releases/**"], ["release note"], "unclear_wording", ["reviewer"]]);
-  assert.match(await text(page, '[data-key="instructions-reviewer"]'),
+  await learningTab("instructions");
+  const reviewerPane = () => page.waitForFunction(() => document.querySelector('#detail [data-key="instructions-reviewer"]') && !document.querySelector(".detail-content.pending"));
+  await page.locator('[data-key="instructions-row-reviewer"]').click();
+  await reviewerPane();
+  assert.match(await text(page, '#detail [data-key="instructions-reviewer"]'),
     /1 further accepted rule is composed only into a run that matches the triggers\./);
-  step("a proposed lesson is accepted with its path, keyword and failure type triggers and with the reviewer role");
+  step("a proposed lesson is accepted from its row with its path, keyword and failure type triggers and with the reviewer role");
 
-  // Saving a new version of the base text of one role.
-  await page.locator('[data-key="form:instructions:reviewer"]').click();
+  // Saving a new version of the base text of one role, from the foot of the instructions pane.
+  await page.locator('#detail [data-key="form:instructions:reviewer"]').click();
   await page.waitForSelector("#form-dialog[open] textarea[name=text]");
   assert.match(await field(page, "text").inputValue(), /You are the reviewer in this project\./);
   await field(page, "text").fill("You are the reviewer in this project. State the evidence for every judgement and give one verdict.");
@@ -698,30 +765,35 @@ async function editing(page, ids, posts) {
   await page.locator("#form-save").click();
   await savedToast(page, /Version 2 of the reviewer instructions is saved/);
   await page.waitForFunction(() => /You saved version 2 of this text/.test(
-    document.querySelector('[data-key="instructions-reviewer"]').textContent), null, { timeout: 15000 });
-  assert.match(await text(page, '[data-key="base-reviewer"]'), /State the evidence for every judgement and give one verdict\./);
-  step("a new version of the reviewer base text is saved and the panel shows it");
+    document.querySelector('#detail [data-key="instructions-reviewer"]').textContent), null, { timeout: 15000 });
+  assert.match(await text(page, '#detail [data-key="base-reviewer"]'), /State the evidence for every judgement and give one verdict\./);
+  await closePane(page);
+  step("a new version of the reviewer base text is saved and the pane shows it");
 
-  // Reassessing the counted recurrence as the user removes it from the count.
+  // Reassessing the counted recurrence from the guard pane as the user removes it from the count.
   const recurrencesBefore = await page.evaluate(async () => (await Panel.get("learning")).recurrences.reduce((sum, entry) => sum + entry.total, 0));
   assert.equal(recurrencesBefore, 1);
-  await page.locator(`#main [data-key^="form:reassess:"][data-key$=":${ids.recurrence_outcome}"]`).click();
+  await learningTab("guards");
+  await page.locator('#main [data-key^="guard-row-"]').first().click();
+  await page.waitForFunction(() => document.getElementById("detail-kind").textContent === "Guard" && !document.querySelector(".detail-content.pending"));
+  await page.locator(`#detail [data-key^="form:reassess:"][data-key$=":${ids.recurrence_outcome}"]`).click();
   await page.waitForSelector("#form-dialog[open] textarea[name=reason]");
   assert.match(await text(page, "#form-fields"), /Observed/);
   assert.equal(await page.locator('input[name="assessment"][value="good"]').isChecked(), true);
   await field(page, "reason").fill("The archive import was repeated and every character arrived.");
   await page.locator("#form-save").click();
   await savedToast(page, /The outcome is reassessed as good\./);
-  await page.waitForFunction(() => !/recorded a recurrence/.test(document.querySelector("#main .view:not(.pending) .sentence").textContent), null, { timeout: 15000 });
+  await page.waitForFunction(() => !/recorded a recurrence/.test(document.getElementById("view-summary").textContent), null, { timeout: 15000 });
   await settle(page);
-  assert.equal(await page.locator('#main [data-key^="form:reassess:"]').count(), 0);
+  assert.equal(await page.locator('#detail [data-key^="form:reassess:"]').count(), 0);
   assert.doesNotMatch(await text(page, "#main"), /Recurred 1 time/);
   const after = await page.evaluate(async () => {
     const learning = await Panel.get("learning");
     return [learning.recurrences.length, learning.guards.reduce((sum, guard) => sum + (guard.recurrences || 0), 0)];
   });
   assert.deepEqual(after, [0, 0]);
-  step("the user reassesses the counted recurrence and the recurrence count drops from 1 to 0");
+  await closePane(page);
+  step("the user reassesses the counted recurrence from the guard pane and the recurrence count drops from 1 to 0");
 
   // Allowing the blocked path of the scope block.
   await go(page, "#now");
@@ -1046,20 +1118,51 @@ async function hived(browser, fixture) {
   await page.waitForFunction(() => [...document.querySelectorAll(".toast")].some((node) => node.textContent === "The lesson is accepted."), null, { timeout: 15000 });
   await page.waitForFunction(() => document.getElementById("detail").hidden && !document.querySelector("#main .view:not(.pending) [data-key=now-kind-lessons_to_accept]"), null, { timeout: 15000 });
   step("now: a flag is dismissed with one key and the next flag opens by itself, and a lesson is accepted in the pane with its reason");
+  // Sessions in the frame: the flags are rows under a tab, and no size scrolls the page with or without the pane, whose
+  // Confirm action stays in reach.
+  const flagPane = (pattern) => page.waitForFunction((source) => new RegExp(source).test(document.getElementById("detail-title").textContent) && !document.querySelector(".detail-content.pending"), pattern.source);
+  for (const [width, height] of FRAMES) {
+    await page.setViewportSize({ width, height });
+    await go(page, "#sessions");
+    await page.waitForSelector("#main .pane-row");
+    await fixedFrame(page, `sessions at ${width} by ${height}`);
+    await page.locator("#main .pane-row").first().click();
+    await flagPane(/Use the second file instead/);
+    await fixedFrame(page, `sessions with the pane at ${width} by ${height}`);
+    const box = await page.locator('#detail .detail-foot [data-key="decide-confirmed"]').boundingBox();
+    assert.ok(box && box.y >= 0 && box.y + box.height <= height, `sessions at ${width} by ${height}: Confirm is out of reach`);
+  }
+  await page.setViewportSize({ width: 1440, height: 900 });
+  step(`sessions: no page scroll at ${FRAMES.map((size) => size.join(" by ")).join(", ")} pixels with and without the pane, and Confirm stays in reach`);
+
+  // A flag row of Sessions is decided in the same pane as in Now: J and K move along the rows, one key dismisses the flag
+  // without a dialog, the next flag opens by itself, and one dialog without a reason dismisses the rest.
   await go(page, "#sessions");
-  await page.waitForFunction(() => /3 open flags/.test((document.querySelector("#main .view:not(.pending) .sentence") || {}).textContent || ""));
-  await page.click('[data-key="flag-dismissed-flag_fixture_3"]');
-  await page.waitForFunction(() => /2 open flags/.test(document.querySelector("#main .view:not(.pending) .sentence").textContent), null, { timeout: 15000 });
-  assert.equal(await page.locator(".toast").last().textContent(), "The flag is dismissed.");
+  await page.waitForFunction(() => /3 open flags/.test(document.getElementById("view-summary").textContent));
+  assert.deepEqual((await page.locator("#main .view-tabs button").allTextContents()).map((label) => label.replace(/\d+$/, "")), ["Flags", "Proposals", "Digests"]);
+  assert.equal(await page.locator("#main .pane-row").count(), 3);
+  await page.click('[data-key="session-row-flag_fixture_3"]');
+  await flagPane(/Use the second file instead/);
+  assert.equal(await page.locator('#main [data-key="session-row-flag_fixture_3"]').getAttribute("aria-current"), "true");
+  await page.locator("#detail-title").focus();
+  await page.keyboard.press("j");
+  await flagPane(/Do not change the export format/);
+  await page.keyboard.press("k");
+  await flagPane(/Use the second file instead/);
+  await page.keyboard.press("d");
+  await page.waitForFunction(() => [...document.querySelectorAll(".toast")].some((node) => node.textContent === "The flag is dismissed."), null, { timeout: 15000 });
+  await flagPane(/Do not change the export format/);
   assert.equal(await page.locator("#form-dialog[open]").count(), 0, "a single flag still needs a dialog");
-  await page.click('[data-key="form:session_flag:dismissed"]');
+  await page.waitForFunction(() => /2 open flags/.test(document.getElementById("view-summary").textContent), null, { timeout: 15000 });
+  await page.click('#main [data-key="form:session_flag:dismissed"]');
   await page.waitForSelector("#form-dialog[open]");
   assert.equal(await text(page, "#form-title"), "Decide the 2 shown flags");
   await page.locator("#form-save").click();
   await savedToast(page, /2 flags are dismissed\./);
-  await page.waitForFunction(() => /0 open flags/.test(document.querySelector("#main .view:not(.pending) .sentence").textContent), null, { timeout: 15000 });
-  assert.match(await text(page, '[data-key="sessions-note"]'), /Of 4 decided flags, 0 were confirmed\./);
-  step("sessions: a row dismisses one flag without a dialog, and one dialog without a reason dismisses the rest");
+  await page.waitForFunction(() => /0 open flags/.test(document.getElementById("view-summary").textContent), null, { timeout: 15000 });
+  assert.match(await text(page, '#main [data-key="sessions-note"]'), /Of 4 decided flags, 0 were confirmed\./);
+  await closePane(page);
+  step("sessions: a flag row is decided in the shared pane with J, K and D, the next flag opens by itself, and one dialog without a reason dismisses the rest");
 
   await go(page, "#hive");
   assert.equal(await text(page, "#main .sentence"), "1 swarm is recorded, and 1 is open.");
