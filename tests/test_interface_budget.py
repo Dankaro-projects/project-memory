@@ -71,9 +71,16 @@ USABILITY_STYLE_ALLOWANCE = 400
 # characters with the four cards, the attention rows and the list pane of Now, and gained 9,824, a growth of 4,808. core.js
 # grew by 1,046 with Panel.listPane and Panel.paneRow, and panel.css lost 581 and gained 2,623, a growth of 2,042 to 33,032.
 # The stylesheet allowance now uses 5,750 of its cap of 8,000 while four items that move views are still open.
-REDESIGN_ALLOWANCE = {'views': 5_250, 'core.js': 6_200}
+# Measured against 92bced9 after Work and Plan moved into the frame with the work item in the pane: views_work.js lost
+# 3,802 code characters with the table of Work, the heads of both views and their separate filter boxes, and gained 4,802
+# with the list head, the rows of Work, its sort controls, the shared filter box and the pane foot of each view, a growth
+# of 1,000. core.js gained 177 with the header sentences that name the list head and the pane body. panel.css lost 142
+# and gained 682, a growth of 540 to 33,572, with the list head, the board as its own scrolling region and the wider
+# summary of the header. The stylesheet allowance now uses 6,300 of its cap of 8,000 while three items that move views
+# are still open.
+REDESIGN_ALLOWANCE = {'views': 6_250, 'core.js': 6_400}
 REDESIGN_LIMIT = 20_000
-REDESIGN_STYLE_ALLOWANCE = 5_750
+REDESIGN_STYLE_ALLOWANCE = 6_300
 REDESIGN_STYLE_LIMIT = 8_000
 REDESIGN_SHELL_ALLOWANCE = 2_300
 ALLOWANCES = (FOCUS_ALLOWANCE, HIVE_ALLOWANCE, USAGE_ALLOWANCE, SESSIONS_ALLOWANCE, PANEL_ACTIONS_ALLOWANCE, USABILITY_ALLOWANCE,
@@ -191,7 +198,12 @@ class InterfaceBudgetTests(unittest.TestCase):
         shell = (ROOT / 'viewer.html').read_text(encoding='utf-8')
         for part in ('<symbol id="i-usage"', 'class="rail-foot"', 'id="view-summary"', 'id="activity-toggle"'):
             self.assertIn(part, shell)
-        self.assertIn('ctx.setSummary(', (UI / 'views_work.js').read_text(encoding='utf-8'))
+        work = (UI / 'views_work.js').read_text(encoding='utf-8')
+        # Work and Plan fill the frame with a shared filter box, the rows of Work and the foot of each view.
+        for part in ('ctx.setSummary(', 'const filterBox = (id, filtered, ...fields)', 'const paneBody = (name, ...children)', 'function listNode(cards, st)',
+                     'selectControl("work-sort", "Sort by", COLUMNS'):
+            self.assertIn(part, work)
+        self.assertIn('.list-head {', (UI / 'panel.css').read_text(encoding='utf-8'))
 
 
 if __name__ == '__main__':

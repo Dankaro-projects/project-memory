@@ -79,7 +79,10 @@ const pane = (page) => page.locator("#detail-body .detail-content:not(.pending)"
       await go(page, "#now");
       assert.match(await text(page, "#view-summary"), /^\d+ items wait for you\.$/);
       await go(page, "#plan");
-      assert.match(await text(page, "#main .sentence"), /16 work items are planned in 7 phases\./);
+      assert.match(await text(page, "#view-summary"), /16 work items are planned in 7 phases\./);
+      assert.equal(await page.locator("#main .list-view .tree").count(), 1, `${kind}: the plan tree is not in the frame`);
+      await go(page, "#work/tab=list");
+      assert.equal(await page.locator("#main .pane-row").count(), 16, `${kind}: the snapshot does not list the work items as rows`);
       await go(page, "#architecture");
       assert.equal(await text(page, "#main .view-head h2"), expected.architecture);
       await page.waitForSelector("#main .graph canvas");

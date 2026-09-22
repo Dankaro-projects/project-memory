@@ -45,6 +45,8 @@
  * List pane: a view that adds the class list-view to its container fills #main and scrolls only inside its list.
  *   Panel.listPane({title, count, tone, note, rows, empty, foot}) has a fixed head and foot around the scrolling rows,
  *   and Panel.paneRow(key, icon, title, sub, handler(trigger)) is one row of 60 pixels that opens a pane or a view.
+ *   A list-head above the list pane holds the switch and the filters of a view, and a pane-body is a scrolling region
+ *   of the list pane that holds a tree, a board or cards in place of rows (Work and Plan in views_work.js).
  *
  * Forms (modal dialog): Panel.registerForm(name, {title, submitLabel, render(fields, context, form),
  *   submit(values, context, form) -> {operation, data}, done(result, context) -> toast text, reload}).

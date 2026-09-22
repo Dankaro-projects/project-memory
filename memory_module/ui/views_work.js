@@ -229,7 +229,7 @@
       { "aria-pressed": String(entry === tab) }))));
       // The row of tabs scrolls sideways, so the selected tab is brought into sight.
       ctx.onShown(() => container.querySelector('.now-tabs [aria-pressed="true"]').scrollIntoView({ block: "nearest", inline: "nearest" }));
-      if (!tab.kind) { put(container, h("div", { class: "list-pane" }, h("div", { class: "pane-rows now-panel", dataset: { scroll: "rows" } }, typeof extra[tab.id] === "function" ? extra[tab.id]() : extra[tab.id]))); return; }
+      if (!tab.kind) { put(container, h("div", { class: "list-pane" }, paneBody("rows", typeof extra[tab.id] === "function" ? extra[tab.id]() : extra[tab.id]))); return; }
       // The rows of a decided kind come from the view that owns them, and every other kind pages through the response of Now.
       const type = tab.id, [tone, label, target, open] = attentionOf(type);
       let rows, total = tab.kind.rows, source = DECIDED[type];
@@ -333,36 +333,44 @@
       acceptance.length ? h("ol", null, acceptance.map((line) => h("li", null, line))) : h("p", { class: "muted" }, "Open the item to read its acceptance criteria.")) : null,
     children.length ? h("ul", { hidden: !open }, children) : null);
   }
-  P.registerView("plan", { title: "Plan", async render(container, params) {
+  // Plan and Work fill the frame: the filters sit in a box at the top, which stays folded on a narrow screen until the
+  // reader opens it, and the tree, the board or the rows scroll under it. The foot stays in place under them.
+  const filterBox = (id, filtered, ...fields) => h("details", { class: "kn-filter-box", id, open: remembered.open.has(id) ? remembered.open.get(id) : filtered || window.innerWidth >= 640 },
+    h("summary", { on: { click: (event) => remembered.open.set(id, !event.currentTarget.parentNode.open) } }, filtered ? "Filters are applied" : "Filters"), h("div", { class: "toolbar" }, fields));
+  const paneBody = (name, ...children) => h("div", { class: "pane-rows pane-body", dataset: { scroll: name } }, children);
+  const paneFoot = (...children) => h("div", { class: "pane-foot" }, children);
+  P.registerView("plan", { title: "Plan", async render(container, params, ctx) {
       const [plan, board] = await Promise.all([P.get("plan"), P.get("board", { limit: "100" }).catch(() => null)]);
       const cards = new Map(((board && board.cards) || []).map((card) => [card.id, card]));
       const roots = plan.roots || [], counts = plan.counts || {}, phases = roots.filter((node) => node.item_type === "phase");
-      const active = (plan.total || 0) - (counts.cancelled || 0);
+      const active = (plan.total || 0) - (counts.cancelled || 0), done = counts.done || 0;
+      ctx.setSummary(`${plan.total || 0} ${noun(plan.total || 0)} ${verb(plan.total || 0, "is", "are")} planned` +
+        (phases.length ? ` in ${P.count(phases.length, "phase")}.` : ".") + ` ${done} ${verb(done, "is", "are")} done.`);
       const filter = { type: params.type || "", state: params.state || "", query: params.query || "" };
-      const tree = h("div", { class: "stack" });
+      const tree = h("div", { class: "stack" }), head = h("div", { class: "list-head" });
       const drawTree = () => {
         const nodes = roots.map((node) => planNode(node, cards, filter, 0)).filter(Boolean);
         return nodes.length ? h("ul", { class: "tree" }, nodes) : P.empty(plan.total ? `No ${noun(2)} match these filters.` : `No ${noun(2)} are planned yet.`);
       };
       tree.addEventListener("plan-redraw", () => redraw(tree, drawTree));
-      const update = (name, value) => { filter[name] = value; P.setParams({ ...filter }); redraw(tree, drawTree); };
+      // The search box keeps its focus while the reader types, so a typed query redraws the tree alone.
+      const update = (name, value) => { filter[name] = value; P.setParams({ ...filter }); if (name !== "query") redraw(head, drawHead); redraw(tree, drawTree); };
       const typesPresent = TYPES.filter((type) => JSON.stringify(roots).includes('"item_type":"' + type + '"'));
-      put(container,
-        h("div", { class: "view-head" }, h("div", { class: "stack" },
-          h("p", { class: "sentence" }, `${plan.total || 0} ${noun(plan.total || 0)} ${verb(plan.total || 0, "is", "are")} planned` +
-            (phases.length ? ` in ${P.count(phases.length, "phase")}.` : ".") + ` ${counts.done || 0} ${verb(counts.done || 0, "is", "are")} done.`),
-          P.progress(active ? (counts.done || 0) / active : null, "Share of work items done")),
-        P.canEdit() ? button("Add item", "plan-add-root", (t) => P.openForm("plan", { parent_id: null, item_type: phases.length ? "epic" : "phase" }, t), "primary") : null),
+      const drawHead = () => filterBox("plan-filters", Boolean(filter.type || filter.state || filter.query),
+        selectControl("plan-type", "Item type", [["", "All types"], ...typesPresent.map((type) => [type, typeLabel(type)])], filter.type, (value) => update("type", value)),
+        selectControl("plan-state", "State", [["", "All states"], ...STATES.map((state) => [state, P.words(state)])], filter.state, (value) => update("state", value)),
+        searchControl("plan-query", "Search titles", filter.query, (value) => update("query", value)));
+      container.classList.add("list-view");
+      put(container, head, h("section", { class: "list-pane" }, paneBody("rows",
         phases.length ? h("section", { class: "stack", "aria-label": "Timeline by phase" }, h("h3", null, "Timeline by phase"),
           h("ol", { class: "timeline" }, phases.map((phase, index) => h("li", { dataset: { tone: phase.state } },
             button([h("span", { class: "muted" }, "Phase " + (index + 1)), h("strong", null, phase.title), h("span", { class: "row" }, P.badge(phase.state)),
               P.progress(phase.progress, "Progress of " + phase.title), h("span", { class: "muted" }, progressText(phase))], "plan-phase-" + phase.id,
             (t) => P.openWork(phase.id, t), "item"))))) : null,
-        h("div", { class: "toolbar" },
-          selectControl("plan-type", "Item type", [["", "All types"], ...typesPresent.map((type) => [type, typeLabel(type)])], filter.type, (value) => update("type", value)),
-          selectControl("plan-state", "State", [["", "All states"], ...STATES.map((state) => [state, P.words(state)])], filter.state, (value) => update("state", value)),
-          searchControl("plan-query", "Search titles", filter.query, (value) => update("query", value))),
-        tree, h("p", { class: "muted" }, plan.note || ""), plan.truncated ? h("p", { class: "notice" }, "The plan is limited, so some work items are not shown.") : null);
+        tree, plan.note ? h("p", { class: "muted" }, plan.note) : null, plan.truncated ? h("p", { class: "notice" }, "The plan is limited, so some work items are not shown.") : null),
+      paneFoot(h("span", { class: "row" }, P.progress(active ? done / active : null, "Share of work items done"), h("span", null, `${done} of ${P.count(active, noun(1), noun(2))} done.`)),
+        P.canEdit() ? button("Add item", "plan-add-root", (t) => P.openForm("plan", { parent_id: null, item_type: phases.length ? "epic" : "phase" }, t), "primary small") : null)));
+      redraw(head, drawHead);
       redraw(tree, drawTree);
   } });
 
@@ -379,33 +387,34 @@
   }
   // A column shows ten cards at a time; the number shown stays while the panel is open.
   const columnShown = (state) => remembered.open.get("column-" + state) || BOARD_PAGE;
+  // The board keeps its columns beside an open pane: it is the scrolling region itself and scrolls sideways and down.
   function boardNode(cards, st) {
     const columns = STATES.map((state) => [state, cards.filter((c) => c.state === state)]);
     const shown = columns.filter(([state, items]) => items.length || (st.empty && !st.state) || st.state === state);
     const hidden = columns.length - shown.length;
-    return [h("div", { class: "board" }, shown.map(([state, items]) => h("section", { class: "board-column", dataset: { tone: state }, "aria-label": P.words(state) },
+    return [h("div", { class: "pane-rows pane-body board", dataset: { scroll: "board" } }, shown.map(([state, items]) => h("section", { class: "board-column", dataset: { tone: state }, "aria-label": P.words(state) },
       h("h3", null, P.badge(state), h("span", { class: "muted" }, String(items.length))),
       items.length ? h("ul", { class: "list" }, items.slice(0, columnShown(state)).map((c) => h("li", null, workButton(c, "work-card-")))) : P.empty(`No ${noun(1)} is in this state.`),
       items.length > columnShown(state) ? button(`Show ${Math.min(BOARD_PAGE, items.length - columnShown(state))} more of ${items.length - columnShown(state)}`, "work-more-" + state,
         () => { remembered.open.set("column-" + state, columnShown(state) + BOARD_PAGE); P.refresh(); }, "small quiet") : null))),
-    hidden && !st.state ? h("p", { class: "muted" }, `${hidden} empty ${verb(hidden, "column is", "columns are")} hidden.`) : null];
+    hidden && !st.state ? `${hidden} empty ${verb(hidden, "column is", "columns are")} hidden.` : ""];
   }
-  function tableNode(cards, st, sort) {
+  // The list mode is one row per work item, sorted by the chosen column, and a row opens the item beside the list.
+  const rowSub = (c) => { const plan = c.plan || {}, issue = issueInfo(c.issues);
+    return [[P.words(c.state), lower(typeLabel(plan.item_type)), lower(P.words(c.subject)), plan.priority && plan.priority !== "normal" ? lower(P.words(plan.priority)) + " priority" : null].filter(Boolean).join(", "),
+      issue ? issue.text : null, "Created " + P.date(c.date)].filter(Boolean).join(". ") + "."; };
+  function listNode(cards, st) {
     const getter = SORTS[st.sort] || SORTS.state;
     const ordered = [...cards].sort((a, b) => { const x = getter(a), y = getter(b); return (x < y ? -1 : x > y ? 1 : 0) * (st.dir === "desc" ? -1 : 1); });
-    return h("div", { class: "table-wrap" }, h("table", { class: "data" },
-      h("thead", null, h("tr", null, COLUMNS.map(([name, label]) => h("th", { scope: "col", "aria-sort": st.sort === name ? (st.dir === "desc" ? "descending" : "ascending") : "none" },
-        h("button", { type: "button", id: "work-sort-" + name, on: { click: () => sort(name) } }, label + (st.sort === name ? (st.dir === "desc" ? " ↓" : " ↑") : "")))))),
-      h("tbody", null, ordered.map((c) => h("tr", null,
-        h("td", null, button(c.title, "work-row-" + c.id, (t) => P.openWork(c.id, t), "quiet")),
-        h("td", null, P.badge(c.state)), h("td", null, typeLabel((c.plan || {}).item_type)), h("td", null, P.words(c.subject)),
-        h("td", null, P.words((c.plan || {}).priority || "normal")), h("td", null, (issueInfo(c.issues) || { text: "None" }).text), h("td", null, P.date(c.date)))))));
+    return [ordered.length ? h("ul", { class: "pane-rows", dataset: { scroll: "rows" } }, ordered.map((c) => h("li", null, P.paneRow("work-row-" + c.id, "work", c.title, rowSub(c), (t) => P.openWork(c.id, t)))))
+      : h("div", { class: "pane-rows" }, P.empty(`No ${noun(1)} matches these filters.`)), ""];
   }
-  P.registerView("work", { title: "Work", async render(container, params) {
+  P.registerView("work", { title: "Work", async render(container, params, ctx) {
       const [base, sprints] = await Promise.all([P.get("board", { limit: "100" }), P.get("sprints", { limit: "100" }).then((value) => value.sprints || [], () => [])]);
       const st = { tab: params.tab === "list" ? "list" : "board", subject: params.subject || "", state: params.state || "", sprint: params.sprint || "",
         type: params.type || "", query: params.query || "", empty: params.empty === "1", sort: params.sort || "state", dir: params.dir === "desc" ? "desc" : "asc" };
-      const results = h("div", { class: "stack" });
+      ctx.setSummary(nowSentence({ total: base.total, counts: base.counts }));
+      const results = h("section", { class: "list-pane" }), controls = h("div", { class: "list-head" });
       let token = 0;
       const save = () => P.setParams({ tab: st.tab === "list" ? "list" : "", subject: st.subject, state: st.state, sprint: st.sprint, type: st.type, query: st.query,
         empty: st.empty ? "1" : "", sort: st.sort === "state" ? "" : st.sort, dir: st.dir === "desc" ? "desc" : "" });
@@ -417,29 +426,30 @@
           cards = await P.get("board", { limit: "100", subject: st.subject, sprint_id: st.sprint, query: st.query }).then((value) => value.cards || [], () => cards);
         }
         if (mine !== token) return;
-        const shown = filterCards(cards, st);
-        redraw(results, () => [h("p", { class: "muted", role: "status" }, `The view shows ${shown.length} of ${base.total || 0} ${noun(base.total || 0)}.` +
-          (base.more ? ` Only the first ${(base.cards || []).length} are loaded without filters.` : "")),
-        st.tab === "board" ? boardNode(shown, st) : tableNode(shown, st, (name) => { st.dir = st.sort === name && st.dir === "asc" ? "desc" : "asc"; st.sort = name; save(); draw(); })]);
+        const shown = filterCards(cards, st), [body, note] = st.tab === "board" ? boardNode(shown, st) : listNode(shown, st);
+        // The count of the shown items and the Add item action stay in the foot, in reach under the scrolling board or rows.
+        redraw(results, () => [body, paneFoot(h("p", { role: "status" }, `The view shows ${shown.length} of ${base.total || 0} ${noun(base.total || 0)}.` +
+          (base.more ? ` Only the first ${(base.cards || []).length} are loaded without filters.` : "") + (note ? " " + note : "")),
+        P.canEdit() ? button("Add item", "work-add", (t) => P.openForm("plan", { parent_id: null, item_type: "task" }, t), "primary small") : null)]);
       };
       const update = (name, value) => { st[name] = value; save(); drawControls(); draw(); };
       const subjects = [...new Set((base.cards || []).map((c) => c.subject).concat(st.subject ? [st.subject] : []))].sort();
       const typesPresent = TYPES.filter((type) => (base.cards || []).some((c) => ((c.plan || {}).item_type || "task") === type) || st.type === type);
-      const controls = h("div", { class: "stack" }), filtered = () => Boolean(st.subject || st.state || st.sprint || st.type || st.query);
       const drawControls = () => redraw(controls, () => [
         h("div", { class: "tabs", role: "group", "aria-label": "Work display" }, [["board", "Board"], ["list", "List"]].map(([value, label]) =>
           h("button", { type: "button", id: "work-tab-" + value, "aria-pressed": String(st.tab === value), on: { click: () => update("tab", value) } }, label))),
-        h("details", { class: "kn-filter-box", id: "work-filters", open: remembered.open.has("work-filters") ? remembered.open.get("work-filters") : filtered() || window.innerWidth >= 640 },
-          h("summary", { on: { click: (event) => remembered.open.set("work-filters", !event.currentTarget.parentNode.open) } }, filtered() ? "Filters are applied" : "Filters"), h("div", { class: "toolbar" },
+        filterBox("work-filters", Boolean(st.subject || st.state || st.sprint || st.type || st.query),
           selectControl("work-subject", "Subject", [["", "All subjects"], ...subjects.map((subject) => [subject, P.words(subject)])], st.subject, (value) => update("subject", value)),
           selectControl("work-state", "State", [["", "All states"], ...STATES.map((state) => [state, P.words(state)])], st.state, (value) => update("state", value)),
           selectControl("work-sprint", "Sprint", [["", "All sprints"], ["unassigned", "No sprint"], ...sprints.map((sprint) => [sprint.id, sprint.title])], st.sprint, (value) => update("sprint", value)),
           selectControl("work-type", "Item type", [["", "All types"], ...typesPresent.map((type) => [type, typeLabel(type)])], st.type, (value) => update("type", value)),
           searchControl("work-query", "Search", st.query, (value) => { st.query = value; save(); draw(); }),
-          st.tab === "board" ? checkControl("work-empty", "Show empty columns", st.empty, (value) => update("empty", value)) : null))]);
+          st.tab === "board" ? checkControl("work-empty", "Show empty columns", st.empty, (value) => update("empty", value))
+            : [selectControl("work-sort", "Sort by", COLUMNS, st.sort, (value) => update("sort", value)),
+              checkControl("work-desc", "Descending order", st.dir === "desc", (value) => update("dir", value ? "desc" : "asc"))])]);
       drawControls();
-      put(container, h("div", { class: "view-head" }, h("p", { class: "sentence" }, nowSentence({ total: base.total, counts: base.counts })),
-        P.canEdit() ? button("Add item", "work-add", (t) => P.openForm("plan", { parent_id: null, item_type: "task" }, t), "primary") : null), controls, results);
+      container.classList.add("list-view");
+      put(container, controls, results);
       await draw();
   } });
 

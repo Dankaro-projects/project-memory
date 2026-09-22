@@ -207,7 +207,7 @@ async function views(page, kind, expected) {
   await tab("decisions");
   assert.equal(await page.locator("#main a[href='#decisions']").count(), 1);
   await tab("scope_blocks");
-  assert.match(await text(page, "#main .now-panel"), /was blocked\. The allowed paths were/);
+  assert.match(await text(page, "#main .pane-body"), /was blocked\. The allowed paths were/);
   // A kind that another view decides opens that view, and a lesson opens its decision in the pane.
   await tab("machine_rules");
   await page.locator("#main .pane-row").first().click();
@@ -225,7 +225,7 @@ async function views(page, kind, expected) {
   step(`${kind}: the kickoff checklist, the decisions and the scope blocks keep their place in Now, and a lesson asks for its reason in the pane`);
 
   await go(page, "#plan");
-  assert.match(await text(page, "#main .sentence"), /16 work items are planned in 7 phases\. 0 are done\./);
+  assert.match(await text(page, "#view-summary"), /16 work items are planned in 7 phases\. 0 are done\./);
   assert.equal(await page.locator("#main .timeline > li").count(), 7);
   const timeline = await page.locator("#main .timeline").evaluate((node) => [node.scrollWidth, node.clientWidth]);
   assert.ok(timeline[0] <= timeline[1], `${kind}: the timeline clips its last phase: ${timeline}`);
@@ -237,14 +237,21 @@ async function views(page, kind, expected) {
   assert.ok(board[0] <= board[1], `${kind}: the board clips a column at 1440 pixels: ${board}`);
   assert.match(await text(page, "#main"), /Waits for \d+ prerequisite/);
   await page.locator("#work-tab-list").click();
-  await page.waitForFunction(() => document.querySelectorAll("#main table.data tbody tr").length === 16);
+  await page.waitForFunction(() => document.querySelectorAll("#main .pane-row").length === 16);
   // The switch is a pair of pressed buttons, because a tab role without a tab panel misleads assistive technology.
   assert.equal(await page.locator("#work-tab-list").getAttribute("aria-pressed"), "true");
   assert.equal(await page.locator("#main [role=tab]").count(), 0);
+  // The rows are sorted by the chosen column, and the sort and its order are kept in the route.
+  await page.locator("#work-sort").selectOption("title");
+  await page.locator("#work-desc").check();
+  await page.waitForFunction(() => /sort=title/.test(location.hash) && /dir=desc/.test(location.hash));
+  const titles = await page.locator("#main .pane-row strong").allTextContents();
+  assert.deepEqual(titles, [...titles].sort((a, b) => (a.toLowerCase() < b.toLowerCase() ? 1 : a.toLowerCase() > b.toLowerCase() ? -1 : 0)), "the rows are not sorted by title in descending order");
   await page.locator("#work-state").selectOption("blocked");
-  await page.waitForFunction(() => document.querySelectorAll("#main table.data tbody tr").length === 2);
+  await page.waitForFunction(() => document.querySelectorAll("#main .pane-row").length === 2);
   assert.match(page.url(), /state=blocked/);
-  step(`${kind}: Work lists 16 items and the state filter keeps 2 blocked items`);
+  assert.match(await text(page, "#main .pane-row"), /Blocked, task, \w+\. Waits for 1 prerequisite\. Created /);
+  step(`${kind}: Work lists 16 items as rows sorted by title, and the state filter keeps 2 blocked items`);
 
   // Section 17.12: a board column shows ten cards at a time. For this step the board response carries 23 backlog cards.
   await page.route(/\/api\/board/, async (route) => {
@@ -530,6 +537,44 @@ async function views(page, kind, expected) {
   await page.setViewportSize({ width: 1440, height: 900 });
   step(`${kind}: below 1180 pixels one pane shows at a time, Escape returns to the opening row, and a narrow screen folds the Work filters`);
 
+  // Work and Plan in the frame: the board keeps its five columns beside the open pane and scrolls sideways inside its
+  // region, the filters stay at the top, and the pane keeps its actions in the foot, its quick edits and the list of the lineage.
+  await go(page, "#work");
+  await cards.first().click();
+  await loaded();
+  const withPane = await page.evaluate(() => { const main = document.getElementById("main"), board = main.querySelector('[data-scroll="board"]'), filters = document.getElementById("work-filters").getBoundingClientRect();
+    return { main: main.scrollHeight <= main.clientHeight, sideways: board.scrollWidth > board.clientWidth, columns: board.querySelectorAll(".board-column").length,
+      filters: filters.top >= 0 && filters.bottom <= window.innerHeight, selected: board.querySelector("[data-selected]").getBoundingClientRect().left >= board.getBoundingClientRect().left }; });
+  assert.deepEqual(withPane, { main: true, sideways: true, columns: 5, filters: true, selected: true }, `${kind}: the board beside the pane: ${JSON.stringify(withPane)}`);
+  const actions = await page.locator("#detail .detail-foot").innerText();
+  for (const part of ["Edit plan", "Allow paths", "Delegate", "Request check", "Comment"]) assert.ok(actions.includes(part), `${kind}: the foot of the pane lacks ${part}`);
+  assert.equal(await page.locator("#detail-body #work-quick-state, #detail-body #work-quick-priority").count(), 2);
+  await page.locator('#detail-body [data-key$="-toggle"]').click();
+  assert.equal(await page.locator("#detail-body .lineage-list").count(), 1);
+  assert.match(await text(page, '#detail-body [data-key$="-toggle"]'), /Show as graph/);
+  step(`${kind}: the board keeps its five columns beside the open pane and scrolls sideways, the filters stay at the top, and the pane keeps its actions, its quick edits and the list of the lineage`);
+
+  // At the three measured sizes Work as a board, Work as a list and Plan scroll only inside their region, with and
+  // without the pane, the filters stay in reach without scrolling, and the primary action of the item is visible.
+  const inReach = (page, selector) => page.evaluate((value) => { const box = document.querySelector(value).getBoundingClientRect(); return box.top >= 0 && box.bottom <= window.innerHeight; }, selector);
+  for (const [width, height] of FRAMES) {
+    await page.setViewportSize({ width, height });
+    for (const [hash, row, filters] of [["#work", "#main .board button.item", "#work-filters"], ["#work/tab=list", "#main .pane-row", "#work-filters"], ["#plan", '#main [data-key^="plan-open-"]', "#plan-filters"]]) {
+      await go(page, hash);
+      await page.waitForSelector(row);
+      await fixedFrame(page, `${kind} ${hash} at ${width} by ${height}`);
+      const region = await page.evaluate(() => { const main = document.getElementById("main"), rows = main.querySelector("[data-scroll]"); return [main.scrollHeight <= main.clientHeight, rows.scrollHeight > rows.clientHeight]; });
+      assert.deepEqual(region, [true, true], `${kind} ${hash} at ${width} by ${height}: the view scrolls outside its rows: ${region}`);
+      assert.ok(await inReach(page, filters), `${kind} ${hash} at ${width} by ${height}: the filters are out of reach`);
+      await page.locator(row).first().click();
+      await loaded();
+      await fixedFrame(page, `${kind} ${hash} with the pane at ${width} by ${height}`);
+      assert.ok(await inReach(page, "#detail .detail-foot button"), `${kind} ${hash} at ${width} by ${height}: the primary action of the item is out of reach`);
+    }
+  }
+  await page.setViewportSize({ width: 1440, height: 900 });
+  step(`${kind}: Work as a board and as a list and Plan scroll only inside their rows at ${FRAMES.map((size) => size.join(" by ")).join(", ")} pixels, with and without the pane, and the primary action stays in reach`);
+
   for (const width of [1440, 768, 390, 320]) {
     for (const hash of ["#now", "#plan", "#work", "#architecture", "#decisions", "#learning", "#machine", "#hive", "#usage"]) {
       await go(page, hash);
@@ -617,7 +662,7 @@ async function editing(page, ids, posts) {
   await field(page, "reason").fill("The user plans the export.");
   await page.locator("#form-save").click();
   await savedToast(page, /is created/);
-  await page.waitForFunction(() => /17 work items are planned/.test(document.querySelector("#main .view:not(.pending) .sentence").textContent));
+  await page.waitForFunction(() => /17 work items are planned/.test(document.getElementById("view-summary").textContent));
   step("a new work item is created from the Plan view and the plan counts it");
 
   // Accepting a proposed lesson with its triggers.
@@ -681,7 +726,7 @@ async function editing(page, ids, posts) {
   // Allowing the blocked path of the scope block.
   await go(page, "#now");
   await page.click("[data-key=now-kind-scope_blocks]");
-  await page.locator("#main .now-panel").getByRole("button", { name: "Allow paths" }).first().click();
+  await page.locator("#main .pane-body").getByRole("button", { name: "Allow paths" }).first().click();
   await page.waitForSelector("#form-dialog[open]");
   assert.equal(await field(page, "paths").inputValue(), "docs/brief.md");
   await field(page, "reason").fill("The work item needs the brief.");
@@ -742,13 +787,14 @@ async function editing(page, ids, posts) {
   assert.match(page.url(), /#work/);
   step("a new revision keeps the open view and the focused work card");
 
-  // A live update keeps the selection, the scroll position of the view and of the pane, and the text typed into a field.
+  // A live update keeps the selection, the scroll position of the board region and of the pane, and the text typed into a field.
+  // The board scrolls inside its own region of the frame, so the view itself does not scroll.
   await page.setViewportSize({ width: 1600, height: 640 });
   await page.locator(card).click();
   await page.waitForFunction(() => document.getElementById("detail-title").textContent !== "Loading" && !document.querySelector(".detail-content.pending"));
-  const before = await page.evaluate(() => { const main = document.getElementById("main"), body = document.querySelector("#detail .detail-scroll");
-    main.scrollTop = 90; body.scrollTop = 120; return [main.scrollTop, body.scrollTop]; });
-  assert.ok(before[0] > 0 && before[1] > 0, `the view or the pane does not scroll at 640 pixels: ${before}`);
+  const before = await page.evaluate(() => { const region = document.querySelector('#main [data-scroll="board"]'), body = document.querySelector("#detail .detail-scroll");
+    region.scrollTop = 90; body.scrollTop = 120; return [region.scrollTop, body.scrollTop]; });
+  assert.ok(before[0] > 0 && before[1] > 0, `the board region or the pane does not scroll at 640 pixels: ${before}`);
   const update = async () => {
     const from = await page.evaluate(() => Panel.health().revision);
     await page.evaluate(async (id) => {
@@ -760,7 +806,7 @@ async function editing(page, ids, posts) {
     await settle(page);
   };
   await update();
-  assert.deepEqual(await page.evaluate(() => [document.getElementById("main").scrollTop, document.querySelector("#detail .detail-scroll").scrollTop]), before);
+  assert.deepEqual(await page.evaluate(() => [document.querySelector('#main [data-scroll="board"]').scrollTop, document.querySelector("#detail .detail-scroll").scrollTop]), before);
   assert.equal(await page.locator(card).getAttribute("aria-current"), "true");
   await closePane(page);
   await go(page, "#records");
