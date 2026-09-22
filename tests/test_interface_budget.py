@@ -57,52 +57,35 @@ USABILITY_ALLOWANCE = {'views': 7_400, 'forms.js': 1_300, 'core.js': 1_300}
 USABILITY_LIMIT = 10_000
 USABILITY_STYLE_ALLOWANCE = 400
 # Temporary allowance for the fixed frame redesign. The user decided on 21 September 2026: at most 20,000 code characters of
-# JavaScript and 8,000 of stylesheet while the old cards and drawers exist beside the new frame and panes. The allowance
-# grows with each work item of the redesign by its measured size and stays under these caps. When the last item closes, the
-# user sets new base budgets from the measured size, and this allowance and the earlier ones, including the usability cap
-# that the user did not confirm, are folded into them. Measured against 1e1c041 after the shell item: core.js grew by 2,972
-# with the rail groups, the rail counts, the icons, the view summary and Project activity, views_work.js by 148 with the
-# summary of Now, and panel.css by 2,750 to 30,084. viewer.html grew by 2,221 to 8,677 with the 17 inline icon symbols, the
-# foot of the rail and the header row. The user confirmed the page shell allowance of 2,300 on the same day.
-# Measured against 07e03bf after the detail pane replaced the drawer: core.js lost 4,313 code characters and gained 6,365,
-# a growth of 2,052 with the row selection, the J and K keys, the pinned foot, and the scroll positions and typed text that
-# a live update keeps. The view files grew by 151 and panel.css lost 1,647 and gained 2,553, a growth of 906 to 30,990.
-# Measured against e6f5550 after Now became tabs by kind with a list pane and a decision pane: views_work.js lost 5,016 code
-# characters with the four cards, the attention rows and the list pane of Now, and gained 9,824, a growth of 4,808. core.js
-# grew by 1,046 with Panel.listPane and Panel.paneRow, and panel.css lost 581 and gained 2,623, a growth of 2,042 to 33,032.
-# The stylesheet allowance now uses 5,750 of its cap of 8,000 while four items that move views are still open.
-# Measured against 92bced9 after Work and Plan moved into the frame with the work item in the pane: views_work.js lost
-# 3,802 code characters with the table of Work, the heads of both views and their separate filter boxes, and gained 4,802
-# with the list head, the rows of Work, its sort controls, the shared filter box and the pane foot of each view, a growth
-# of 1,000. core.js gained 177 with the header sentences that name the list head and the pane body. panel.css lost 142
-# and gained 682, a growth of 540 to 33,572, with the list head, the board as its own scrolling region and the wider
-# summary of the header. The stylesheet allowance now uses 6,300 of its cap of 8,000 while three items that move views
-# are still open.
-# Measured against 76487d9 after Sessions, Learning and Decisions moved into the frame: views_knowledge.js lost 11,261 code
-# characters with the sections and cards of Learning and Sessions, and gained 12,738 with their tabs and rows, the guard
-# pane and the instructions pane, a growth of 1,477. views_work.js lost 2,580 with the list of Decisions and the tabs of
-# Now, and gained 3,350 with the filter head and the rows of Decisions and the shared Panel.viewTabs, a growth of 770.
-# panel.css lost 523 and gained 486, a reduction of 37 to 33,535, so the stylesheet allowance stays at 6,300 while two
-# items that move views are still open. The view allowance grows by 2,250 for the measured 2,247.
-# Measured against a15f59a after Records and Requirements moved into the frame: views_knowledge.js lost 4,716 code
-# characters with the table of Records, its filter form and the sections of Requirements, and gained 6,893 with the
-# filter head and its fold, the grouped rows, the pager in the foot and the scrolling region of Requirements, a growth of
-# 2,177. core.js gained 610 with the Full width toggle of the pane bar. panel.css lost 67 and gained 791, a growth of 724
-# to 34,259, with the full width rules, the fold and the group heading. The view allowance grows by 2,200, the core.js
-# allowance by 650 and the stylesheet allowance by 750 to 7,050 while one item that moves views is still open.
-# Measured against 557eb27 after Architecture, Dependencies, Agents, Machine, Hive and Usage moved into the frame:
-# views_knowledge.js lost 8,558 code characters with the runs table of Agents, the sections of Machine, the swarm cards
-# and the swarm view of Hive and the page of Usage, and gained 9,810 with the tabs and rows of Agents, the tabs and
-# regions of Machine, the swarm rows, the swarm pane with its filters and its foot, and the region of Usage, a growth of
-# 1,252. views_work.js gained 22 with the shared filter box that graphs.js reuses. graphs.js lost 2,755 and gained 2,926
-# with the head, the filter box, the side column that scrolls and the summary of both graph views, a growth of 171
-# inside its own budget of 41,000. core.js is unchanged. panel.css lost 464 and gained 1,121, a growth of 657 to 34,916,
-# with the graph layout that takes the height of the frame, the scrolling side column and the one column layout below
-# 1100 pixels. The view allowance grows by 1,300 for the measured 1,274 and the stylesheet allowance by 700 to 7,750.
-# This closes the items that move views; the caps stay in place until the user sets the new base budgets.
-REDESIGN_ALLOWANCE = {'views': 12_000, 'core.js': 7_050}
+# JavaScript and 8,000 of stylesheet while the old cards and drawers existed beside the new frame and panes. The allowance
+# grew with each work item of the redesign by its measured size, rounded up to the next 50, and stays under these caps. The
+# redesign closed on 22 September 2026, so the user now sets new base budgets from the size report below, and this
+# allowance and the earlier ones, including the usability cap that the user did not confirm, are folded into them then.
+# The user confirmed the page shell allowance of 2,300 on 21 September 2026 for the 17 inline icon symbols, the foot of the
+# rail and the header row.
+# Size report: removed and added code characters per file and commit, measured on the diff of each commit without any
+# whitespace. graphs.js counts inside its own budget of 41,000 and forms.js did not change.
+#   07e03bf  shell            core.js -2,435 +5,407, views_work.js -84 +232, panel.css -5,007 +7,757, viewer.html -598 +2,819
+#   e6f5550  detail pane      core.js -4,313 +6,365, views_work.js -2,333 +2,459, views_knowledge.js -1,231 +1,256,
+#                             graphs.js -70 +68, panel.css -1,647 +2,553, viewer.html -401 +394
+#   f10e5ed  Now              core.js -108 +1,154, views_work.js -5,016 +9,824, panel.css -581 +2,623
+#   92bced9  Now in snapshot  views_work.js -109 +218
+#   76487d9  Work and Plan    core.js -0 +177, views_work.js -3,802 +4,802, panel.css -142 +682
+#   a15f59a  Decide views     views_work.js -2,580 +3,350, views_knowledge.js -11,261 +12,738, panel.css -523 +486
+#   557eb27  Look up views    core.js -0 +610, views_knowledge.js -4,716 +6,893, panel.css -67 +791
+#   c4509b1  More views       graphs.js -2,755 +2,926, views_work.js -0 +22, views_knowledge.js -8,558 +9,810, panel.css -464 +1,121
+#   closing  repairs          core.js -66 +258, views_work.js -230 +480, views_knowledge.js -1,270 +1,713, panel.css -153 +398
+# Against the branch base 1e1c041: core.js -6,538 +13,587 to 43,837, views_work.js -12,075 +19,308 to 61,965,
+# views_knowledge.js -25,637 +31,011 to 67,761, graphs.js -2,825 +2,994 to 40,969, forms.js unchanged at 48,750,
+# panel.css -7,559 +15,386 to 35,161 and viewer.html -999 +3,213 to 8,670. The joined scripts grew by 19,825 to 263,282.
+# Against main at ba1fc4d, before the usability work: core.js -6,485 +14,772, views_work.js -14,786 +27,549,
+# views_knowledge.js -25,090 +32,410, graphs.js -2,825 +2,994, forms.js -791 +2,060, panel.css -7,492 +15,691 and
+# viewer.html -981 +3,213. The joined scripts grew by 29,808 to 263,282 and the stylesheet by 8,199.
+# The closing item adds 693 to the views and 192 to core.js, so the allowance holds 12,700 for the views and 7,250 for
+# core.js, 19,950 of the cap of 20,000, and the stylesheet allowance grows by 245 to its cap of 8,000.
+REDESIGN_ALLOWANCE = {'views': 12_700, 'core.js': 7_250}
 REDESIGN_LIMIT = 20_000
-REDESIGN_STYLE_ALLOWANCE = 7_750
+REDESIGN_STYLE_ALLOWANCE = 8_000
 REDESIGN_STYLE_LIMIT = 8_000
 REDESIGN_SHELL_ALLOWANCE = 2_300
 ALLOWANCES = (FOCUS_ALLOWANCE, HIVE_ALLOWANCE, USAGE_ALLOWANCE, SESSIONS_ALLOWANCE, PANEL_ACTIONS_ALLOWANCE, USABILITY_ALLOWANCE,
@@ -236,10 +219,18 @@ class InterfaceBudgetTests(unittest.TestCase):
         for part in ('const RECORD_ICONS = ', 'id: "records-more"', 'const recordRow = (record)', 'dataset: { scroll: "requirements" }', 'id: "review-requirements"'):
             self.assertIn(part, knowledge)
         # Agents and Machine are tabs of rows or regions, Hive is rows with the swarm in its pane, and Usage is one region.
-        for part in ('const AGENT_TABS = ', 'const MACHINE_TABS = ', 'P.registerPane("swarm"', 'P.openPane("swarm", { id: swarm.id }, trigger)',
-                     'P.formButton("Ask a question", "hive_post"', 'const region = (...children)'):
+        # The swarm pane names the route keys that close with it, so the address of Hive carries the swarm and its filters.
+        for part in ('const AGENT_TABS = ', 'const MACHINE_TABS = ', 'P.registerPane("swarm"', 'P.openPane("swarm", { id, route: ["swarm", "move", "agent"] }, trigger)',
+                     'const syncHive = ', 'P.formButton("Ask a question", "hive_post"', 'const region = (...children)'):
             self.assertIn(part, knowledge)
         self.assertIn('P.filterBox = filterBox;', work)
+        # The closing repairs: Retire in the decision pane of a lesson, Edit plan once in the foot of a work item, the wide
+        # Machine cards and the reduced motion rule.
+        self.assertIn('button("Retire", "decide-retired"', work)
+        self.assertIn('pinned && next.textContent === "Edit plan" ? null : button("Edit plan"', work)
+        self.assertIn('for (const key of [state.pane, ...state.paneStack].flatMap((p) => p.params.route || []))', core)
+        for part in ('[data-view="machine"] .grid {', '@media (prefers-reduced-motion: reduce)'):
+            self.assertIn(part, (UI / 'panel.css').read_text(encoding='utf-8'))
         # The graphs fill the frame beside a scrolling side column through the stylesheet, so graphs.js keeps its graph code.
         graphs = (UI / 'graphs.js').read_text(encoding='utf-8')
         for part in ('class: "graph-main"', 'Panel.filterBox("arch-filters"', 'container.classList.add("list-view")'):

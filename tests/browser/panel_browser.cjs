@@ -134,6 +134,16 @@ async function shell(page, kind) {
   await closePane(page);
   step(`${kind}: Project activity shows the work by state, opens the work in progress and closes with Escape`);
 
+  // Every focus stop shows a visible focus style: the five stops after the search field, which reach the header row and the view.
+  await page.locator("#search-input").focus();
+  const stops = [];
+  for (let index = 0; index < 5; index++) {
+    await page.keyboard.press("Tab");
+    stops.push(await page.evaluate(() => { const node = document.activeElement; return [node.id || node.dataset.key || node.className, getComputedStyle(node).outlineStyle]; }));
+  }
+  assert.ok(stops.every((stop) => stop[1] !== "none") && new Set(stops.map((stop) => stop[0])).size === 5, `${kind}: a focus stop shows no focus style: ${JSON.stringify(stops)}`);
+  step(`${kind}: the five focus stops after the search field show a visible focus style`);
+
   // No view scrolls the page at the three measured sizes. With More views folded the rail fits a window 640 pixels high.
   for (const [width, height] of FRAMES) {
     await page.setViewportSize({ width, height });
@@ -216,13 +226,19 @@ async function views(page, kind, expected) {
   await tab("lessons_to_accept");
   await page.locator("#main .pane-row").first().click();
   await page.waitForFunction(() => document.getElementById("detail-kind").textContent === "Decide a lesson" && !document.querySelector(".detail-content.pending"));
-  assert.deepEqual(await page.locator("#detail .detail-foot .actions button").allTextContents(), ["Accept", "Reject"]);
+  // Every action of a proposed lesson is in the pane: Accept and Reject decide it, and Retire opens the review form with retired selected.
+  assert.deepEqual(await page.locator("#detail .detail-foot button").allTextContents(), ["Accept", "Reject", "Retire"]);
+  await page.locator('[data-key="decide-retired"]').click();
+  await page.waitForSelector("#form-dialog[open]");
+  assert.equal(await text(page, "#form-title"), "Review the lesson");
+  assert.equal(await page.locator('#form-fields input[name="status"][value="retired"]').isChecked(), true);
+  await closeForm(page);
   // A lesson still needs a reason: without one nothing is sent and the reason field takes the focus.
   await page.locator('[data-key="decide-accepted"]').click();
   assert.equal(await page.locator(".toast").last().textContent(), "Write the reason for your decision first.");
   assert.equal(await page.evaluate(() => document.activeElement.id), "decide-reason");
   await closePane(page);
-  step(`${kind}: the kickoff checklist, the decisions and the scope blocks keep their place in Now, and a lesson asks for its reason in the pane`);
+  step(`${kind}: the kickoff checklist, the decisions and the scope blocks keep their place in Now, and a lesson asks for its reason in the pane and offers Retire`);
 
   await go(page, "#plan");
   assert.match(await text(page, "#view-summary"), /16 work items are planned in 7 phases\. 0 are done\./);
@@ -407,7 +423,10 @@ async function views(page, kind, expected) {
 
   // Learning in the frame: one tab per part, the guards as rows, and the guard with the recurrence in the pane with its Reassess action.
   await go(page, "#learning");
-  assert.match(await text(page, "#view-summary"), /2 accepted guards are active, and 1 guard recorded a recurrence\./);
+  // The summary is one sentence, so the title, the summary and the search share one row of the header at 1440 pixels.
+  const oneRow = () => page.evaluate(() => Math.abs(document.getElementById("view-title").getBoundingClientRect().top - document.getElementById("search").getBoundingClientRect().top) < 8);
+  assert.match(await text(page, "#view-summary"), /^2 guards are active, 1 guard recorded a recurrence, 1 rule is ineffective and 1 lesson waits\.$/);
+  assert.ok(await oneRow(), `${kind}: the summary of Learning wraps the header row at 1440 pixels`);
   assert.deepEqual((await page.locator("#main .view-tabs button").allTextContents()).map((label) => label.replace(/\d+$/, "")),
     ["Proposed lessons", "Guards", "Failures without a lesson", "Instructions", "Scope changes", "Signals"]);
   assert.equal(await page.locator('#main [data-key="learning-tab-proposed"][aria-pressed="true"]').count(), 1);
@@ -519,8 +538,12 @@ async function views(page, kind, expected) {
   assert.match(await text(page, '#main [data-key="machine-isolation"]'), /no outcome is combined across projects/);
   assert.equal(await page.locator('#main [data-key^="promotion-"]').count(), 2);
   assert.equal(await page.locator('#main [data-key^="accept-promotion-"]').count(), 1);
+  // The proposal and rule cards use the width of the region: at least 480 pixels each at 1440 pixels.
+  const cardWidths = (selector) => page.locator(selector).evaluateAll((nodes) => nodes.map((node) => Math.round(node.getBoundingClientRect().width)));
+  assert.ok((await cardWidths('#main [data-key^="promotion-"]')).every((width) => width >= 480), `${kind}: a proposal card of Machine is narrower than 480 pixels`);
   await go(page, "#machine/tab=rules");
   assert.equal(await page.locator('#main [data-key^="machine-rule-"]').count(), 1);
+  assert.ok((await cardWidths('#main [data-key^="machine-rule-"]')).every((width) => width >= 480), `${kind}: a rule card of Machine is narrower than 480 pixels`);
   assert.match(await text(page, '#main [data-key^="machine-rule-"]'), /1 project promoted this rule/);
   assert.equal(await page.locator('#main [data-key^="retire-rule-"]').count(), 1);
   assert.match(await text(page, '#main [data-key="machine-isolation"]'), /no outcome is combined across projects/);
@@ -588,8 +611,9 @@ async function views(page, kind, expected) {
   assert.equal(await page.locator('#main .pane-row .badge[data-state="active"], #main .pane-row .badge[data-state="settled"]').count(), 0);
   step(`${kind}: Records shows the two blocked work items by their board state`);
   await go(page, "#requirements");
-  assert.match(await text(page, "#view-summary"), /The project requirements are not established yet\./);
-  step(`${kind}: Records and Requirements render their current state`);
+  assert.match(await text(page, "#view-summary"), /^The requirements are not established yet and wait for your review\.$/);
+  assert.ok(await oneRow(), `${kind}: the summary of Requirements wraps the header row at 1440 pixels`);
+  step(`${kind}: Records and Requirements render their current state with a summary of one line`);
 
   // Opening an item never covers the list on a wide screen: the pane sits beside the view and the opening row stays marked.
   await go(page, "#work");
@@ -646,7 +670,17 @@ async function views(page, kind, expected) {
   await page.locator('#detail-body [data-key$="-toggle"]').click();
   assert.equal(await page.locator("#detail-body .lineage-list").count(), 1);
   assert.match(await text(page, '#detail-body [data-key$="-toggle"]'), /Show as graph/);
-  step(`${kind}: the board keeps its five columns beside the open pane and scrolls sideways, the filters stay at the top, and the pane keeps its actions, its quick edits and the list of the lineage`);
+  // Edit plan shows once in the foot: as the pinned next step of the first phase, and in the small action row of an item whose next step is another form.
+  const editPlan = () => page.evaluate(() => { const foot = document.querySelector("#detail .detail-foot"), pinned = foot.querySelector("button.primary");
+    return { count: [...foot.querySelectorAll("button")].filter((node) => node.textContent === "Edit plan").length, pinned: pinned ? pinned.textContent : null }; });
+  await go(page, "#work/tab=list");
+  await page.locator("#main .pane-row").first().click();
+  await loaded();
+  assert.deepEqual(await editPlan(), { count: 1, pinned: "Edit plan" }, `${kind}: the foot of the first phase`);
+  await page.locator("#main .pane-row").nth(1).click();
+  await loaded();
+  assert.deepEqual(await editPlan(), { count: 1, pinned: "Open the prerequisite" }, `${kind}: the foot of the second phase`);
+  step(`${kind}: the board keeps its five columns beside the open pane and scrolls sideways, the filters stay at the top, the pane keeps its actions, its quick edits and the list of the lineage, and Edit plan shows once`);
 
   // At the three measured sizes Work as a board, Work as a list and Plan scroll only inside their region, with and
   // without the pane, the filters stay in reach without scrolling, and the primary action of the item is visible.
@@ -685,8 +719,15 @@ async function views(page, kind, expected) {
       if (hash !== "#decisions") assert.ok(await inReach(page, "#detail .detail-foot button"), `${kind} ${hash} at ${width} by ${height}: the primary action of the item is out of reach`);
     }
   }
+  // Scope changes and Signals keep their cards in a scrolling region, and neither scrolls the page at 1600 by 640.
+  await page.setViewportSize({ width: 1600, height: 640 });
+  for (const hash of ["#learning/tab=scope", "#learning/tab=signals"]) {
+    await go(page, hash);
+    await page.waitForSelector('#main [data-scroll="rows"]');
+    await fixedFrame(page, `${kind} ${hash} at 1600 by 640`);
+  }
   await page.setViewportSize({ width: 1440, height: 900 });
-  step(`${kind}: Learning and Decisions scroll only inside their rows at ${FRAMES.map((size) => size.join(" by ")).join(", ")} pixels, with and without the pane, and the primary action stays in reach`);
+  step(`${kind}: Learning and Decisions scroll only inside their rows at ${FRAMES.map((size) => size.join(" by ")).join(", ")} pixels, with and without the pane, the primary action stays in reach, and Scope changes and Signals scroll no page at 1600 by 640`);
 
   // Records pages in the foot and scrolls only inside its rows at the three sizes, with and without the pane; a lesson
   // keeps its decision in the foot of the pane. Requirements reads its text, version, evidence and history in one
@@ -863,7 +904,7 @@ async function editing(page, ids, posts) {
   await field(page, "role_reviewer").check();
   await page.locator("#form-save").click();
   await savedToast(page, /lesson is accepted/);
-  await page.waitForFunction(() => /3 accepted guards are active/.test(document.getElementById("view-summary").textContent), null, { timeout: 15000 });
+  await page.waitForFunction(() => /^3 guards are active/.test(document.getElementById("view-summary").textContent), null, { timeout: 15000 });
   await closePane(page);
   const learningTab = async (name) => {
     await page.click(`[data-key="learning-tab-${name}"]`);
@@ -1234,6 +1275,20 @@ async function hived(browser, fixture) {
   await page.waitForFunction(() => /Wait for the review before the release/.test(document.getElementById("detail-title").textContent));
   await settle(page);
   assert.equal(await page.locator("#decide-reason").getAttribute("placeholder"), "Add a reason (optional)");
+  // The decision letters and J and K stay quiet while the reader types: in the reason field of the pane and in the search field.
+  const quiet = () => page.evaluate(() => [/Wait for the review before the release/.test(document.getElementById("detail-title").textContent),
+    document.querySelector("#main [data-selected]").dataset.key, [...document.querySelectorAll(".toast")].some((node) => /dismissed/.test(node.textContent)), document.getElementById("form-dialog").open]);
+  await page.locator("#decide-reason").focus();
+  await page.keyboard.type("dj");
+  await page.waitForTimeout(400);
+  assert.deepEqual([await page.locator("#decide-reason").inputValue(), ...await quiet()], ["dj", true, "now-row-flag_fixture_4", false, false], "a key typed into the reason field decided the flag or moved the selection");
+  await page.locator("#decide-reason").fill("");
+  await page.locator("#search-input").focus();
+  await page.keyboard.type("jk");
+  await page.waitForTimeout(400);
+  assert.deepEqual([await page.locator("#search-input").inputValue(), ...await quiet()], ["jk", true, "now-row-flag_fixture_4", false, false], "a key typed into the search field moved the selection");
+  await page.locator("#search-input").fill("");
+  step("now: the decision letters and J and K stay quiet while the reader types in the reason field and in the search field");
   await page.locator("#detail-title").focus();
   await page.keyboard.press("d");
   await page.waitForFunction(() => !/Wait for the review/.test(document.getElementById("detail-title").textContent) && !["Loading", "This item is decided"].includes(document.getElementById("detail-title").textContent), null, { timeout: 15000 });
@@ -1264,8 +1319,14 @@ async function hived(browser, fixture) {
     const box = await page.locator('#detail .detail-foot [data-key="decide-confirmed"]').boundingBox();
     assert.ok(box && box.y >= 0 && box.y + box.height <= height, `sessions at ${width} by ${height}: Confirm is out of reach`);
   }
+  // The Proposals and Digests tabs scroll no page at 1600 by 640 either.
+  await page.setViewportSize({ width: 1600, height: 640 });
+  for (const hash of ["#sessions/tab=proposals", "#sessions/tab=digests"]) {
+    await go(page, hash);
+    await fixedFrame(page, `${hash} at 1600 by 640`);
+  }
   await page.setViewportSize({ width: 1440, height: 900 });
-  step(`sessions: no page scroll at ${FRAMES.map((size) => size.join(" by ")).join(", ")} pixels with and without the pane, and Confirm stays in reach`);
+  step(`sessions: no page scroll at ${FRAMES.map((size) => size.join(" by ")).join(", ")} pixels with and without the pane, Confirm stays in reach, and the Proposals and Digests tabs scroll no page at 1600 by 640`);
 
   // A flag row of Sessions is decided in the same pane as in Now: J and K move along the rows, one key dismisses the flag
   // without a dialog, the next flag opens by itself, and one dialog without a reason dismisses the rest.
@@ -1362,6 +1423,30 @@ async function hived(browser, fixture) {
   await shownEntries(13);
   await settle(page);
   step("hive: the move filter keeps the one conclusion and the agent filter keeps the 5 entries of claude-1");
+
+  // The address carries the swarm and its filters: the selects follow it, a copied address opens the swarm with the
+  // agent filter and marks its row, and closing the pane removes the three parameters.
+  assert.match(page.url(), new RegExp(`#hive/swarm=${swarm}$`));
+  await page.locator("#hive-agent").selectOption("claude-1");
+  await shownEntries(5);
+  await settle(page);
+  assert.match(page.url(), new RegExp(`#hive/swarm=${swarm}&agent=claude-1$`));
+  const address = page.url().slice(page.url().indexOf("#"));
+  await go(page, "#now");
+  await page.evaluate((value) => { location.hash = value; }, address);
+  await page.waitForSelector('#detail [data-key="hive-timeline"]');
+  await settle(page);
+  await shownEntries(5);
+  assert.deepEqual(await page.evaluate((id) => [document.getElementById("hive-agent").value, document.getElementById("hive-move").value, document.querySelector(`#main [data-key="hive-swarm-${id}"]`).getAttribute("aria-current")], swarm), ["claude-1", "", "true"]);
+  await closePane(page);
+  assert.match(page.url(), /#hive$/);
+  await page.locator(`[data-key="hive-swarm-${swarm}"]`).click();
+  await page.waitForSelector('#detail [data-key="hive-timeline"]');
+  await settle(page);
+  await page.locator("#hive-agent").selectOption("");
+  await shownEntries(13);
+  await settle(page);
+  step("hive: the address carries the swarm and its filters, a copied address opens the swarm with its agent filter, and closing the pane clears them");
 
   // A worker writes an entry while the page is open, and the change polling shows it in the pane, which keeps its
   // reading position because its body is a scrolling region of the frame.

@@ -283,8 +283,9 @@
       else put(body, h("div", { class: "row" }, chip(P.words(item.slot)), chip(P.words(item.confidence) + " confidence"), h("span", { class: "muted" }, item.pointers.file + ", lines " + item.pointers.lines.join(", "))),
         button("Open Sessions", "decide-open", () => P.go("sessions"), "small quiet"));
       if (!ctx.canEdit) return;
+      const form = (name, context) => (t) => P.openForm(name, context, t).then((result) => result && advance());
       if (!lessons && !flags) { put(ctx.foot, h("div", { class: "actions" }, [[yes, yesStatus, "primary"], [no, noStatus, ""]].map(([text, status, tone]) =>
-        button(text, "decide-" + status, (t) => P.openForm("session_proposal", { proposal_id: item.id, status }, t).then((result) => result && advance()), tone)))); return; }
+        button(text, "decide-" + status, form("session_proposal", { proposal_id: item.id, status }), tone)))); return; }
       const reason = P.textarea("reason", "", { id: "decide-reason", rows: "1", "aria-label": "Reason", placeholder: lessons ? "Write the reason for your decision" : "Add a reason (optional)" });
       const decide = (status) => async (trigger) => {
         const text = reason.value.trim();
@@ -302,6 +303,8 @@
       put(ctx.foot, reason, h("div", { class: "actions" }, button(yes, "decide-" + yesStatus, decide(yesStatus), "primary", { "data-hotkey": yes[0].toLowerCase() }),
         button(no, "decide-" + noStatus, decide(noStatus), null, { "data-hotkey": no[0].toLowerCase() })),
       h("p", { class: "hint" }, `The next item opens after each decision. Keys: ${yes[0]} ${yes.toLowerCase()}, ${no[0]} ${no.toLowerCase()}, J and K move.`),
+      // A proposed lesson can also be retired in its form.
+      lessons ? button("Retire", "decide-retired", form("lesson_review", { lesson_id: item.id, status: "retired" }), "small quiet") : null,
       flags && data.flags.length > 1 ? P.formButton("Dismiss the " + data.flags.length + " shown flags", "session_flag", { flag_ids: data.flags.map((flag) => flag.id), status: "dismissed" }, { class: "small quiet" }) : null);
   } });
   // The decision letters never fire while the reader types in a field.
@@ -590,7 +593,7 @@
       // The next step and the actions of the item stay pinned under the scrolling body.
       const next = nextAction(work, card), pinned = next && next.tagName === "BUTTON";
       put(ctx.foot, pinned ? next : null, ctx.canEdit ? h("div", { class: "row" },
-        button("Edit plan", "work-edit", (t) => P.openForm("plan", workContext(card), t), "small"),
+        pinned && next.textContent === "Edit plan" ? null : button("Edit plan", "work-edit", (t) => P.openForm("plan", workContext(card), t), "small"),
         plan ? button("Allow paths", "work-allow", (t) => P.openForm("allow_paths", workContext(card), t), "small") : null,
         plan ? button("Delegate", "work-delegate", (t) => P.openForm("delegate", workContext(card), t), "small", { disabled: Boolean(noDelegation) }) : null,
         button("Request check", "work-check", (t) => P.openForm("review", workContext(card, { role: "outcome" }), t), "small"),

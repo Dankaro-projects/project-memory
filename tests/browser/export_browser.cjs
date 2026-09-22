@@ -47,8 +47,15 @@ async function noOverflow(page, width, label) {
     return [document.documentElement.scrollWidth, document.documentElement.clientWidth, main.scrollWidth, main.clientWidth]; });
   assert.ok(size[0] <= size[1] && size[2] <= size[3], `${label} overflows at ${width} pixels: ${size}`);
 }
+// The window never scrolls: the page is as high as the window, and a scroll request moves nothing.
+async function fixedFrame(page, label) {
+  const size = await page.evaluate(() => { window.scrollTo(0, 5000); const moved = window.scrollY; window.scrollTo(0, 0);
+    return [document.documentElement.scrollHeight, document.documentElement.clientHeight, moved]; });
+  assert.ok(size[0] <= size[1] && size[2] === 0, `${label} scrolls the page: ${size}`);
+}
 const text = (page, selector) => page.locator(selector).first().innerText();
 const pane = (page) => page.locator("#detail-body .detail-content:not(.pending)");
+const loaded = (page) => page.waitForFunction(() => !document.getElementById("detail").hidden && document.getElementById("detail-title").textContent !== "Loading" && !document.querySelector(".detail-content.pending"));
 
 (async () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "export-browser-"));
@@ -162,6 +169,41 @@ const pane = (page) => page.locator("#detail-body .detail-content:not(.pending)"
       assert.equal(await page.evaluate(() => window.injected), undefined);
       await page.evaluate(() => Panel.closePane());
       step(`${kind}: the injected script payload did not run`);
+
+      // Records and Requirements in the frame of a snapshot: no page scroll at 1600 by 640 and 390 by 800, the version of
+      // the requirements inside the frame, the Kind filter applying on change, and a record in the pane at full width.
+      for (const [width, height] of [[1600, 640], [390, 800]]) {
+        await page.setViewportSize({ width, height });
+        await go(page, "#records");
+        await page.waitForSelector("#main .pane-row");
+        await fixedFrame(page, `${kind} #records at ${width} by ${height}`);
+        await go(page, "#requirements");
+        await fixedFrame(page, `${kind} #requirements at ${width} by ${height}`);
+        const version = await page.evaluate(() => { const main = document.getElementById("main").getBoundingClientRect(), term = [...document.querySelectorAll('#main [data-scroll="requirements"] dt')].find((node) => node.textContent === "Version");
+          const box = term.nextElementSibling.getBoundingClientRect();
+          return { text: term.nextElementSibling.textContent, inside: box.top >= main.top && box.bottom <= main.bottom && box.left >= main.left && box.right <= main.right }; });
+        assert.ok(/^\d+$/.test(version.text) && version.inside, `${kind} #requirements at ${width} by ${height}: the version is not inside the frame: ${JSON.stringify(version)}`);
+      }
+      await page.setViewportSize({ width: 1440, height: 900 });
+      await go(page, "#records");
+      const allKinds = await page.locator("#main .pane-row").count();
+      await page.locator("#records-view").selectOption("decisions");
+      await page.waitForFunction(() => /in decisions match/.test(document.getElementById("view-summary").textContent));
+      const decisions = await page.locator("#main .pane-row").count();
+      assert.ok(decisions > 0 && decisions < allKinds && (await page.locator("#main .kn-group").count()) === 0, `${kind}: the Kind filter of the snapshot did not change the rows: ${allKinds} before, ${decisions} after`);
+      assert.match(page.url(), /view=decisions/);
+      await page.locator("#main .pane-row").first().click();
+      await loaded(page);
+      const narrow = await page.evaluate(() => document.getElementById("detail").getBoundingClientRect().width);
+      await page.locator("#detail-wide").click();
+      const wide = await page.evaluate((before) => ({ wider: document.getElementById("detail").getBoundingClientRect().width > before + 300, view: getComputedStyle(document.getElementById("main")).visibility,
+        label: document.getElementById("detail-wide").textContent }), narrow);
+      assert.deepEqual(wide, { wider: true, view: "hidden", label: "Show the list" }, `${kind}: the record pane at full width: ${JSON.stringify(wide)}`);
+      await fixedFrame(page, `${kind} the record pane at full width`);
+      await page.locator("#detail-wide").click();
+      assert.deepEqual(await page.evaluate(() => [getComputedStyle(document.getElementById("main")).visibility, document.getElementById("detail-wide").textContent]), ["visible", "Full width"]);
+      await page.evaluate(() => Panel.closePane());
+      step(`${kind}: Records and Requirements scroll no page at 1600 by 640 and 390 by 800, the version reads inside the frame, the Kind filter applies on change, and a record reads at full width`);
 
       for (const width of [1440, 768, 390, 320]) {
         for (const hash of ["#now", "#work", "#architecture", "#records"]) {

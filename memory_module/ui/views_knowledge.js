@@ -160,9 +160,9 @@
       const ineffective = (data.guards || []).filter((guard) => guard.recurrences > 0).length;
       // A rule can be judged ineffective by the verdicts of its runs alone, with no recurrence recorded.
       const weak = (data.effectiveness || []).filter((rule) => rule.state === "ineffective").length;
-      ctx.setSummary([P.count(data.guards_total || 0, "accepted guard") + " " + isAre(data.guards_total || 0) + " active",
-        ineffective ? ", and " + P.count(ineffective, "guard") + " recorded a recurrence" : "", ". ", weak ? P.count(weak, "rule") + " " + isAre(weak) + " judged ineffective and " + (weak === 1 ? "waits" : "wait") + " for your decision. " : "",
-        P.count(proposed.total, "proposed lesson") + " " + (proposed.total === 1 ? "awaits" : "await") + " your decision."].join(""));
+      const total = data.guards_total || 0;
+      ctx.setSummary([P.count(total, "guard") + " " + isAre(total) + " active", ineffective ? P.count(ineffective, "guard") + " recorded a recurrence" : "",
+        weak ? P.count(weak, "rule") + " " + isAre(weak) + " ineffective" : "", P.count(proposed.total, "lesson") + " wait" + (proposed.total === 1 ? "s" : "")].filter(Boolean).join(", ").replace(/, ([^,]+)$/, " and $1") + ".");
       const guards = [...(data.guards || [])].sort((a, b) => (b.recurrences || 0) - (a.recurrences || 0));
       const value = data.instructions || {}, roles = Object.keys(value.roles || {}), changes = data.scope_changes || [], signals = (data.signals || {}).signals || [];
       const counts = { proposed: proposed.total, guards: data.guards_total || 0, failures: failures.length, instructions: roles.length, scope: changes.length, signals: signals.length };
@@ -509,9 +509,8 @@
       const data = await P.get("requirements", { offset: offset ? String(offset) : "", revision_offset: revisionOffset ? String(revisionOffset) : "" });
       const items = data.items || { items: [], total: 0 }, current = data.current || {}, revisions = data.revisions || [];
       const established = items.status !== "not_established";
-      ctx.setSummary(established
-        ? "Version " + current.version + " of the project requirements is current, with " + P.count(items.total, "requirement") + "."
-        : "The project requirements are not established yet. Review them to record an approved version.");
+      ctx.setSummary(established ? "Version " + current.version + " is current with " + P.count(items.total, "requirement") + "."
+        : "The requirements are not established yet and wait for your review.");
       container.classList.add("list-view");
       put(container, h("section", { class: "list-pane" },
         h("div", { class: "pane-head" }, h("h2", null, "Current requirements", P.badge(established ? items.status : "review", established ? P.words(items.status) : "Not established")),
@@ -686,12 +685,14 @@
         h("span", { class: "muted" }, P.count(agent.entries, "entry", "entries"))),
       h("p", { class: "muted" }, note));
   }
-  // The move and agent filters of the timeline are kept here, so a live update of the pane keeps them.
+  // The filters live here and in the address of Hive as swarm, move and agent, so a live update and a copied address keep them.
   const hiveFilter = { id: null, move: "", agent: "" };
+  const syncHive = () => { if (P.route().name === "hive") P.setParams({ ...P.route().params, swarm: hiveFilter.id, move: hiveFilter.move, agent: hiveFilter.agent }); };
   P.registerPane("swarm", { async render(body, params, ctx) {
       const data = await P.get("hive", { id: params.id });
       const { swarm, agents } = data, open = swarm.state === "open";
-      if (hiveFilter.id !== params.id) Object.assign(hiveFilter, { id: params.id, move: "", agent: "" });
+      if (hiveFilter.id !== params.id) { const { name, params: r } = P.route(), same = name === "hive" && r.swarm === params.id; Object.assign(hiveFilter, { id: params.id, move: same && r.move || "", agent: same && r.agent || "" }); }
+      syncHive();
       ctx.setKind("Swarm");
       ctx.setTitle(swarm.title);
       const byId = new Map(data.entries.map((entry) => [entry.id, entry]));
@@ -701,7 +702,7 @@
         const seen = new Set();
         for (const entry of data.entries) if (entry.move === "hypothesis" && !seen.has(entry.agent)) { seen.add(entry.agent); revealing.add(entry.id); }
       }
-      const filter = (name) => (value) => { hiveFilter[name] = value; P.refresh(); };
+      const filter = (name) => (value) => { hiveFilter[name] = value; syncHive(); P.refresh(); };
       const moves = {};
       for (const entry of data.entries) moves[entry.move] = (moves[entry.move] || 0) + 1;
       const context = { swarm_id: swarm.id };
@@ -725,10 +726,13 @@
         P.formButton("Post an observation", "hive_post", { ...context, move: "observation" }, { class: "small" }),
         P.formButton("Close the swarm", "hive_close", context, { class: "small" })) : null);
   } });
-  // The swarms are rows, and the purge of closed swarms stays in the foot with its dialog or its refusal.
-  P.registerView("hive", { title: "Hive", section: "Oversight", async render(container, params, ctx) {
+  // The swarms are rows, an address that names a swarm opens its pane, and the purge of closed swarms stays in the foot.
+  P.registerView("hive", { title: "Hive", async render(container, params, ctx) {
       const data = await P.get("hive", { limit: "50" });
       const swarms = data.swarms || [], opened = swarms.filter((swarm) => swarm.state === "open").length;
+      const swarmPane = (id, trigger) => P.openPane("swarm", { id, route: ["swarm", "move", "agent"] }, trigger);
+      ctx.onShown(() => { const row = params.swarm && container.querySelector('[data-key="hive-swarm-' + params.swarm + '"]');
+        if (row && (hiveFilter.id !== params.swarm || document.getElementById("detail").hidden)) swarmPane(params.swarm, row); });
       ctx.setSummary(data.total ? `${P.count(data.total, "swarm")} ${isAre(data.total)} recorded, and ${opened} ${isAre(opened)} open.`
         : "No swarm is recorded yet. A swarm opens when agents start to work together on one problem.");
       const closed = ctx.canEdit && swarms.some((swarm) => swarm.state !== "open");
@@ -736,7 +740,7 @@
       put(container, P.listPane({ title: "Swarms", count: data.total || 0, note: "The hive is the shared record of agents that work on one problem together. Each group of agents is a swarm, and a row opens its entries as a conversation.",
         rows: swarms.map((swarm) => P.paneRow("hive-swarm-" + swarm.id, "hive", swarm.title, h("span", { class: "row" }, swarmBadge(swarm), P.chip(P.words(swarm.kind) + " swarm"),
           P.chip(P.count(swarm.entries, "entry", "entries")), swarm.blind ? P.chip("Blind phase first") : null, h("span", { class: "muted" }, swarm.agents.map((agent) => agent.agent_id).join(", "))),
-        (trigger) => P.openPane("swarm", { id: swarm.id }, trigger))),
+        (trigger) => swarmPane(swarm.id, trigger))),
         empty: "No swarm is recorded yet.", foot: [h("span", null, data.total > swarms.length ? `The ${swarms.length} newest swarms are shown.` : ""),
           !closed ? null : (P.health() || {}).assistant_started
             ? h("span", { dataset: { key: "hive-purge-refused" } }, "This control panel was started from inside an assistant session, so it does not purge swarms. Start the control panel from your own terminal with project-memory view to purge closed swarms.")
@@ -786,7 +790,7 @@
       h("div", { class: "row" }, Object.entries(measured).map(([name, yes]) => P.badge(yes ? "ready" : "backlog", P.words(name) + (yes ? " measured" : " unavailable")))),
       (item.unavailable || []).length ? h("ul", { class: "kn-plain muted" }, item.unavailable.map((text) => h("li", null, text))) : null);
   }
-  P.registerView("usage", { title: "Usage", section: "Oversight", async render(container, params, ctx) {
+  P.registerView("usage", { title: "Usage", async render(container, params, ctx) {
       let data;
       try {
         data = await P.get("usage");
@@ -814,7 +818,7 @@
   // finished sessions. A flag and a proposal are decided in the shared "decide" pane of views_work.js, and a digest opens
   // its record. The shown flags are dismissed together with session_flag {flag_ids, status}.
   const SESSION_TABS = [["flags", "Flags", "review"], ["proposals", "Proposals", "review"], ["digests", "Digests", null]];
-  P.registerView("sessions", { title: "Sessions", section: "Oversight", async render(container, params, ctx) {
+  P.registerView("sessions", { title: "Sessions", async render(container, params, ctx) {
       let data;
       try {
         data = await P.get("sessions");

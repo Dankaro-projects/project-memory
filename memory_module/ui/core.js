@@ -43,7 +43,8 @@
  *   Below 1180 pixels one pane shows at a time. Panel.openRecord(id, trigger) uses the 'record' pane and
  *   Panel.openWork(id, trigger) the 'work' pane, registered by views_knowledge.js and views_work.js. Escape closes.
  *   Full width, a toggle of the pane bar, hides the view behind the pane so a long document reads at the width of
- *   both; the view keeps its scroll position, and closing the pane shows it again.
+ *   both; the view keeps its scroll position, and closing the pane shows it again. params.route names the route keys
+ *   that close with the pane.
  * List pane: a view that adds the class list-view to its container fills #main and scrolls only inside its list.
  *   Panel.listPane({title, count, tone, note, rows, empty, foot}) has a fixed head and foot around the scrolling rows,
  *   and Panel.paneRow(key, icon, title, sub, handler(trigger)) is one row of 60 pixels that opens a pane or a view.
@@ -562,6 +563,7 @@ const Panel = (() => {
   }
   function closePane() {
     if (!state.pane) return;
+    for (const key of [state.pane, ...state.paneStack].flatMap((p) => p.params.route || [])) { delete state.route.params[key]; setParams(state.route.params); }
     Object.assign(state, { paneToken: state.paneToken + 1, pane: null, paneStack: [] });
     $("detail").hidden = true;
     delete $("app").dataset.pane;
