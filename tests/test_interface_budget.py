@@ -84,9 +84,15 @@ USABILITY_STYLE_ALLOWANCE = 400
 # Now, and gained 3,350 with the filter head and the rows of Decisions and the shared Panel.viewTabs, a growth of 770.
 # panel.css lost 523 and gained 486, a reduction of 37 to 33,535, so the stylesheet allowance stays at 6,300 while two
 # items that move views are still open. The view allowance grows by 2,250 for the measured 2,247.
-REDESIGN_ALLOWANCE = {'views': 8_500, 'core.js': 6_400}
+# Measured against a15f59a after Records and Requirements moved into the frame: views_knowledge.js lost 4,716 code
+# characters with the table of Records, its filter form and the sections of Requirements, and gained 6,893 with the
+# filter head and its fold, the grouped rows, the pager in the foot and the scrolling region of Requirements, a growth of
+# 2,177. core.js gained 610 with the Full width toggle of the pane bar. panel.css lost 67 and gained 791, a growth of 724
+# to 34,259, with the full width rules, the fold and the group heading. The view allowance grows by 2,200, the core.js
+# allowance by 650 and the stylesheet allowance by 750 to 7,050 while one item that moves views is still open.
+REDESIGN_ALLOWANCE = {'views': 10_700, 'core.js': 7_050}
 REDESIGN_LIMIT = 20_000
-REDESIGN_STYLE_ALLOWANCE = 6_300
+REDESIGN_STYLE_ALLOWANCE = 7_050
 REDESIGN_STYLE_LIMIT = 8_000
 REDESIGN_SHELL_ALLOWANCE = 2_300
 ALLOWANCES = (FOCUS_ALLOWANCE, HIVE_ALLOWANCE, USAGE_ALLOWANCE, SESSIONS_ALLOWANCE, PANEL_ACTIONS_ALLOWANCE, USABILITY_ALLOWANCE,
@@ -199,7 +205,8 @@ class InterfaceBudgetTests(unittest.TestCase):
         self.assertLessEqual(REDESIGN_STYLE_ALLOWANCE, REDESIGN_STYLE_LIMIT)
         core = (UI / 'core.js').read_text(encoding='utf-8')
         for part in ('const WAITS = ', 'function icon(name)', 'function drawActivity()', 'const setSummary = ', 'function openPane(kind, params = {}, trigger)',
-                     'function markSelected()', 'function stepRow(by)', 'const listPane = (options)', 'const paneRow = (key, name, title, sub, handler)'):
+                     'function markSelected()', 'function stepRow(by)', 'const listPane = (options)', 'const paneRow = (key, name, title, sub, handler)',
+                     'function setWide(on)'):
             self.assertIn(part, core)
         self.assertNotIn('Drawer', core)
         shell = (ROOT / 'viewer.html').read_text(encoding='utf-8')
@@ -215,7 +222,12 @@ class InterfaceBudgetTests(unittest.TestCase):
         for part in ('P.registerPane("guard"', 'P.registerPane("instructions"', 'const LEARNING_TABS = ', 'const SESSION_TABS = ',
                      'P.openPane("decide", { kind: "lessons_to_accept"', 'decide("session_flags", flag.id)', 'decide("session_proposals", item.id)'):
             self.assertIn(part, knowledge)
-        self.assertIn('.list-head {', (UI / 'panel.css').read_text(encoding='utf-8'))
+        # Records is rows with a filter head and its fold, and Requirements reads in one region with its approval in the foot.
+        for part in ('const RECORD_ICONS = ', 'id: "records-more"', 'const recordRow = (record)', 'dataset: { scroll: "requirements" }', 'id: "review-requirements"'):
+            self.assertIn(part, knowledge)
+        style = (UI / 'panel.css').read_text(encoding='utf-8')
+        for part in ('.list-head {', '.shell[data-wide] .main { visibility: hidden; }', '.kn-fold {'):
+            self.assertIn(part, style)
 
 
 if __name__ == '__main__':

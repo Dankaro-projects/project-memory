@@ -42,6 +42,8 @@
  *   aria-current, J and K open the next and the previous row of its kind, and the first trigger gets focus on close.
  *   Below 1180 pixels one pane shows at a time. Panel.openRecord(id, trigger) uses the 'record' pane and
  *   Panel.openWork(id, trigger) the 'work' pane, registered by views_knowledge.js and views_work.js. Escape closes.
+ *   Full width, a toggle of the pane bar, hides the view behind the pane so a long document reads at the width of
+ *   both; the view keeps its scroll position, and closing the pane shows it again.
  * List pane: a view that adds the class list-view to its container fills #main and scrolls only inside its list.
  *   Panel.listPane({title, count, tone, note, rows, empty, foot}) has a fixed head and foot around the scrolling rows,
  *   and Panel.paneRow(key, icon, title, sub, handler(trigger)) is one row of 60 pixels that opens a pane or a view.
@@ -552,11 +554,18 @@ const Panel = (() => {
     if (done && $("detail-title").textContent === "Loading") $("detail-title").textContent = "Details";
     if (done && options.focus) $("detail-title").focus({ preventScroll: true });
   }
+  // Full width hides the view behind the pane. The toggle is built here, because the pane bar is part of the shell.
+  function setWide(on) {
+    if (on) $("app").dataset.wide = "open"; else delete $("app").dataset.wide;
+    $("detail-wide").textContent = on ? "Show the list" : "Full width";
+    $("detail-wide").setAttribute("aria-pressed", String(on));
+  }
   function closePane() {
     if (!state.pane) return;
     Object.assign(state, { paneToken: state.paneToken + 1, pane: null, paneStack: [] });
     $("detail").hidden = true;
     delete $("app").dataset.pane;
+    setWide(false);
     $("detail-body").replaceChildren();
     const trigger = state.paneTrigger || {};
     state.paneTrigger = null;
@@ -750,6 +759,7 @@ const Panel = (() => {
     $("search").addEventListener("submit", (event) => { event.preventDefault(); const query = $("search-input").value.trim(); go("records", query ? { query } : {}); });
     $("detail-close").addEventListener("click", closePane);
     $("detail-back").addEventListener("click", backPane);
+    $("detail-close").before(button("Full width", "detail-wide", () => setWide(!$("app").dataset.wide), "small", { id: "detail-wide", "aria-pressed": "false" }));
     $("form").addEventListener("submit", submitForm);
     $("form-cancel").addEventListener("click", () => $("form-dialog").close());
     $("form-reload").addEventListener("click", reloadForm);

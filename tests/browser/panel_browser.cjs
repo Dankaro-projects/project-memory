@@ -507,26 +507,39 @@ async function views(page, kind, expected) {
   step(`${kind}: the Usage cards and routing rows stay on a 390 pixel screen`);
 
   await go(page, "#records");
-  assert.ok(await page.locator("#main table.data").count() >= 1, "the records view lists no records");
+  // Records is rows in the frame: every kind is a group among the rows, the kind, the search and the subject share one
+  // row of the head, the other five filters wait in a fold, and the summary beside the title counts the matches.
+  assert.ok(await page.locator("#main .pane-row").count() >= 10, "the records view lists no records");
+  assert.ok(await page.locator("#main .kn-group").count() >= 2, "the kinds are not grouped among the rows");
+  const summary = (pattern) => page.waitForFunction((source) => new RegExp(source).test(document.getElementById("view-summary").textContent), pattern.source);
+  await summary(/records match across all kinds\./);
+  const head = await page.evaluate(() => { const bottoms = ["records-view", "records-query", "records-subject", "records-more"].map((id) => Math.round(document.getElementById(id).getBoundingClientRect().bottom));
+    return { oneRow: Math.max(...bottoms) - Math.min(...bottoms) <= 4, folded: document.getElementById("records-fold").hidden, expanded: document.getElementById("records-more").getAttribute("aria-expanded") }; });
+  assert.deepEqual(head, { oneRow: true, folded: true, expanded: "false" }, `${kind}: the head of Records: ${JSON.stringify(head)}`);
+  await page.locator("#records-more").click();
+  assert.deepEqual(await page.evaluate(() => ["records-status", "records-episode", "records-from", "records-to", "records-order", "records-clear"].map((id) => document.getElementById(id).getClientRects().length > 0)), [true, true, true, true, true, true]);
+  assert.match(await text(page, "#records-more"), /Fewer filters/);
+  step(`${kind}: Records lists its kinds as groups of rows, and three filters share one row of the head with a fold for the other five`);
   // The filters apply on change, as in Work, and typing keeps the focus while the results update.
   assert.equal(await page.locator("#records-apply").count(), 0);
   await page.locator("#records-view").selectOption("decisions");
-  await page.waitForFunction(() => /in decisions match/.test((document.querySelector("#main .view:not(.pending) .sentence") || {}).textContent || ""));
+  await summary(/in decisions match/);
   assert.match(page.url(), /view=decisions/);
   await page.locator("#records-query").pressSequentially("zzzz");
-  await page.waitForFunction(() => /^0 records in decisions/.test(document.querySelector("#main .view:not(.pending) .sentence").textContent));
+  await summary(/^0 records in decisions/);
   assert.equal(await page.evaluate(() => document.activeElement.id), "records-query");
+  assert.match(await text(page, "#main .pane-rows .empty"), /No records match these filters\./);
   await page.locator("#records-clear").click();
-  await page.waitForFunction(() => /across all kinds/.test(document.querySelector("#main .view:not(.pending) .sentence").textContent));
+  await summary(/across all kinds/);
   step(`${kind}: the Records filters apply on change and keep the focus while the reader types`);
   // A work item carries one state word everywhere: Records shows the board state, not a second vocabulary.
   await page.locator("#records-view").selectOption("episodes");
-  await page.waitForFunction(() => /in work items match/.test(document.querySelector("#main .view:not(.pending) .sentence").textContent));
-  assert.equal(await page.locator('#main table.data .badge[data-state="blocked"]').count(), 2);
-  assert.equal(await page.locator('#main table.data .badge[data-state="active"], #main table.data .badge[data-state="settled"]').count(), 0);
+  await summary(/in work items match/);
+  assert.equal(await page.locator('#main .pane-row .badge[data-state="blocked"]').count(), 2);
+  assert.equal(await page.locator('#main .pane-row .badge[data-state="active"], #main .pane-row .badge[data-state="settled"]').count(), 0);
   step(`${kind}: Records shows the two blocked work items by their board state`);
   await go(page, "#requirements");
-  assert.match(await text(page, "#main"), /The project requirements are not established yet\./);
+  assert.match(await text(page, "#view-summary"), /The project requirements are not established yet\./);
   step(`${kind}: Records and Requirements render their current state`);
 
   // Opening an item never covers the list on a wide screen: the pane sits beside the view and the opening row stays marked.
@@ -625,6 +638,55 @@ async function views(page, kind, expected) {
   }
   await page.setViewportSize({ width: 1440, height: 900 });
   step(`${kind}: Learning and Decisions scroll only inside their rows at ${FRAMES.map((size) => size.join(" by ")).join(", ")} pixels, with and without the pane, and the primary action stays in reach`);
+
+  // Records pages in the foot and scrolls only inside its rows at the three sizes, with and without the pane; a lesson
+  // keeps its decision in the foot of the pane. Requirements reads its text, version, evidence and history in one
+  // region of the frame, and Review requirements stays in reach in its foot.
+  for (const [width, height] of FRAMES) {
+    await page.setViewportSize({ width, height });
+    await go(page, "#records/view=events");
+    await page.waitForSelector("#main .pane-row");
+    await fixedFrame(page, `${kind} #records at ${width} by ${height}`);
+    const region = await page.evaluate(() => { const main = document.getElementById("main"), rows = main.querySelector('[data-scroll="rows"]'), foot = main.querySelector(".pane-foot");
+      return { frame: main.scrollHeight <= main.clientHeight, rows: rows.scrollHeight > rows.clientHeight, foot: foot.getBoundingClientRect().bottom <= window.innerHeight, pager: foot.textContent }; });
+    assert.equal(region.frame && region.rows && region.foot, true, `${kind} #records at ${width} by ${height}: ${JSON.stringify(region)}`);
+    assert.match(region.pager, /Showing 1 to \d+ of \d+\.\s*Previous\s*Next/);
+    assert.ok(await inReach(page, "#records-filters summary"), `${kind} #records at ${width} by ${height}: the filters are out of reach`);
+    await page.locator("#main .pane-row").first().click();
+    await loaded();
+    await fixedFrame(page, `${kind} #records with the pane at ${width} by ${height}`);
+    await go(page, "#records/view=lessons");
+    await page.locator("#main .pane-row").first().click();
+    await loaded();
+    assert.ok(await inReach(page, "#detail .detail-foot button"), `${kind} lesson record at ${width} by ${height}: the decision of the lesson is out of reach`);
+    await go(page, "#requirements");
+    await fixedFrame(page, `${kind} #requirements at ${width} by ${height}`);
+    const shape = await page.evaluate(() => { const main = document.getElementById("main"), body = main.querySelector('[data-scroll="requirements"]');
+      return { frame: main.scrollHeight <= main.clientHeight, scrolls: getComputedStyle(body).overflowY, parts: ["Version", "Approval evidence", "History", "Version 0"].every((part) => body.textContent.includes(part)) }; });
+    assert.deepEqual(shape, { frame: true, scrolls: "auto", parts: true }, `${kind} #requirements at ${width} by ${height}: ${JSON.stringify(shape)}`);
+    assert.ok(await inReach(page, "#review-requirements"), `${kind} #requirements at ${width} by ${height}: Review requirements is out of reach`);
+  }
+  await page.setViewportSize({ width: 1440, height: 900 });
+  step(`${kind}: Records and Requirements scroll only inside the frame at ${FRAMES.map((size) => size.join(" by ")).join(", ")} pixels, the pager and Review requirements stay in the foot, and a lesson keeps its decision in reach`);
+
+  // A long document reads at full width: the toggle of the pane bar hides the list beside the pane, and Escape
+  // restores the list with the focus on the row that opened the record.
+  await go(page, "#records/view=documents");
+  await page.locator("#main .pane-row").first().click();
+  await loaded();
+  await page.waitForFunction(() => /Outline/.test(document.getElementById("detail-body").textContent));
+  const narrow = await page.evaluate(() => document.getElementById("detail").getBoundingClientRect().width);
+  await page.locator("#detail-wide").click();
+  const wide = await page.evaluate((before) => { const detail = document.getElementById("detail").getBoundingClientRect(), panes = document.querySelector(".panes").getBoundingClientRect();
+    return { fills: Math.round(detail.width) === Math.round(panes.width) && detail.width > before + 300, view: getComputedStyle(document.getElementById("main")).visibility,
+      pressed: document.getElementById("detail-wide").getAttribute("aria-pressed"), label: document.getElementById("detail-wide").textContent, document: document.querySelector("#detail .document").getBoundingClientRect().width > 900 }; }, narrow);
+  assert.deepEqual(wide, { fills: true, view: "hidden", pressed: "true", label: "Show the list", document: true }, `${kind}: the record pane at full width: ${JSON.stringify(wide)}`);
+  await fixedFrame(page, `${kind} the record pane at full width`);
+  await page.keyboard.press("Escape");
+  await page.waitForFunction(() => document.getElementById("detail").hidden);
+  assert.deepEqual(await page.evaluate(() => [getComputedStyle(document.getElementById("main")).visibility, "wide" in document.getElementById("app").dataset, document.activeElement.matches("#main .pane-row"), document.getElementById("detail-wide").textContent]),
+    ["visible", false, true, "Full width"]);
+  step(`${kind}: a document reads at full width with the list hidden beside the pane, and Escape restores the list`);
 
   for (const width of [1440, 768, 390, 320]) {
     for (const hash of ["#now", "#plan", "#work", "#architecture", "#decisions", "#learning", "#machine", "#hive", "#usage"]) {

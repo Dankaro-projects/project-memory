@@ -268,7 +268,12 @@ button.pane-row:hover { background: #f8fafb; }
   .shell[data-pane="open"] .panes { grid-template-columns: minmax(0, 1fr); }
   .shell[data-pane="open"] .main, .shell[data-pane="open"] .detail { grid-area: 1 / 1; }
   .shell[data-pane="open"] .main { visibility: hidden; }
+  #detail-wide { display: none; }
 }
+/* Full width: the pane takes the width of both panes and the view waits behind it with its scroll position. */
+.shell[data-wide] .panes { grid-template-columns: minmax(0, 1fr); }
+.shell[data-wide] .main, .shell[data-wide] .detail { grid-area: 1 / 1; }
+.shell[data-wide] .main { visibility: hidden; }
 
 /* Form dialog */
 .form-dialog {
@@ -419,7 +424,12 @@ table.data th button { min-height: 0; padding: 0; border: 0; background: transpa
 .kn-base { max-height: 220px; margin: 0; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
 .kn-pager { justify-content: flex-end; }
 .kn-pager > span { margin-right: auto; }
-.kn-filters .field { flex: 1 1 160px; }
+.pane-foot > .kn-pager { flex: 1; }
+/* The fold of the Records filters takes a row of its own under the three filters that stay in sight. */
+.kn-fold { flex-basis: 100%; }
+/* A kind of All record kinds is a group heading among the rows with the link to the whole kind. */
+.pane-rows > li.kn-group { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--dk-space-2) var(--dk-space-3); padding: 12px var(--dk-space-5) 6px; background: var(--dk-color-surface); }
+.kn-group h3 { display: flex; align-items: baseline; gap: var(--dk-space-2); font-size: 14px; }
 .kn-outline { padding: var(--dk-space-3); background: var(--dk-color-surface); border-radius: var(--dk-radius); }
 .kn-outline h4 { font-size: 12px; color: var(--dk-color-support); margin-bottom: var(--dk-space-1); }
 .kn-outline li[data-level="2"] { padding-left: 12px; }
@@ -427,7 +437,6 @@ table.data th button { min-height: 0; padding: 0; border: 0; background: transpa
 .kn-requirements { margin: 0; padding-left: 24px; display: grid; gap: var(--dk-space-2); }
 @media (max-width: 639px) {
   .kn-nested { grid-template-columns: minmax(0, 1fr); }
-  .kn-filters .field { flex-basis: 100%; }
 }
 table.kn-table { min-width: 640px; }
 table.kn-table td, table.kn-table th { overflow-wrap: normal; word-break: normal; }
