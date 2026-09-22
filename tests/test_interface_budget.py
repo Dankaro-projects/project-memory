@@ -90,9 +90,19 @@ USABILITY_STYLE_ALLOWANCE = 400
 # 2,177. core.js gained 610 with the Full width toggle of the pane bar. panel.css lost 67 and gained 791, a growth of 724
 # to 34,259, with the full width rules, the fold and the group heading. The view allowance grows by 2,200, the core.js
 # allowance by 650 and the stylesheet allowance by 750 to 7,050 while one item that moves views is still open.
-REDESIGN_ALLOWANCE = {'views': 10_700, 'core.js': 7_050}
+# Measured against 557eb27 after Architecture, Dependencies, Agents, Machine, Hive and Usage moved into the frame:
+# views_knowledge.js lost 8,558 code characters with the runs table of Agents, the sections of Machine, the swarm cards
+# and the swarm view of Hive and the page of Usage, and gained 9,810 with the tabs and rows of Agents, the tabs and
+# regions of Machine, the swarm rows, the swarm pane with its filters and its foot, and the region of Usage, a growth of
+# 1,252. views_work.js gained 22 with the shared filter box that graphs.js reuses. graphs.js lost 2,755 and gained 2,926
+# with the head, the filter box, the side column that scrolls and the summary of both graph views, a growth of 171
+# inside its own budget of 41,000. core.js is unchanged. panel.css lost 464 and gained 1,121, a growth of 657 to 34,916,
+# with the graph layout that takes the height of the frame, the scrolling side column and the one column layout below
+# 1100 pixels. The view allowance grows by 1,300 for the measured 1,274 and the stylesheet allowance by 700 to 7,750.
+# This closes the items that move views; the caps stay in place until the user sets the new base budgets.
+REDESIGN_ALLOWANCE = {'views': 12_000, 'core.js': 7_050}
 REDESIGN_LIMIT = 20_000
-REDESIGN_STYLE_ALLOWANCE = 7_050
+REDESIGN_STYLE_ALLOWANCE = 7_750
 REDESIGN_STYLE_LIMIT = 8_000
 REDESIGN_SHELL_ALLOWANCE = 2_300
 ALLOWANCES = (FOCUS_ALLOWANCE, HIVE_ALLOWANCE, USAGE_ALLOWANCE, SESSIONS_ALLOWANCE, PANEL_ACTIONS_ALLOWANCE, USABILITY_ALLOWANCE,
@@ -225,8 +235,17 @@ class InterfaceBudgetTests(unittest.TestCase):
         # Records is rows with a filter head and its fold, and Requirements reads in one region with its approval in the foot.
         for part in ('const RECORD_ICONS = ', 'id: "records-more"', 'const recordRow = (record)', 'dataset: { scroll: "requirements" }', 'id: "review-requirements"'):
             self.assertIn(part, knowledge)
+        # Agents and Machine are tabs of rows or regions, Hive is rows with the swarm in its pane, and Usage is one region.
+        for part in ('const AGENT_TABS = ', 'const MACHINE_TABS = ', 'P.registerPane("swarm"', 'P.openPane("swarm", { id: swarm.id }, trigger)',
+                     'P.formButton("Ask a question", "hive_post"', 'const region = (...children)'):
+            self.assertIn(part, knowledge)
+        self.assertIn('P.filterBox = filterBox;', work)
+        # The graphs fill the frame beside a scrolling side column through the stylesheet, so graphs.js keeps its graph code.
+        graphs = (UI / 'graphs.js').read_text(encoding='utf-8')
+        for part in ('class: "graph-main"', 'Panel.filterBox("arch-filters"', 'container.classList.add("list-view")'):
+            self.assertIn(part, graphs)
         style = (UI / 'panel.css').read_text(encoding='utf-8')
-        for part in ('.list-head {', '.shell[data-wide] .main { visibility: hidden; }', '.kn-fold {'):
+        for part in ('.list-head {', '.shell[data-wide] .main { visibility: hidden; }', '.kn-fold {', '.graph-main .graph { flex: 1; height: auto; }'):
             self.assertIn(part, style)
 
 

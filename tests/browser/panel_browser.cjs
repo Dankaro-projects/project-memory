@@ -276,15 +276,18 @@ async function views(page, kind, expected) {
   await page.unroute(/\/api\/board/);
   step(`${kind}: a board column of 23 cards shows 10, then 20, then all 23 with its Show more button`);
 
+  // Architecture fills the frame: the template label and the filters sit in the head, the summary beside the title
+  // counts the items, and the graph takes the height under the head beside the side column.
   await go(page, "#architecture");
   assert.equal(await text(page, "#main .view-head h2"), expected.architecture);
-  assert.match(await text(page, "#main .sentence"), expected.items);
+  assert.match(await text(page, "#view-summary"), expected.items);
   await page.waitForSelector("#main .graph canvas");
   assert.equal(await page.locator('.node-list button[data-key^="arch-node-"]').count(), expected.nodes);
+  assert.equal(await page.locator("#main .list-head #arch-filters").count(), 1);
   step(`${kind}: Architecture uses the template labels and draws ${expected.nodes} items`);
 
   // The sentence, the item list and the graph state the same number, and nothing is hidden before a filter is set.
-  const sentence = await text(page, "#main .sentence");
+  const sentence = await text(page, "#view-summary");
   const counted = [...sentence.split(".")[0].matchAll(/(\d+)/g)].reduce((total, found) => total + Number(found[1]), 0);
   assert.equal(counted, expected.nodes, `${kind}: the sentence counts ${counted} items where the graph draws ${expected.nodes}`);
   assert.ok(!sentence.includes("hidden by the filters"), `${kind}: the sentence reports hidden items although no filter is set`);
@@ -304,9 +307,9 @@ async function views(page, kind, expected) {
 
   if (kind === "product") {
     await go(page, "#architecture/focus=src%2Fapp");
-    const files = await text(page, "#main");
-    assert.match(files, /This view shows 4 files\./);
-    assert.ok(!files.includes("blocked work"), "the file level still claims blocked work");
+    const files = await text(page, "#main"), fileSummary = await text(page, "#view-summary");
+    assert.match(fileSummary, /This view shows 4 files\./);
+    assert.ok(!files.includes("blocked work") && !fileSummary.includes("blocked work"), "the file level still claims blocked work");
     assert.equal(await page.locator('#main .node-list [data-tone="blocked"]').count(), 0, "a file is still painted as blocked");
     assert.match(files, /Files carry no work state here/);
     step(`${kind}: the file level claims no blocked file and explains why files carry no state`);
@@ -320,8 +323,8 @@ async function views(page, kind, expected) {
   }
 
   await go(page, "#dependencies");
-  assert.match(await text(page, "#dep-panel .sentence"), /8 dependencies connect 10 work items\./);
-  assert.match(await text(page, "#dep-panel .sentence"), /1 blocked chain is marked in red/);
+  assert.match(await text(page, "#view-summary"), /8 dependencies connect 10 work items\./);
+  assert.match(await text(page, "#view-summary"), /1 blocked chain is marked in red/);
   assert.ok(await page.locator(".chains li").count() >= 1, "no blocked chain is named");
   assert.equal(await page.locator('[data-key^="dep-node-"]').count(), 10);
   await page.waitForSelector("#dep-panel .graph canvas");
@@ -350,6 +353,33 @@ async function views(page, kind, expected) {
   assert.deepEqual(swatches, ["solid", "dashed"], "finished and unstarted work look the same in the legend");
   assert.equal(await page.locator("#dep-tab-packages").count(), kind === "product" ? 1 : 0);
   step(`${kind}: the dependency graph is readable and the package tab appears only where packages exist`);
+
+  // The graph of Architecture and of Dependencies takes the height of the frame beside its side column at the two wide
+  // sizes instead of a fixed height, and on a phone the graph keeps a height while the layout scrolls as one region.
+  // No size scrolls the page, with the side column empty and with a selected item in it.
+  const graphShape = () => page.evaluate(() => { const main = document.getElementById("main"), graph = main.querySelector(".graph"), layout = main.querySelector(".graph-layout"), side = main.querySelector(".graph-side");
+    const box = graph.getBoundingClientRect(), frame = main.getBoundingClientRect();
+    return { frame: main.scrollHeight <= main.clientHeight, height: Math.round(box.height), gap: Math.round(frame.bottom - box.bottom), share: box.height / frame.height,
+      layoutScrolls: layout.scrollHeight > layout.clientHeight, sideScrolls: getComputedStyle(side).overflowY }; });
+  for (const [width, height] of FRAMES) {
+    await page.setViewportSize({ width, height });
+    for (const hash of ["#architecture", "#dependencies"]) {
+      await go(page, hash);
+      await page.waitForSelector("#main .graph canvas");
+      await fixedFrame(page, `${kind} ${hash} at ${width} by ${height}`);
+      const shape = await graphShape();
+      assert.equal(shape.frame, true, `${kind} ${hash} at ${width} by ${height}: the view scrolls outside its regions: ${JSON.stringify(shape)}`);
+      if (width >= 1100) assert.ok(shape.gap <= 40 && shape.share >= 0.45 && shape.sideScrolls === "auto", `${kind} ${hash} at ${width} by ${height}: the graph does not take the height of the frame: ${JSON.stringify(shape)}`);
+      else assert.ok(shape.height === 320 && shape.layoutScrolls, `${kind} ${hash} at ${width} by ${height}: the graph layout does not scroll as one region: ${JSON.stringify(shape)}`);
+      if (hash === "#architecture") {
+        await page.locator('[data-key^="arch-node-"]').first().click();
+        await page.waitForSelector("#main .graph-side .card");
+        await fixedFrame(page, `${kind} ${hash} with a selected item at ${width} by ${height}`);
+      }
+    }
+  }
+  await page.setViewportSize({ width: 1440, height: 900 });
+  step(`${kind}: the graphs of Architecture and Dependencies take the height of the frame at ${FRAMES.map((size) => size.join(" by ")).join(", ")} pixels, and neither view scrolls the page with or without a selected item`);
 
   // Decisions in the frame: the filters sit in the head, each row carries its badges, and a filter keeps its route parameter.
   await go(page, "#decisions");
@@ -442,48 +472,67 @@ async function views(page, kind, expected) {
   await closePane(page);
   step(`${kind}: the instructions pane keeps the base text and the rules on a 390 pixel screen`);
 
+  // Agents in the frame: the runs are rows under the Runs tab, the hosts wait under their own tab, and a row opens the
+  // run pane with Merge and Discard in its foot.
   await go(page, "#agents");
-  assert.match(await text(page, "#main .sentence"), /configured hosts can run work now/);
-  assert.match(await text(page, "#main"), /1 delegated run awaits a merge decision/);
-  assert.equal(await page.locator("#main table.data tbody tr").count(), 2);
-  step(`${kind}: Agents show the hosts and the two recorded runs`);
+  assert.match(await text(page, "#view-summary"), /configured hosts can run work now/);
+  assert.match(await text(page, "#view-summary"), /1 delegated run awaits a merge decision/);
+  assert.equal(await page.locator("#main .pane-row").count(), 2);
+  assert.deepEqual((await page.locator("#main .view-tabs button").allTextContents()).map((label) => label.replace(/\d+$/, "")), ["Runs", "Hosts", "Follow ups"]);
+  await page.locator('[data-key="agents-tab-hosts"]').click();
+  await page.waitForSelector('#main .view:not(.pending) [data-key="agents-tab-hosts"][aria-pressed="true"]');
+  assert.equal(await page.locator("#main .pane-body .card").count(), 2);
+  assert.match(await text(page, "#main .pane-body"), /Can run work|Cannot run work/);
+  await go(page, "#agents");
+  step(`${kind}: Agents show the two recorded runs as rows and the hosts under their tab`);
 
   const agents = await text(page, "#main");
-  assert.ok(!agents.includes("Not applicable"), `${kind}: the runs table still prints Not applicable`);
-  assert.match(agents, /columns describe delegated work/);
+  assert.ok(!agents.includes("Not applicable"), `${kind}: the run rows still print Not applicable`);
+  assert.match(agents, /describe delegated work/);
   // On a phone the merge decision has to stay on screen instead of hiding behind a sideways scroll.
   await page.setViewportSize({ width: 390, height: 900 });
   await page.waitForTimeout(250);
   const merge = await page.evaluate(() => {
-    const cell = [...document.querySelectorAll('#main .kn-table td[data-label="Merge"]')].find((node) => node.textContent.trim());
-    return cell ? { right: cell.getBoundingClientRect().right, text: cell.textContent.trim() } : null;
+    const badge = [...document.querySelectorAll("#main .pane-row .badge")].find((node) => /Awaiting a decision|Not merged|merged/.test(node.textContent));
+    return badge ? { right: badge.getBoundingClientRect().right, text: badge.textContent.trim() } : null;
   });
-  assert.ok(merge && merge.right <= 390, `${kind}: the merge column sits off a 390 pixel screen: ${JSON.stringify(merge)}`);
-  assert.match(merge.text, /Awaiting a decision|Not merged|merged/);
+  assert.ok(merge && merge.right <= 390, `${kind}: the merge state sits off a 390 pixel screen: ${JSON.stringify(merge)}`);
   await page.setViewportSize({ width: 1440, height: 900 });
-  step(`${kind}: the runs table leaves the delegation columns empty for a check and keeps the merge state on a phone`);
+  await page.locator("#main .pane-row").filter({ hasText: "Awaiting a decision" }).first().click();
+  await page.waitForFunction(() => !document.getElementById("detail").hidden && document.getElementById("detail-title").textContent !== "Loading" && !document.querySelector(".detail-content.pending"));
+  assert.equal(await page.evaluate(() => document.getElementById("detail-kind").textContent), "Agent run");
+  const runActions = await text(page, "#detail .detail-foot");
+  for (const part of ["Merge", "Discard"]) assert.ok(runActions.includes(part), `${kind}: the foot of the run pane lacks ${part}`);
+  await closePane(page);
+  step(`${kind}: a run row keeps the merge state on a phone and opens the run pane with Merge and Discard in its foot`);
 
   // The foot of the rail states the phase of the project, because the phase decides who merges delegated work.
   assert.match(await text(page, "#phase"), /Lifecycle\s*Development/);
   assert.match(await page.locator("#phase .phase-button").getAttribute("title"), /may bring delegated work into the project after a passing work review/);
   step(`${kind}: the foot of the rail states that the project is in development`);
 
+  // Machine in the frame: the proposals, the rules in force, the retired rules and the registry are regions under tabs,
+  // each with the isolation notice, and the summary beside the title counts the rules and the proposals.
   await go(page, "#machine");
-  const machine = await text(page, "#main");
-  assert.match(machine, /1 rule is in force on .+, promoted from 1 project\. 1 proposal from this project awaits your decision\./);
-  assert.match(machine, /no outcome is combined across projects/);
-  assert.equal(await page.locator('#main [data-key^="machine-rule-"]').count(), 1);
+  assert.match(await text(page, "#view-summary"), /1 rule is in force on .+, promoted from 1 project\. 1 proposal from this project awaits your decision\./);
+  assert.deepEqual((await page.locator("#main .view-tabs button").allTextContents()).map((label) => label.replace(/\d+$/, "")), ["Proposals", "Rules in force", "Retired rules", "Projects"]);
+  assert.match(await text(page, '#main [data-key="machine-isolation"]'), /no outcome is combined across projects/);
   assert.equal(await page.locator('#main [data-key^="promotion-"]').count(), 2);
+  assert.equal(await page.locator('#main [data-key^="accept-promotion-"]').count(), 1);
+  await go(page, "#machine/tab=rules");
+  assert.equal(await page.locator('#main [data-key^="machine-rule-"]').count(), 1);
   assert.match(await text(page, '#main [data-key^="machine-rule-"]'), /1 project promoted this rule/);
+  assert.equal(await page.locator('#main [data-key^="retire-rule-"]').count(), 1);
+  assert.match(await text(page, '#main [data-key="machine-isolation"]'), /no outcome is combined across projects/);
+  await go(page, "#machine/tab=projects");
   assert.equal(await page.locator('#main [data-key^="machine-project-"]').count(), 1);
   assert.match(await text(page, '#main [data-key^="machine-project-"]'), /This project/);
-  assert.equal(await page.locator('#main [data-key^="accept-promotion-"]').count(), 1);
-  assert.equal(await page.locator('#main [data-key^="retire-rule-"]').count(), 1);
-  step(`${kind}: Machine lists the promoted rule, its adoption count, the registry and the waiting proposal`);
+  step(`${kind}: Machine lists the waiting proposal, the promoted rule with its adoption count and the registry under tabs`);
 
   // The Usage view reads the ledger of the fixture machine memory: Codex at 91 percent and a Claude limit hit constrain both.
   await go(page, "#usage");
-  assert.match(await text(page, "#main .sentence"), /^Usage was measured at .+ UTC\. 2 hosts are constrained\.$/);
+  assert.match(await text(page, "#view-summary"), /^Usage was measured at .+ UTC\. 2 hosts are constrained\.$/);
+  assert.equal(await page.locator('#main .list-view [data-scroll="rows"] [data-key="usage-note"]').count(), 1, `${kind}: the usage note is not in the scrolling region`);
   assert.equal(await page.locator('#main [data-key^="usage-host-"]').count(), 4);
   const codexCard = await text(page, '[data-key="usage-host-codex"]');
   assert.match(codexCard, /Constrained/);
@@ -668,6 +717,25 @@ async function views(page, kind, expected) {
   }
   await page.setViewportSize({ width: 1440, height: 900 });
   step(`${kind}: Records and Requirements scroll only inside the frame at ${FRAMES.map((size) => size.join(" by ")).join(", ")} pixels, the pager and Review requirements stay in the foot, and a lesson keeps its decision in reach`);
+
+  // Agents, Machine and Usage scroll only inside their region at the three sizes, with and without the run pane, whose
+  // primary action stays in reach. Hive is measured with a swarm on the focus fixture.
+  for (const [width, height] of FRAMES) {
+    await page.setViewportSize({ width, height });
+    for (const hash of ["#agents", "#agents/tab=hosts", "#machine", "#machine/tab=rules", "#machine/tab=projects", "#usage"]) {
+      await go(page, hash);
+      await fixedFrame(page, `${kind} ${hash} at ${width} by ${height}`);
+      const region = await page.evaluate(() => { const main = document.getElementById("main"), rows = main.querySelector("[data-scroll]"); return [main.scrollHeight <= main.clientHeight, rows.scrollHeight >= rows.clientHeight]; });
+      assert.deepEqual(region, [true, true], `${kind} ${hash} at ${width} by ${height}: the view scrolls outside its region: ${region}`);
+    }
+    await go(page, "#agents");
+    await page.locator("#main .pane-row").filter({ hasText: "Awaiting a decision" }).first().click();
+    await loaded();
+    await fixedFrame(page, `${kind} #agents with the pane at ${width} by ${height}`);
+    assert.ok(await inReach(page, "#detail .detail-foot button"), `${kind} #agents at ${width} by ${height}: the merge decision of the run is out of reach`);
+  }
+  await page.setViewportSize({ width: 1440, height: 900 });
+  step(`${kind}: Agents, Machine and Usage scroll only inside their region at ${FRAMES.map((size) => size.join(" by ")).join(", ")} pixels, and the merge decision of a run stays in reach in the pane`);
 
   // A long document reads at full width: the toggle of the pane bar hides the list beside the pane, and Escape
   // restores the list with the focus on the row that opened the record.
@@ -891,18 +959,20 @@ async function editing(page, ids, posts) {
   await field(page, "reason").fill("The rule holds for every project on this computer.");
   await page.locator("#form-save").click();
   await savedToast(page, /The rule is in force on/);
-  await page.waitForFunction(() => /2 rules are in force/.test(document.querySelector("#main .view:not(.pending) .sentence").textContent), null, { timeout: 15000 });
-  assert.match(await text(page, "#main"), /State which checks ran and what each one reported before the merge\./);
+  await page.waitForFunction(() => /2 rules are in force/.test(document.getElementById("view-summary").textContent), null, { timeout: 15000 });
+  await go(page, "#machine/tab=rules");
+  assert.match(await text(page, "#main .pane-body"), /State which checks ran and what each one reported before the merge\./);
   step("a proposed rule is corrected and accepted into the machine memory");
 
-  // Retiring a rule of the machine memory. The rule and its history stay readable.
+  // Retiring a rule of the machine memory. The rule and its history stay readable under the Retired rules tab.
   await page.locator(`[data-key="retire-rule-${ids.machine_rule}"]`).click();
   await page.waitForSelector("#form-dialog[open] textarea[name=reason]");
   await field(page, "reason").fill("The allowed paths are now required before a run starts.");
   await page.locator("#form-save").click();
   await savedToast(page, /The rule is retired/);
-  await page.waitForFunction(() => /1 rule is in force/.test(document.querySelector("#main .view:not(.pending) .sentence").textContent), null, { timeout: 15000 });
-  assert.match(await text(page, "#main"), /Retired rules/);
+  await page.waitForFunction(() => /1 rule is in force/.test(document.getElementById("view-summary").textContent), null, { timeout: 15000 });
+  await go(page, "#machine/tab=retired");
+  assert.match(await text(page, `#main [data-key="machine-rule-${ids.machine_rule}"]`), /Retired/);
   step("a rule of the machine memory is retired and stays readable");
 
   // Focus and the open view survive a new revision.
@@ -1226,19 +1296,23 @@ async function hived(browser, fixture) {
   await closePane(page);
   step("sessions: a flag row is decided in the shared pane with J, K and D, the next flag opens by itself, and one dialog without a reason dismisses the rest");
 
+  // Hive in the frame: the swarms are rows, and a row opens the swarm as a conversation in the pane, whose body scrolls
+  // and whose foot holds the actions of the user.
   await go(page, "#hive");
-  assert.equal(await text(page, "#main .sentence"), "1 swarm is recorded, and 1 is open.");
-  const listed = await text(page, `[data-key="hive-swarm-${swarm}"]`);
+  assert.equal(await text(page, "#view-summary"), "1 swarm is recorded, and 1 is open.");
+  const listed = await text(page, `#main .pane-row[data-key="hive-swarm-${swarm}"]`);
   for (const part of ["Wrong delivery day in the export", "Manual swarm", "13 entries", "Blind phase first", "codex-1", "claude-1", "codex-2"]) {
-    assert.ok(listed.includes(part), "the swarm card lacks " + part);
+    assert.ok(listed.includes(part), "the swarm row lacks " + part);
   }
-  await page.locator(`[data-key="hive-open-${swarm}"]`).click();
-  await page.waitForSelector('[data-key="hive-timeline"]');
+  await page.locator(`[data-key="hive-swarm-${swarm}"]`).click();
+  await page.waitForSelector('#detail [data-key="hive-timeline"]');
   await settle(page);
-  assert.match(page.url(), new RegExp("#hive/swarm=" + swarm));
-  assert.equal(await text(page, "#main .sentence"), "Wrong delivery day in the export is open with 13 entries from 4 agents.");
+  assert.equal(await page.locator(`#main [data-key="hive-swarm-${swarm}"]`).getAttribute("aria-current"), "true");
+  assert.deepEqual(await page.evaluate(() => [document.getElementById("detail-kind").textContent, document.getElementById("detail-title").textContent]), ["Swarm", "Wrong delivery day in the export"]);
+  assert.equal(await text(page, '#detail [data-key="hive-state"]'), "The swarm is open with 13 entries from 4 agents.");
   assert.equal(await cards(page).count(), 13);
-  step("hive: the list shows the swarm with its kind, agents and counts, and the swarm opens as a timeline of 13 entries");
+  assert.match(await text(page, '#detail [data-key="hive-actions"]'), /Ask a question\s*Post an observation\s*Close the swarm/);
+  step("hive: the list shows the swarm row with its kind, agents and counts, and the row opens the swarm in the pane as a timeline of 13 entries");
 
   // Hosts are named in words as well as colours, and a verified command is marked with its exit code.
   assert.equal(await text(page, `#hive-${e.hypothesis} [data-state="host-codex"]`), "Codex");
@@ -1271,23 +1345,28 @@ async function hived(browser, fixture) {
   assert.match(await text(page, `#hive-${e.hypothesis}`), /Ends the blind phase of codex-1/);
   step("hive: codex-2 is marked as still in the blind phase, and the hypothesis that ended the phase of codex-1 says so");
 
-  // Filters by move and agent are kept in the route.
+  // Filters by move and agent redraw the pane and survive a live update.
+  const shownEntries = (count) => page.waitForFunction((n) => document.querySelectorAll('#detail .detail-content:not(.pending) [data-key="hive-timeline"] article').length === n, count);
   await page.locator("#hive-move").selectOption("conclusion");
-  await page.waitForFunction(() => /move=conclusion/.test(location.hash) && document.querySelectorAll('#main .view:not(.pending) [data-key="hive-timeline"] article').length === 1);
+  await shownEntries(1);
   await settle(page);
   await page.locator("#hive-move").selectOption("");
-  await page.waitForFunction(() => !/move=/.test(location.hash) && document.querySelectorAll('#main .view:not(.pending) [data-key="hive-timeline"] article').length === 13);
+  await shownEntries(13);
   await settle(page);
   await page.locator("#hive-agent").selectOption("claude-1");
-  await page.waitForFunction(() => /agent=claude-1/.test(location.hash) && document.querySelectorAll('#main .view:not(.pending) [data-key="hive-timeline"] article').length === 5);
+  await shownEntries(5);
   await settle(page);
   assert.deepEqual(await page.locator('[data-key="hive-timeline"] article [data-state^="host-"]').allInnerTexts(), ["Claude", "Claude", "Claude", "Claude", "Claude"]);
+  assert.equal(await page.locator("#hive-agent").inputValue(), "claude-1");
   await page.locator("#hive-agent").selectOption("");
-  await page.waitForFunction(() => document.querySelectorAll('#main .view:not(.pending) [data-key="hive-timeline"] article').length === 13);
+  await shownEntries(13);
   await settle(page);
   step("hive: the move filter keeps the one conclusion and the agent filter keeps the 5 entries of claude-1");
 
-  // A worker writes an entry while the page is open, and the change polling shows it.
+  // A worker writes an entry while the page is open, and the change polling shows it in the pane, which keeps its
+  // reading position because its body is a scrolling region of the frame.
+  const reading = await page.evaluate(() => { const body = document.querySelector("#detail .detail-scroll"); body.scrollTop = 400; return body.scrollTop; });
+  assert.ok(reading > 0, "the body of the swarm pane does not scroll");
   const written = Date.now();
   const appended = JSON.parse(execFileSync(PYTHON, [path.join(ROOT, "tests/browser/fixture.py"), "--append-hive-entry", fixture.database], { cwd: ROOT, encoding: "utf8" }));
   const stored = Date.now();
@@ -1296,9 +1375,23 @@ async function hived(browser, fixture) {
   assert.match(await text(page, "#hive-" + appended.id), new RegExp(HIVE_LATE.replace(/\./g, "\\.")));
   assert.ok(shown - stored <= 2000, `the new entry appeared ${shown - stored} milliseconds after it was stored`);
   await page.waitForFunction(() => document.querySelector('[data-key="hive-agent-codex-2"]').dataset.phase === "open");
-  assert.equal(await text(page, "#main .sentence"), "Wrong delivery day in the export is open with 14 entries from 4 agents.");
-  step(`hive: an entry written while the page is open appears ${shown - stored} milliseconds after it is stored (${stored - written} to store it), and codex-2 leaves the blind phase`);
+  await settle(page);
+  assert.equal(await text(page, '#detail [data-key="hive-state"]'), "The swarm is open with 14 entries from 4 agents.");
+  assert.equal(await page.evaluate(() => document.querySelector("#detail .detail-scroll").scrollTop), reading, "the live update lost the reading position of the timeline");
+  await fixedFrame(page, "hive with the swarm pane");
+  step(`hive: an entry written while the page is open appears ${shown - stored} milliseconds after it is stored (${stored - written} to store it), codex-2 leaves the blind phase, and the timeline keeps its reading position`);
 
+  // No size scrolls the page with the swarm list alone or with the pane, and the actions of the user stay in reach.
+  for (const [width, height] of FRAMES) {
+    await page.setViewportSize({ width, height });
+    await fixedFrame(page, `hive with the pane at ${width} by ${height}`);
+    assert.ok(await page.locator('#detail .detail-foot [data-key^="form:hive_post:"]').first().evaluate((node) => { const box = node.getBoundingClientRect(); return box.top >= 0 && box.bottom <= window.innerHeight; }), `hive at ${width} by ${height}: the actions of the swarm are out of reach`);
+    await closePane(page);
+    await fixedFrame(page, `hive at ${width} by ${height}`);
+    await page.locator(`[data-key="hive-swarm-${swarm}"]`).click();
+    await page.waitForSelector('#detail [data-key="hive-timeline"]');
+    await settle(page);
+  }
   for (const width of [390, 320]) {
     await noOverflow(page, width, "hive timeline");
     for (const id of [e.conclusion, e.answer, e.reply, appended.id]) assert.ok(await inView(page, "#hive-" + id, width), `the entry ${id} sits off a ${width} pixel screen`);
@@ -1307,7 +1400,7 @@ async function hived(browser, fixture) {
   // A nested entry keeps at least 70 percent of a 320 pixel screen, so the indentation of a thread never squeezes its text.
   assert.ok(phone.every((value) => value >= 224), `a nested entry is too narrow to read at 320 pixels: ${phone}`);
   await page.setViewportSize({ width: 1440, height: 900 });
-  step("hive: the timeline with its nested replies stays readable at 390 and 320 pixels");
+  step(`hive: no size scrolls the page with the swarm list or the pane, the actions stay in reach, and the timeline with its nested replies stays readable at 390 and 320 pixels`);
 
   // The user posts as workspace-user: an answer to the open question and a question to one agent.
   await page.locator(`[data-key="form:hive_post:${swarm}:answer:${e.user_question}"]`).click();
@@ -1327,7 +1420,7 @@ async function hived(browser, fixture) {
   await field(page, "addressee").selectOption("agent:codex-2");
   await page.locator("#form-save").click();
   await savedToast(page, /The question e\d+ is posted\./);
-  await page.waitForFunction(() => /Addressed to agent codex-2\./.test(document.querySelector('#main .view:not(.pending) [data-key="hive-timeline"]').textContent), null, { timeout: 15000 });
+  await page.waitForFunction(() => /Addressed to agent codex-2\./.test(document.querySelector('#detail .detail-content:not(.pending) [data-key="hive-timeline"]').textContent), null, { timeout: 15000 });
   await page.locator(`[data-key="form:hive_post:${swarm}:observation"]`).click();
   await page.waitForSelector("#form-dialog[open] textarea[name=bases]");
   await field(page, "claim").fill("The warehouse report reads the export module.");
@@ -1337,38 +1430,38 @@ async function hived(browser, fixture) {
   await field(page, "bases").fill("file: src/app/export.py:1");
   await page.locator("#form-save").click();
   await savedToast(page, /The observation e\d+ is posted\./);
-  await page.waitForFunction(() => document.querySelectorAll('#main .view:not(.pending) [data-key="hive-timeline"] article').length === 17, null, { timeout: 15000 });
+  await shownEntries(17);
   step("hive: the user answers the open question, asks codex-2 a question and posts an observation, and a refused claim names its rule");
 
-  await page.locator(`[data-key="form:hive_close:${swarm}"]`).click();
+  await page.locator(`#detail [data-key="form:hive_close:${swarm}"]`).click();
   await page.waitForSelector("#form-dialog[open] textarea[name=summary]");
   assert.match(await text(page, "#form-fields"), /Confirmed conclusions\s*1 of 1/);
   await field(page, "summary").fill("Keeping the offset fixes the delivery day in both exports.");
   await page.locator("#form-save").click();
   await savedToast(page, /The swarm is closed\. Confirmed conclusions: 1 of 1\. Proposed lessons: 0\./);
-  await page.waitForFunction(() => /is closed with 17 entries/.test(document.querySelector("#main .view:not(.pending) .sentence").textContent), null, { timeout: 15000 });
+  await page.waitForFunction(() => /The swarm is closed with 17 entries/.test((document.querySelector('#detail .detail-content:not(.pending) [data-key="hive-state"]') || {}).textContent || ""), null, { timeout: 15000 });
   await settle(page);
   assert.equal(await page.locator('[data-key="hive-actions"]').count(), 0, "a closed swarm still offers actions");
   assert.equal(await page.locator('[data-key^="form:hive_post:"]').count(), 0, "a closed swarm still offers an answer");
   step("hive: the user closes the swarm with a summary, and the closed swarm offers no further posts");
 
-  // Purge is a user action, so a panel started by an assistant refuses it and names the reason.
+  // Purge is a user action in the foot of the list, so a panel started by an assistant refuses it there and names the reason.
   await go(page, "#hive");
   const assistant = await page.evaluate(() => Boolean((Panel.health() || {}).assistant_started));
   if (assistant) {
     assert.equal(await page.locator('[data-key="form:hive_purge"]').count(), 0, "a panel started by an assistant offers the purge");
-    assert.match(await text(page, '[data-key="hive-purge-refused"]'), /does not purge swarms/);
+    assert.match(await text(page, '#main .pane-foot [data-key="hive-purge-refused"]'), /does not purge swarms/);
     const refusal = await page.evaluate(() => Panel.action("hive_purge", { closed_before_days: 0 }, Panel.requestKey("hive-purge")).then(() => "", (error) => error.message));
     assert.match(refusal, /does not purge swarms of the hive/);
-    assert.equal(await text(page, "#main .sentence"), "1 swarm is recorded, and 0 are open.");
+    assert.equal(await text(page, "#view-summary"), "1 swarm is recorded, and 0 are open.");
     step("hive: a panel started by an assistant offers no purge and the server refuses one");
   } else {
-    await page.locator('[data-key="form:hive_purge"]').click();
+    await page.locator('#main .pane-foot [data-key="form:hive_purge"]').click();
     await page.waitForSelector("#form-dialog[open] input[name=closed_before_days]");
     await field(page, "closed_before_days").fill("0");
     await page.locator("#form-save").click();
     await savedToast(page, /1 swarm with 17 entries was purged\./);
-    await page.waitForFunction(() => /No swarm is recorded yet/.test(document.querySelector("#main .view:not(.pending) .sentence").textContent), null, { timeout: 15000 });
+    await page.waitForFunction(() => /No swarm is recorded yet/.test(document.getElementById("view-summary").textContent), null, { timeout: 15000 });
     step("hive: the user purges the closed swarm and the list is empty");
   }
   assert.deepEqual(problems, [], "the Hive checks logged console or page errors");

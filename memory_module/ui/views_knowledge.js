@@ -6,9 +6,10 @@
  * recurrence. Learning and Sessions are tabs of rows in the frame; a lesson, a flag and a proposal are decided in the
  * "decide" pane of views_work.js. A snapshot holds records {view, limit: 100} for each view, so the Records view filters
  * and pages those in the browser. A snapshot carries no machine response, because the machine memory stays on the
- * computer that holds it, and no sessions response. The Hive view lists the swarms and shows one swarm as a timeline; it
- * opens hive_post {swarm_id, move, target}, hive_close {swarm_id} and hive_purge {}. The Usage view reads usage {} and
- * offers no action. The Sessions view reads sessions {} and opens session_flag {flag_ids, status} for the shown flags.
+ * computer that holds it, and no sessions response. Agents and Machine are tabs of rows or of scrolling regions; a run
+ * opens the "run" pane. The Hive view lists the swarms as rows, and a row opens the "swarm" pane with the timeline; it
+ * opens hive_post {swarm_id, move, target}, hive_close {swarm_id} and hive_purge {}. The Usage view reads usage {} in one
+ * scrolling region and offers no action. The Sessions view reads sessions {} and opens session_flag {flag_ids, status}.
  */
 (() => {
   "use strict";
@@ -23,7 +24,6 @@
   // Shared helpers.
   const number = (n) => Number(n || 0).toLocaleString("en-GB");
   const isAre = (n) => (n === 1 ? "is" : "are");
-  const sentence = (text) => h("p", { class: "sentence" }, text);
   const purpose = (text) => h("p", { class: "muted" }, text);
   const heading = (text, extra) => h("div", { class: "row kn-heading" }, h("h3", null, text), extra || null);
   const section = (title, extra, ...children) => h("section", { class: "stack" }, heading(title, extra), children);
@@ -38,6 +38,8 @@
   const listOf = (list, render, message) => (list.length ? h("ul", { class: "list" }, list.map((item, index) => h("li", { class: "stack kn-item" }, render(item, index))))
     : P.empty(message));
   const grid = (list, render, message) => (list.length ? h("div", { class: "grid" }, list.map(render)) : P.empty(message));
+  // A scrolling region of the frame for cards, tables and text that are no rows.
+  const region = (...children) => h("div", { class: "list-pane" }, h("div", { class: "pane-rows pane-body", dataset: { scroll: "rows" } }, children));
   const openButton = (label, id, options = {}) => button(label, (options.prefix || "open-") + id,
     (trigger) => (options.work ? P.openWork(id, trigger) : P.openRecord(id, trigger)), options.class || "quiet kn-link");
   // A link shows the identifier of its record until the title is read.
@@ -170,7 +172,6 @@
       container.classList.add("list-view");
       put(container, P.viewTabs("The parts of Learning", "learning-tab-", tabs, tab, (id) => P.go("learning", { tab: id }), ctx));
       const list = (rows, note, empty, foot) => P.listPane({ title: tab.label, count: tab.count, tone: tab.tone, note, rows, empty, foot });
-      const region = (...children) => h("div", { class: "list-pane" }, h("div", { class: "pane-rows pane-body", dataset: { scroll: "rows" } }, children));
       const turn = (to) => () => P.go("learning", { tab: "proposed", lesson_offset: to ? String(to) : "" });
       if (tab.id === "proposed") put(container, list(proposed.lessons.map((lesson) => P.paneRow("lesson-row-" + lesson.id, "learning", lesson.do || "No action is recorded.",
         P.words(lesson.pattern_type || "lesson") + ", proposed by " + (lesson.actor || "an agent") + " on " + P.date(lesson.created_at) + ". From: " + (lesson.episode_title || lesson.episode_id),
@@ -230,27 +231,30 @@
       host.reason ? h("p", { class: "muted" }, "Reason: " + host.reason) : null,
       !host.installed ? h("p", { class: "muted" }, "The program of this host was not found on this computer.") : null);
   }
+  // The runs are rows that open the run pane, and the hosts and the follow ups are regions under their own tab.
+  const AGENT_TABS = [["runs", "Runs", null], ["hosts", "Hosts", null], ["attention", "Follow ups", "review"]];
   P.registerView("agents", { title: "Agents", async render(container, params, ctx) {
       const offset = Number(params.offset) || 0, data = await P.get("agents", offset ? { offset: String(offset) } : {});
-      const hosts = data.hosts || [], runs = (data.runs || {}).runs || [], active = data.active || [];
+      const hosts = data.hosts || [], runs = (data.runs || {}).runs || [], active = data.active || [], attention = data.attention || [];
       const ready = hosts.filter((host) => host.installed && host.available).length;
       const awaiting = runs.filter((run) => run.role === "work" && run.state === "completed" && run.changed_files && !run.merge).length;
-      put(container, sentence((data.configured ? number(ready) + " of " + P.count(hosts.length, "configured host") + " can run work now. " : "No agent host is configured for this project. ") +
+      ctx.setSummary((data.configured ? number(ready) + " of " + P.count(hosts.length, "configured host") + " can run work now. " : "No agent host is configured for this project. ") +
         (active.length ? P.count(active.length, "agent run") + " " + isAre(active.length) + " active. " : "No agent run is active. ") +
-        (awaiting ? P.count(awaiting, "delegated run") + " " + (awaiting === 1 ? "awaits" : "await") + " a merge decision." : "")));
-      if (!data.configured) put(container, h("div", { class: "notice" }, h("p", null, "Configure an agent host for this project before you delegate work or request checks.")));
-      if (hosts.length) put(container, section("Hosts", null, grid(hosts, hostCard)));
-      if ((data.attention || []).length) {
-        put(container, section("Follow ups that need attention", null, listOf(data.attention, (item) => [h("p", null, item.reason),
-          h("div", { class: "row" }, h("span", { class: "muted" }, P.date(item.created_at)), item.run_id ? actionButton("Open the run", "attention-" + item.id, openRun(item.run_id)) : null)])));
-      }
-      const rows = runs.map((run) => h("tr", null, cell("Run", button(P.words(run.role), "run-" + run.id, openRun(run.id), "quiet kn-link")),
-        cell("Host", P.words(run.host)), cell("State", P.badge(run.state)),
-        cell(P.term("work_item"), openButton(episodeTitle(run.episode_id), run.episode_id, { work: true, prefix: "run-work-" + run.id + "-" })),
-        cell("Changed files", run.role === "work" ? number(run.changed_files) : null), cell("Review", reviewLabel(run)), cell("Merge", mergeLabel(run)), dateCell("Started", run.created_at)));
-      put(container, section("Runs", null, runs.length ? table(["Run", "Host", "State", P.term("work_item"), "Changed files", "Review", "Merge", "Started"], rows) : P.empty("No agent run is recorded."),
-        runs.length ? h("p", { class: "muted" }, "The changed files, review and merge columns describe delegated work. They stay empty for an agent check.") : null,
-        pager({ offset, count: runs.length, more: (data.runs || {}).more, limit: 20 }, "runs", (next) => P.go("agents", { ...params, offset: next ? String(next) : "" }))));
+        (awaiting ? P.count(awaiting, "delegated run") + " " + (awaiting === 1 ? "awaits" : "await") + " a merge decision." : ""));
+      const counts = { runs: null, hosts: hosts.length, attention: attention.length };
+      const tabs = AGENT_TABS.map(([id, label, tone]) => ({ id, label, count: counts[id], tone: counts[id] ? tone : null }));
+      const tab = tabs.find((entry) => entry.id === params.tab) || tabs[0];
+      container.classList.add("list-view");
+      put(container, P.viewTabs("The parts of Agents", "agents-tab-", tabs, tab, (id) => P.go("agents", { tab: id }), ctx));
+      if (tab.id === "runs") put(container, P.listPane({ title: "Runs", count: runs.length, rows: runs.map((run) => P.paneRow("run-" + run.id, "agents", P.words(run.role) + " run on " + P.words(run.host),
+        h("span", { class: "row" }, P.badge(run.state), reviewLabel(run), mergeLabel(run), h("span", { class: "muted" }, [episodeTitle(run.episode_id),
+          run.role === "work" ? P.count(run.changed_files, "changed file") : null, P.date(run.created_at)].filter(Boolean).join(", "))), openRun(run.id))),
+      note: "A row opens the run with its report, its diff summary and its actions. The changed files, the review and the merge state describe delegated work and stay empty for an agent check.",
+      empty: "No agent run is recorded.", foot: pager({ offset, count: runs.length, more: (data.runs || {}).more, limit: 20 }, "runs", (next) => P.go("agents", { ...params, offset: next ? String(next) : "" })) }));
+      else if (tab.id === "hosts") put(container, region(data.configured ? null : h("div", { class: "notice" }, h("p", null, "Configure an agent host for this project before you delegate work or request checks.")),
+        grid(hosts, hostCard, "No agent host is configured for this project.")));
+      else put(container, region(listOf(attention, (item) => [h("p", null, item.reason),
+        h("div", { class: "row" }, h("span", { class: "muted" }, P.date(item.created_at)), item.run_id ? actionButton("Open the run", "attention-" + item.id, openRun(item.run_id)) : null)], "No follow up needs attention.")));
   } });
 
   function diffFiles(text) {
@@ -562,6 +566,8 @@
       cell("Template", item.template ? P.words(item.template) : "Not recorded"), cell("Lifecycle", P.badge(item.phase === "production" ? "review" : "in_progress", P.words(item.phase))),
       dateCell("First seen", item.first_seen), dateCell("Updated", item.updated_at))));
   }
+  // One tab for each part of the machine memory. Every tab scrolls inside its region under the isolation notice.
+  const MACHINE_TABS = [["proposals", "Proposals", "review"], ["rules", "Rules in force", "guarded"], ["retired", "Retired rules", null], ["projects", "Projects", null]];
   P.registerView("machine", { title: "Machine", async render(container, params, ctx) {
       let data;
       try {
@@ -572,26 +578,27 @@
           : failed(error));
         return;
       }
-      const rules = data.rules || [], promotions = data.promotions || [], retired = data.retired || [];
+      const rules = data.rules || [], promotions = data.promotions || [], retired = data.retired || [], projects = data.projects || [];
       const waiting = promotions.filter((item) => item.state === "proposed"), decided = promotions.filter((item) => item.state !== "proposed");
-      put(container, sentence((data.exists ? P.count(data.rules_total || 0, "rule") + " " + isAre(data.rules_total || 0) + " in force on " + data.machine + ", promoted from "
+      ctx.setSummary((data.exists ? P.count(data.rules_total || 0, "rule") + " " + isAre(data.rules_total || 0) + " in force on " + data.machine + ", promoted from "
         + P.count(data.projects_total || 0, "project") + ". " : "No machine memory exists on this computer yet. ")
-        + P.count(waiting.length, "proposal") + " from this project " + (waiting.length === 1 ? "awaits" : "await") + " your decision."),
-        purpose("The machine memory holds the rules that you promoted from single projects, so that they reach every project on this computer."));
-      put(container, h("div", { class: "notice", dataset: { key: "machine-isolation" } },
-        h("p", null, data.note), data.error ? h("p", null, "The machine memory could not be read: " + data.error) : null,
-        h("p", { class: "muted" }, "Database: " + data.database)));
-      put(container, section("Proposals from this project", counted(waiting.length, "proposal"),
+        + P.count(waiting.length, "proposal") + " from this project " + (waiting.length === 1 ? "awaits" : "await") + " your decision.");
+      const counts = { proposals: waiting.length, rules: rules.length, retired: retired.length, projects: data.projects_total || 0 };
+      const tabs = MACHINE_TABS.map(([id, label, tone]) => ({ id, label, count: counts[id], tone: counts[id] ? tone : null }));
+      const tab = tabs.find((entry) => entry.id === params.tab) || tabs[0];
+      container.classList.add("list-view");
+      put(container, P.viewTabs("The parts of Machine", "machine-tab-", tabs, tab, (id) => P.go("machine", { tab: id }), ctx));
+      const notice = h("div", { class: "notice", dataset: { key: "machine-isolation" } },
+        h("p", null, "The machine memory holds the rules that you promoted from single projects, so that they reach every project on this computer. " + data.note),
+        data.error ? h("p", null, "The machine memory could not be read: " + data.error) : null, h("p", { class: "muted" }, "Database: " + data.database));
+      if (tab.id === "proposals") put(container, region(notice, purpose("A proposal stays in this project until you accept it. Correct its text in the acceptance form when a word belongs to this project alone."),
         grid(waiting, (item) => promotionCard(item, ctx), "No proposal awaits your decision. An agent proposes a rule with the promote_rule action."),
-        h("p", { class: "muted" }, "A proposal stays in this project until you accept it. Correct its text in the acceptance form when a word belongs to this project alone.")));
-      put(container, section("Rules in force", counted(rules.length, "rule"),
-        grid(rules, (rule) => machineRule(rule, ctx), "No rule is promoted to this machine yet."),
-        h("p", { class: "muted" }, "A rule in force is not rewritten. Retire it and promote the corrected text when it needs a change.")));
-      if (retired.length) put(container, section("Retired rules", counted(retired.length, "rule"), grid(retired, (rule) => machineRule(rule, ctx))));
-      put(container, section("Projects on this machine", counted(data.projects_total || 0, "project"),
-        (data.projects || []).length ? registryTable(data.projects, data.project_path) : P.empty("No project is recorded in the registry yet."),
-        h("p", { class: "muted" }, "The registry stays on this computer. It is not part of an export and no agent reads it.")));
-      if (decided.length) put(container, section("Decided proposals", counted(decided.length, "proposal"), grid(decided, (item) => promotionCard(item, ctx))));
+        decided.length ? section("Decided proposals", counted(decided.length, "proposal"), grid(decided, (item) => promotionCard(item, ctx))) : null));
+      else if (tab.id === "rules") put(container, region(notice, purpose("A rule in force is not rewritten. Retire it and promote the corrected text when it needs a change."),
+        grid(rules, (rule) => machineRule(rule, ctx), "No rule is promoted to this machine yet.")));
+      else if (tab.id === "retired") put(container, region(notice, grid(retired, (rule) => machineRule(rule, ctx), "No rule of this machine is retired.")));
+      else put(container, region(notice, purpose("The registry stays on this computer. It is not part of an export and no agent reads it."),
+        projects.length ? registryTable(projects, data.project_path) : P.empty("No project is recorded in the registry yet.")));
   } });
   // Hive: the shared working record of agents that work together. The list shows every swarm, and a swarm opens as a
   // conversation timeline in which replies and answers sit under the entry they reply to. Challenges, supports and
@@ -679,60 +686,62 @@
         h("span", { class: "muted" }, P.count(agent.entries, "entry", "entries"))),
       h("p", { class: "muted" }, note));
   }
-  async function hiveSwarm(container, params, ctx) {
-    const data = await P.get("hive", { id: params.swarm });
-    const { swarm, agents } = data, open = swarm.state === "open";
-    const byId = new Map(data.entries.map((entry) => [entry.id, entry]));
-    const entries = data.entries.filter((entry) => (!params.move || entry.move === params.move) && (!params.agent || entry.agent === params.agent));
-    const revealing = new Set();
-    if (swarm.blind) {
-      const seen = new Set();
-      for (const entry of data.entries) if (entry.move === "hypothesis" && !seen.has(entry.agent)) { seen.add(entry.agent); revealing.add(entry.id); }
-    }
-    const filter = (name) => (value) => P.go("hive", { ...params, [name]: value });
-    const context = { swarm_id: swarm.id };
-    put(container, h("div", { class: "row" }, button("All swarms", "hive-back", () => P.go("hive"), "small")),
-      sentence(`${swarm.title} is ${open ? "open" : "closed"} with ${P.count(data.total, "entry", "entries")} from ${P.count(agents.length, "agent")}.`),
-      h("p", null, swarm.purpose),
-      h("div", { class: "row" }, swarmBadge(swarm), P.chip(P.words(swarm.kind) + " swarm"), P.chip("Opened " + P.date(swarm.opened_at)),
-        swarm.closed_at ? P.chip("Closed " + P.date(swarm.closed_at)) : null,
-        swarm.episode_id ? button("Open the work item", "hive-work", (trigger) => P.openWork(swarm.episode_id, trigger), "small quiet") : null),
-      swarm.summary ? h("p", { class: "muted" }, "Summary: " + swarm.summary) : null,
-      ctx.canEdit && open ? h("div", { class: "row", dataset: { key: "hive-actions" } },
+  // The move and agent filters of the timeline are kept here, so a live update of the pane keeps them.
+  const hiveFilter = { id: null, move: "", agent: "" };
+  P.registerPane("swarm", { async render(body, params, ctx) {
+      const data = await P.get("hive", { id: params.id });
+      const { swarm, agents } = data, open = swarm.state === "open";
+      if (hiveFilter.id !== params.id) Object.assign(hiveFilter, { id: params.id, move: "", agent: "" });
+      ctx.setKind("Swarm");
+      ctx.setTitle(swarm.title);
+      const byId = new Map(data.entries.map((entry) => [entry.id, entry]));
+      const entries = data.entries.filter((entry) => (!hiveFilter.move || entry.move === hiveFilter.move) && (!hiveFilter.agent || entry.agent === hiveFilter.agent));
+      const revealing = new Set();
+      if (swarm.blind) {
+        const seen = new Set();
+        for (const entry of data.entries) if (entry.move === "hypothesis" && !seen.has(entry.agent)) { seen.add(entry.agent); revealing.add(entry.id); }
+      }
+      const filter = (name) => (value) => { hiveFilter[name] = value; P.refresh(); };
+      const moves = {};
+      for (const entry of data.entries) moves[entry.move] = (moves[entry.move] || 0) + 1;
+      const context = { swarm_id: swarm.id };
+      put(body, h("p", { dataset: { key: "hive-state" } }, `The swarm is ${open ? "open" : "closed"} with ${P.count(data.total, "entry", "entries")} from ${P.count(agents.length, "agent")}.`),
+        h("p", null, swarm.purpose),
+        h("div", { class: "row" }, swarmBadge(swarm), P.chip(P.words(swarm.kind) + " swarm"), P.chip("Opened " + P.date(swarm.opened_at)),
+          swarm.closed_at ? P.chip("Closed " + P.date(swarm.closed_at)) : null, swarm.blind ? P.chip("Blind phase first") : null,
+          swarm.episode_id ? button("Open the work item", "hive-work", (trigger) => P.openWork(swarm.episode_id, trigger), "small quiet") : null),
+        swarm.summary ? h("p", { class: "muted" }, "Summary: " + swarm.summary) : null,
+        Object.keys(moves).length ? h("p", { class: "muted" }, "Entries by move: " + Object.entries(moves).map(([move, n]) => P.lower(P.words(move)) + " " + n).join(", ") + ".") : null,
+        section("Agents", counted(agents.length, "agent"), listOf(agents, (agent) => agentRow(agent, swarm), "No agent has joined this swarm yet.")),
+        section("Timeline", h("span", { class: "muted" }, P.count(entries.length, "entry", "entries")),
+          h("div", { class: "toolbar" },
+            P.filterField("select", "hive-move", "Move", hiveFilter.move, filter("move"), [["", "All moves"], ...HIVE_MOVES.map((move) => [move, P.words(move)])]),
+            P.filterField("select", "hive-agent", "Agent", hiveFilter.agent, filter("agent"), [["", "All agents"], ...agents.map((agent) => [agent.agent_id, agent.agent_id])])),
+          entries.length ? timeline(entries, { byId, swarm, ctx, revealing })
+            : P.empty(data.total ? "No entry matches the filters." : "No entry is recorded in this swarm yet."),
+          data.more ? h("p", { class: "muted" }, `The first ${P.count(data.entries.length, "entry", "entries")} of ${data.total} are shown.`) : null));
+      put(ctx.foot, ctx.canEdit && open ? h("div", { class: "row", dataset: { key: "hive-actions" } },
         P.formButton("Ask a question", "hive_post", { ...context, move: "question" }, { class: "small" }),
         P.formButton("Post an observation", "hive_post", { ...context, move: "observation" }, { class: "small" }),
-        P.formButton("Close the swarm", "hive_close", context, { class: "small" })) : null,
-      section("Agents", counted(agents.length, "agent"), listOf(agents, (agent) => agentRow(agent, swarm), "No agent has joined this swarm yet.")),
-      section("Timeline", h("span", { class: "muted" }, P.count(entries.length, "entry", "entries")),
-        h("div", { class: "toolbar" },
-          P.filterField("select", "hive-move", "Move", params.move || "", filter("move"), [["", "All moves"], ...HIVE_MOVES.map((move) => [move, P.words(move)])]),
-          P.filterField("select", "hive-agent", "Agent", params.agent || "", filter("agent"), [["", "All agents"], ...agents.map((agent) => [agent.agent_id, agent.agent_id])])),
-        entries.length ? timeline(entries, { byId, swarm, ctx, revealing })
-          : P.empty(data.total ? "No entry matches the filters." : "No entry is recorded in this swarm yet."),
-        data.more ? h("p", { class: "muted" }, `The first ${P.count(data.entries.length, "entry", "entries")} of ${data.total} are shown.`) : null));
-  }
-  async function hiveList(container, ctx) {
-    const data = await P.get("hive", { limit: "50" });
-    const swarms = data.swarms || [], opened = swarms.filter((swarm) => swarm.state === "open").length;
-    put(container, sentence(data.total ? `${P.count(data.total, "swarm")} ${isAre(data.total)} recorded, and ${opened} ${isAre(opened)} open.`
-      : "No swarm is recorded yet. A swarm opens when agents start to work together on one problem."),
-      purpose("The hive is the shared record of agents that work on one problem together. Each group of agents is a swarm, and its entries read as a conversation."));
-    if (ctx.canEdit && swarms.some((swarm) => swarm.state !== "open")) {
-      put(container, (P.health() || {}).assistant_started
-        ? h("div", { class: "notice", dataset: { key: "hive-purge-refused" } }, h("p", null, "This control panel was started from inside an assistant session, so it does not purge swarms. Start the control panel from your own terminal with project-memory view to purge closed swarms."))
-        : h("div", { class: "row" }, P.formButton("Purge closed swarms", "hive_purge", {}, { class: "small danger" })));
-    }
-    put(container, swarms.length ? grid(swarms, (swarm) => h("article", { class: "card", dataset: { key: "hive-swarm-" + swarm.id } },
-      h("h3", null, h("span", null, swarm.title), swarmBadge(swarm)),
-      h("p", { class: "muted" }, swarm.purpose),
-      h("div", { class: "row" }, P.chip(P.words(swarm.kind) + " swarm"), P.chip(P.count(swarm.entries, "entry", "entries")), swarm.blind ? P.chip("Blind phase first") : null),
-      h("div", { class: "row" }, swarm.agents.map((agent) => h("span", { class: "row" }, hostBadge(agent.host), agent.agent_id))),
-      Object.keys(swarm.moves).length ? h("p", { class: "muted" }, "Entries by move: " + Object.entries(swarm.moves).map(([move, n]) => P.lower(P.words(move)) + " " + n).join(", ") + ".") : null,
-      h("div", { class: "row" }, button("Open the timeline", "hive-open-" + swarm.id, () => P.go("hive", { swarm: swarm.id }), "small primary")))) : null,
-    data.total > swarms.length ? h("p", { class: "muted" }, `The ${swarms.length} newest swarms are shown.`) : null);
-  }
-  P.registerView("hive", { title: "Hive", section: "Oversight",
-    render: (container, params, ctx) => (params.swarm ? hiveSwarm(container, params, ctx) : hiveList(container, ctx)) });
+        P.formButton("Close the swarm", "hive_close", context, { class: "small" })) : null);
+  } });
+  // The swarms are rows, and the purge of closed swarms stays in the foot with its dialog or its refusal.
+  P.registerView("hive", { title: "Hive", section: "Oversight", async render(container, params, ctx) {
+      const data = await P.get("hive", { limit: "50" });
+      const swarms = data.swarms || [], opened = swarms.filter((swarm) => swarm.state === "open").length;
+      ctx.setSummary(data.total ? `${P.count(data.total, "swarm")} ${isAre(data.total)} recorded, and ${opened} ${isAre(opened)} open.`
+        : "No swarm is recorded yet. A swarm opens when agents start to work together on one problem.");
+      const closed = ctx.canEdit && swarms.some((swarm) => swarm.state !== "open");
+      container.classList.add("list-view");
+      put(container, P.listPane({ title: "Swarms", count: data.total || 0, note: "The hive is the shared record of agents that work on one problem together. Each group of agents is a swarm, and a row opens its entries as a conversation.",
+        rows: swarms.map((swarm) => P.paneRow("hive-swarm-" + swarm.id, "hive", swarm.title, h("span", { class: "row" }, swarmBadge(swarm), P.chip(P.words(swarm.kind) + " swarm"),
+          P.chip(P.count(swarm.entries, "entry", "entries")), swarm.blind ? P.chip("Blind phase first") : null, h("span", { class: "muted" }, swarm.agents.map((agent) => agent.agent_id).join(", "))),
+        (trigger) => P.openPane("swarm", { id: swarm.id }, trigger))),
+        empty: "No swarm is recorded yet.", foot: [h("span", null, data.total > swarms.length ? `The ${swarms.length} newest swarms are shown.` : ""),
+          !closed ? null : (P.health() || {}).assistant_started
+            ? h("span", { dataset: { key: "hive-purge-refused" } }, "This control panel was started from inside an assistant session, so it does not purge swarms. Start the control panel from your own terminal with project-memory view to purge closed swarms.")
+            : P.formButton("Purge closed swarms", "hive_purge", {}, { class: "small danger" })] }));
+  } });
 
   // Usage: the usage ledger of this machine for each host, the latest probe of each host and the routing decisions of
   // the recent runs of this project. The ledger stays on the computer that holds it, so a snapshot carries no usage.
@@ -777,7 +786,7 @@
       h("div", { class: "row" }, Object.entries(measured).map(([name, yes]) => P.badge(yes ? "ready" : "backlog", P.words(name) + (yes ? " measured" : " unavailable")))),
       (item.unavailable || []).length ? h("ul", { class: "kn-plain muted" }, item.unavailable.map((text) => h("li", null, text))) : null);
   }
-  P.registerView("usage", { title: "Usage", section: "Oversight", async render(container) {
+  P.registerView("usage", { title: "Usage", section: "Oversight", async render(container, params, ctx) {
       let data;
       try {
         data = await P.get("usage");
@@ -786,9 +795,10 @@
         return;
       }
       const items = data.hosts || [], routing = data.routing || [], constrained = items.filter((item) => (item.headroom || {}).constrained).length;
-      put(container, sentence(data.ledger ? "Usage was measured at " + P.date(data.measured_at) + ". " + P.count(constrained, "host") + " " + isAre(constrained) + " constrained."
-        : "No usage is recorded on this machine yet."),
-      h("div", { class: "notice", dataset: { key: "usage-note" } }, h("p", null, data.note),
+      ctx.setSummary(data.ledger ? "Usage was measured at " + P.date(data.measured_at) + ". " + P.count(constrained, "host") + " " + isAre(constrained) + " constrained."
+        : "No usage is recorded on this machine yet.");
+      container.classList.add("list-view");
+      put(container, region(h("div", { class: "notice", dataset: { key: "usage-note" } }, h("p", null, data.note),
         data.error ? h("p", null, "The usage ledger could not be read: " + data.error) : null,
         h("p", { class: "muted" }, "Run project-memory usage to collect the latest usage. Run project-memory host probe with a host name in your own terminal to check which roles it may take. The probe runs the host and spends tokens.")),
       section("Hosts", counted(items.length, "host"), grid(items, (item) => usageCard(item, data), "No host is known.")),
@@ -797,7 +807,7 @@
           cell("Run", button(P.words(item.role), "routing-run-" + item.id, openRun(item.id), "quiet kn-link")), cell("Chosen host", hostName(item.host)),
           cell("Preferred host", hostName(item.preferred)), cell("Reason", P.chip(ROUTES[item.reason] || P.words(item.reason)), " ", h("span", null, item.sentence)),
           dateCell("Decided", item.decided_at || item.created_at))))
-        : P.empty("No run of this project records a routing decision yet.")));
+        : P.empty("No run of this project records a routing decision yet."))));
   } });
 
   // Sessions: tabs for the flagged directions that no record followed, the distilled proposals and the digests of

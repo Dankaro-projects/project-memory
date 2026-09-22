@@ -87,7 +87,7 @@ const pane = (page) => page.locator("#detail-body .detail-content:not(.pending)"
       assert.equal(await text(page, "#main .view-head h2"), expected.architecture);
       await page.waitForSelector("#main .graph canvas");
       await go(page, "#dependencies");
-      assert.match(await text(page, "#dep-panel .sentence"), /8 dependencies connect 10 work items\./);
+      assert.match(await text(page, "#view-summary"), /8 dependencies connect 10 work items\./);
       await go(page, "#decisions");
       assert.equal(await page.locator('#main [data-key^="decision-event_"]').count(), 3);
       step(`${kind}: all ten views render from the embedded responses`);

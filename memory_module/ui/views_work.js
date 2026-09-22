@@ -343,6 +343,7 @@
   // reader opens it, and the tree, the board or the rows scroll under it. The foot stays in place under them.
   const filterBox = (id, filtered, ...fields) => h("details", { class: "kn-filter-box", id, open: remembered.open.has(id) ? remembered.open.get(id) : filtered || window.innerWidth >= 640 },
     h("summary", { on: { click: (event) => remembered.open.set(id, !event.currentTarget.parentNode.open) } }, filtered ? "Filters are applied" : "Filters"), h("div", { class: "toolbar" }, fields));
+  P.filterBox = filterBox;
   const paneBody = (name, ...children) => h("div", { class: "pane-rows pane-body", dataset: { scroll: name } }, children);
   const paneFoot = (...children) => h("div", { class: "pane-foot" }, children);
   P.registerView("plan", { title: "Plan", async render(container, params, ctx) {

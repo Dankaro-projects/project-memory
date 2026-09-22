@@ -212,7 +212,9 @@
   }
 
   Panel.registerView("architecture", { title: "Architecture", async render(container, params, ctx) {
-    const focus = params.focus || "", head = container.appendChild(h("div", { class: "view-head" }));
+    const focus = params.focus || "", head = h("div", { class: "list-head view-head" });
+    container.classList.add("list-view");
+    container.append(head);
     const update = (changes) => { Panel.setParams({ ...params, ...changes }); Panel.refresh(); };
     const back = () => h("button", { type: "button", id: "arch-back", on: { click: () => update({ focus: "", label: "", selected: params.from || "", from: "" }) } }, "Back to the overview");
     // A file level that cannot be loaded keeps the way back to the overview.
@@ -252,7 +254,7 @@
     // Packages have their own toggle, so an unticked package is not reported as hidden by a filter nobody set.
     const hidden = model.nodes.length - nodes.length - (showPackages ? 0 : model.nodes.filter((node) => node.kind === "package").length);
     if (hidden > 0) sentence += ` ${Panel.count(hidden, "item")} ${hidden === 1 ? "is" : "are"} hidden by the filters.`;
-    container.append(h("p", { class: "sentence" }, sentence));
+    ctx.setSummary(sentence);
     if (!model.nodes.length && !focus) return container.append(Panel.empty(`No structure is recorded yet. Add ${Panel.term("components").toLowerCase()}, source files or exported n8n workflows to the project.`));
 
     // An empty layer, and a single layer, offer no choice, so they are not shown as controls.
@@ -266,7 +268,7 @@
     const packages = model.nodes.filter((node) => node.kind === "package").length;
     // With one language, or none, the filter cannot change what the view shows.
     const languages = [...new Set(model.nodes.flatMap((node) => node.languages || []))].sort();
-    container.append(h("div", { class: "toolbar" }, layers,
+    head.append(Panel.filterBox("arch-filters", filtered, layers,
       packages ? filterControl("check", "arch-packages", `Show packages (${packages})`, showPackages, update, "packages") : null,
       languages.length > 1 ? filterControl("select", "arch-language", "Language", params.language || "", update, "language",
         [["", "All languages"], ...languages.map((language) => [language, LANGUAGE_NAMES[language] || words(language)])]) : null,
@@ -276,7 +278,7 @@
     // Graph, legend and side panel.
     const resolve = (id) => lookups.nodes.get(id) || model.nodes.find((node) => node.authored && node.authored.id === id);
     const host = canvas(`Architecture graph with ${Panel.count(nodes.length, "item")}. The list next to the graph offers the same items for keyboard use.`);
-    const side = h("aside", { class: "graph-side", "aria-label": "Selected item and item list" });
+    const side = h("aside", { class: "graph-side", "aria-label": "Selected item and item list", dataset: { scroll: "side" } });
     let cy = null;
     const actions = { openFiles: (id) => {
       const node = lookups.nodes.get(id);
@@ -289,7 +291,7 @@
         : h("p", { class: "muted" }, "Select an item in the graph or in the list to see its files, work, lessons and links."),
       nodeList("arch-list", `All ${Panel.count(nodes.length, "item")} in the graph`, ordered.map((node) => h("li", null,
         itemButton("arch-node-" + node.id, [h("div", { class: "row" }, focus ? null : Panel.badge(node.status, STATUS_WORDS[node.status]), h("span", { class: "muted" }, kindLabel(node))),
-          h("strong", null, labelOf(node))], () => select(node.id, true), selected && selected.id === node.id)))));
+          h("strong", null, labelOf(node))], () => select(node.id, true), selected && selected.id === node.id)))), notes);
     };
     const select = (id, fromList) => {
       const node = resolve(id);
@@ -311,13 +313,13 @@
       hasCode ? "Imports are read statically from source files. Dynamic loading, import hooks, build path aliases and generated code are not detected. The name a manifest declares can differ from the name that source files import." : null,
       hasFlows ? "Workflows, their steps and their connections are read from exported n8n JSON files in the project. Credential values are never read." : null,
       !hasCode && !hasFlows ? "Every item in this view was recorded by you or by an agent. This project holds no source files and no exported workflows to read." : null];
-    const main = h("div", { class: "stack" }, host, h("div", { class: "stack" },
+    const main = h("div", { class: "graph-main" }, host), notes = h("div", { class: "stack" },
       focus ? h("p", { class: "muted" }, "Files carry no work state here. A work item allows a path pattern such as a whole folder, so its state would mark every file inside that folder.")
         : legend("Status colours", Object.entries(STATUS_WORDS), [packages ? swatch("Package", { class: "swatch package" }) : null, swatch("Proposed, not yet confirmed", { class: "swatch dashed" })]),
-      h("p", { class: "muted" }, facts.filter(Boolean).join(" "))),
-    h("div", { class: "stack" }, model.truncated ? h("p", { class: "notice" }, "The project has more source files than the reading limit, so this structure is incomplete.") : null,
+      h("p", { class: "muted" }, facts.filter(Boolean).join(" ")),
+      model.truncated ? h("p", { class: "notice" }, "The project has more source files than the reading limit, so this structure is incomplete.") : null,
       (model.issues || []).length ? h("p", { class: "muted" }, `${Panel.count(model.issues.length, "file")} could not be read completely.`) : null,
-      h("p", { class: "muted" }, sources.filter(Boolean).join(" "))));
+      h("p", { class: "muted" }, sources.filter(Boolean).join(" ")));
     container.append(h("div", { class: "graph-layout" }, main, side));
     if (!nodes.length) host.replaceWith(Panel.empty("No item matches the current filters and layers."));
     else cy = mount(main, host, elements, "arch", { key: "architecture|" + focus + "|" + params.layers + "|" + params.packages, onTap: (id) => select(id), onDouble: actions.openFiles });
@@ -361,7 +363,7 @@
     return { edges, nodes, groups };
   }
 
-  async function workTab(panel, params, update) {
+  async function workTab(panel, params, update, ctx) {
     const data = await Panel.get("work_graph"), item = Panel.term("work_item").toLowerCase();
     const byId = new Map(data.nodes.map((node) => [node.id, node]));
     // An arrow points from the prerequisite to the work item that waits for it.
@@ -372,17 +374,17 @@
       && (!params.type || node.item_type === params.type) && (!query || node.title.toLowerCase().includes(query)));
     const ids = new Set(shown.map((node) => node.id)), visibleArrows = arrows.filter((arrow) => ids.has(arrow.source) && ids.has(arrow.target));
     const blocked = data.nodes.filter((node) => node.state === "blocked").length;
-    const sentence = (arrows.length ? `${Panel.count(arrows.length, "dependency", "dependencies")} ${arrows.length === 1 ? "connects" : "connect"} ${Panel.count(linked.size, item)}.`
+    ctx.setSummary((arrows.length ? `${Panel.count(arrows.length, "dependency", "dependencies")} ${arrows.length === 1 ? "connects" : "connect"} ${Panel.count(linked.size, item)}.`
       : `No dependencies between ${item}s are recorded.`)
-      + (blocked ? ` ${Panel.count(blocked, item)} ${blocked === 1 ? "is" : "are"} blocked, and ${Panel.count(chains.groups.length, "blocked chain")} ${chains.groups.length === 1 ? "is" : "are"} marked in red.` : ` No ${item} is blocked.`);
+      + (blocked ? ` ${Panel.count(blocked, item)} ${blocked === 1 ? "is" : "are"} blocked, and ${Panel.count(chains.groups.length, "blocked chain")} ${chains.groups.length === 1 ? "is" : "are"} marked in red.` : ` No ${item} is blocked.`));
     const unlinked = data.nodes.length - linked.size, options = (label, name) => [["", label], ...new Set(data.nodes.map((node) => node[name]))];
-    panel.append(h("p", { class: "sentence" }, sentence), h("div", { class: "toolbar" },
+    panel.append(h("div", { class: "list-head" }, h("div", { class: "toolbar" },
       filterControl("select", "dep-state", "State", params.state || "", update, "state", options("All states", "state")),
       filterControl("select", "dep-type", "Type", params.type || "", update, "type", options("All types", "item_type")),
       filterControl("search", "dep-search", "Search", params.q, update, "q", "Title"),
-      unlinked ? filterControl("check", "dep-all", `Show ${item}s without dependencies (${unlinked})`, params.all === "1", update, "all") : null));
+      unlinked ? filterControl("check", "dep-all", `Show ${item}s without dependencies (${unlinked})`, params.all === "1", update, "all") : null)));
     const host = canvas(`Dependency graph with ${Panel.count(shown.length, item)}. The list next to the graph offers the same items for keyboard use.`);
-    const main = h("div", { class: "stack" }, host);
+    const main = h("div", { class: "graph-main" }, host);
     const entry = (id, key) => h("li", null, itemButton(key + id, [h("div", { class: "row" }, Panel.badge(byId.get(id).state), h("span", { class: "muted" }, words(byId.get(id).item_type))),
       h("strong", null, byId.get(id).title)], (trigger) => Panel.openWork(id, trigger)));
     const side = h("aside", { class: "graph-side", "aria-label": "Blocked chains and item list" },
@@ -400,7 +402,7 @@
     mount(main, host, elements, "dep", { key: "dependencies|" + [params.state, params.type, params.q, params.all].join("|"), onTap: (id) => Panel.openWork(id, host) });
   }
 
-  async function packagesTab(panel, params, update, model) {
+  async function packagesTab(panel, params, update, ctx, model) {
     const rows = model.nodes.filter((entry) => entry.kind === "package").flatMap((node) => ((node.declared || []).length ? node.declared
       : [{ requirement: null, group: null, manifest: null }]).map((item) => ({ node, requirement: item.requirement, group: item.group, manifest: item.manifest })));
     const packages = model.packages || { declared: [], manifests: [], issues: [] };
@@ -418,32 +420,33 @@
       h("caption", { class: "visually-hidden" }, `Declared and imported packages, ${shown.length} shown.`),
       h("thead", null, h("tr", null, ["Package", "Ecosystem", "Requirement", "Group", "Manifest", "Imported by", "Flags"].map((label) => h("th", { scope: "col" }, label)))),
       h("tbody", null, shown.map(row))));
-    panel.append(h("p", { class: "sentence" }, `The project declares ${Panel.count((packages.declared || []).length, "package")} in ${Panel.count(manifests.length, "manifest")}.` +
-      (flagged ? ` ${Panel.count(flagged, "package")} ${flagged === 1 ? "has" : "have"} a flag.` : " No package has a flag.")),
-    h("div", { class: "toolbar" },
+    ctx.setSummary(`The project declares ${Panel.count((packages.declared || []).length, "package")} in ${Panel.count(manifests.length, "manifest")}.` +
+      (flagged ? ` ${Panel.count(flagged, "package")} ${flagged === 1 ? "has" : "have"} a flag.` : " No package has a flag."));
+    panel.append(h("div", { class: "list-head" }, h("div", { class: "toolbar" },
       filterControl("select", "pkg-ecosystem", "Ecosystem", params.ecosystem || "", update, "ecosystem", [["", "All ecosystems"], ...[...new Set(rows.map((row) => row.node.ecosystem))].map((value) => [value, value])]),
       filterControl("select", "pkg-group", "Group", params.group || "", update, "group", [["", "All groups"], ...[...new Set(rows.map((row) => row.group).filter(Boolean))].map((value) => [value, value])]),
       filterControl("select", "pkg-flag", "Flags", params.flag || "", update, "flag", [["", "All packages"], ["flagged", "Packages with a flag"],
         ["declared_not_imported", "Declared but not imported"], ["imported_not_declared", "Imported but not declared"]]),
-      filterControl("search", "pkg-search", "Search", params.q, update, "q", "Package name")),
-    shown.length ? table : Panel.empty("No package matches the current filters."),
-    manifests.length ? section("Manifests", h("ul", { class: "facts" }, manifests.map((item) => h("li", null, h("span", { class: "mono" }, item.path), ` declares ${Panel.count(item.count, "package")}.`)))) : null,
-    section("Manifest issues", (packages.issues || []).length ? h("ul", { class: "facts" }, packages.issues.map((issue) => h("li", null, typeof issue === "string" ? issue
-      : (issue.manifest ? issue.manifest + ": " : "") + issue.message))) : h("p", { class: "muted" }, "Every manifest was read without issues.")),
-    h("p", { class: "muted" }, "Packages are read from manifest files and from static imports in source files."));
+      filterControl("search", "pkg-search", "Search", params.q, update, "q", "Package name"))),
+    h("div", { class: "pane-rows pane-body" }, shown.length ? table : Panel.empty("No package matches the current filters."),
+      manifests.length ? section("Manifests", h("ul", { class: "facts" }, manifests.map((item) => h("li", null, h("span", { class: "mono" }, item.path), ` declares ${Panel.count(item.count, "package")}.`)))) : null,
+      section("Manifest issues", (packages.issues || []).length ? h("ul", { class: "facts" }, packages.issues.map((issue) => h("li", null, typeof issue === "string" ? issue
+        : (issue.manifest ? issue.manifest + ": " : "") + issue.message))) : h("p", { class: "muted" }, "Every manifest was read without issues.")),
+      h("p", { class: "muted" }, "Packages are read from manifest files and from static imports in source files.")));
   }
 
-  Panel.registerView("dependencies", { title: "Dependencies", async render(container, params) {
+  Panel.registerView("dependencies", { title: "Dependencies", async render(container, params, ctx) {
     // A project without manifests can never fill the package table, so that tab appears only where packages exist.
     const model = await Panel.get("architecture").catch(() => null);
     const packages = Boolean(model && model.nodes.some((node) => node.kind === "package")), tab = packages && params.tab === "packages" ? "packages" : "work";
     const update = (changes) => { Panel.setParams({ ...params, ...changes }); Panel.refresh(); };
     const tabButton = (name, label) => h("button", { type: "button", role: "tab", id: "dep-tab-" + name, "aria-selected": String(tab === name), "aria-controls": "dep-panel",
       on: { click: () => { Panel.setParams(name === "packages" ? { tab: name } : {}); Panel.refresh(); } } }, label);
-    const panel = h("div", { id: "dep-panel", class: "stack", role: "tabpanel", "aria-labelledby": packages ? "dep-tab-" + tab : null });
-    Panel.put(container, packages ? h("div", { class: "tabs", role: "tablist", "aria-label": "Dependency views" },
+    const panel = h("div", { id: "dep-panel", class: "list-pane", role: "tabpanel", "aria-labelledby": packages ? "dep-tab-" + tab : null });
+    container.classList.add("list-view");
+    Panel.put(container, packages ? h("div", { class: "tabs view-tabs", role: "tablist", "aria-label": "Dependency views" },
       tabButton("work", Panel.term("work_item") + " dependencies"), tabButton("packages", "Packages")) : null, panel);
-    await (tab === "packages" ? packagesTab(panel, params, update, model) : workTab(panel, params, update));
+    await (tab === "packages" ? packagesTab(panel, params, update, ctx, model) : workTab(panel, params, update, ctx));
   } });
 
   // Lineage.
