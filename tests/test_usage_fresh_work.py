@@ -174,7 +174,9 @@ class ReportTests(FreshFixture):
     def run_command(self, *arguments):
         environment = {'CODEX_HOME': str(self.root / 'logs' / 'codex'), 'CLAUDE_CONFIG_DIR': str(self.root / 'logs' / 'claude')}
         output = io.StringIO()
-        with mock.patch.dict(os.environ, environment), redirect_stdout(output):
+        # The sample logs are dated around NOON, so the report reads them at that fixed time and not at the real clock;
+        # with the real clock the sessions left the seven day window on 22 September 2026 and the report counted one.
+        with mock.patch.dict(os.environ, environment), mock.patch.object(usage, '_now', lambda now: NOON), redirect_stdout(output):
             self.assertEqual(cli_main(['usage', *arguments]), 0)
         return output.getvalue()
 
