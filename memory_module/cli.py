@@ -154,7 +154,7 @@ def main(argv=None):
     parser=argparse.ArgumentParser(description='Keep project decisions, evidence and outcomes locally.')
     parser.add_argument('--version',action='version',version=__version__)
     sub=parser.add_subparsers(dest='command',required=True)
-    for name in ['setup','serve','doctor','view','backup','uninstall','sync','check','review','instructions']:
+    for name in ['setup','serve','doctor','view','backup','uninstall','sync','check','review','instructions','export']:
         p=sub.add_parser(name)
         p.add_argument('--project',default=os.environ.get('PROJECT_MEMORY_PROJECT',os.getcwd()))
         p.add_argument('--db')
@@ -176,6 +176,11 @@ def main(argv=None):
             p.add_argument('--wait-seconds',type=int,help='Stop waiting after this many seconds without cancelling the review (default: 60).')
         elif name=='instructions':
             p.add_argument('--output',required=True,help='Folder that receives one Markdown file per role. The database stays the source of truth.')
+        elif name=='export':
+            p.add_argument('--obsidian',metavar='VAULT',help='Vault folder that receives the notes. A later run reuses the recorded folder.')
+            p.add_argument('--include-receipts',action='store_true',help='Add a note for every host receipt. They are tool observations and are left out by default.')
+            p.add_argument('--full',action='store_true',help='Rewrite every note instead of only the records that changed.')
+            p.add_argument('--hook',choices=['on','off'],help='Switch the refresh that the session stop hook starts.')
         elif name=='backup':p.add_argument('destination')
     init=sub.add_parser('init',help='Create a project from a template: product, engagement or automation.')
     init.add_argument('path')
@@ -310,6 +315,13 @@ def main(argv=None):
                 else:result=sessions.configure(memory,reading=args.action=='on',hint_tokens=args.hint_tokens if args.action=='on' else None)
         elif args.command=='instructions':
             result=write_instructions(database(args),args.output)
+        elif args.command=='export':
+            from . import vault
+            with Memory(database(args)) as memory:
+                if args.hook and not args.obsidian and not vault.configured(memory):
+                    raise ValueError('Name the vault folder with --obsidian before switching the refresh on or off.')
+                result=vault.export(memory,args.obsidian,include_receipts=args.include_receipts,full=args.full,
+                                    hook=None if args.hook is None else args.hook=='on')
         elif args.command=='view' and not args.output:
             if args.include_bodies or args.replace:raise ValueError('--include-bodies and --replace require --output for a snapshot.')
             from .live import start

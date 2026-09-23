@@ -77,6 +77,12 @@ Run `project-memory view` in the project, or ask the assistant to open Project M
 
 `project-memory view --output review.html --include-bodies --no-open` writes an offline snapshot instead. See the [control panel guide](docs/control-panel.md).
 
+## Read the records in Obsidian
+
+`project-memory export --obsidian <vault>` writes the records as a folder of Markdown notes with frontmatter and wikilinks, which Obsidian opens as a vault. A work item is a folder holding its own decisions, outcomes and plans, and sources, lessons and requirement revisions sit in shared folders beside it. The graph, the backlinks and the search of Obsidian then work on the project history, while the panel stays the place where you decide.
+
+The export runs in one direction. The database is the source of truth, the export owns one folder inside the vault and touches nothing outside it, and a note edited inside that folder is lost on the next run. After a session that wrote records, the session stop hook refreshes the vault in a separate process.
+
 ## Agent checks and delegated work
 
 When Codex or Claude Code is configured, Project Memory can start short, separate host processes. An agent check reads the records and the project and reports on an outcome, on the current intent or on an unconfirmed execution. Delegated work runs a work item in its own git worktree, limited to the paths in its plan, and a second host reviews the resulting diff before you merge it. If one host reports a usage limit or a rate limit, the run reroutes once to the other configured host.

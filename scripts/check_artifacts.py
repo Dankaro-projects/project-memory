@@ -14,7 +14,7 @@ REQUIRED_MODULES = (
     'api', 'arch_authored', 'arch_base', 'arch_code', 'arch_n8n', 'architecture', 'capture_errors', 'cli',
     'codex_host', 'core', 'coverage', 'delegation', 'direction', 'documents', 'focus', 'graph', 'guards', 'health',
     'hive', 'hooks', 'host_profiles', 'hosts', 'install', 'live', 'machine', 'mcp', 'planning', 'reports', 'reviews', 'schema', 'sessions',
-    'setup_codex', 'shared', 'templates', 'usage', 'viewer', 'workflow', 'workspace', 'worktree',
+    'setup_codex', 'shared', 'templates', 'usage', 'vault', 'viewer', 'workflow', 'workspace', 'worktree',
 )
 RETIRED_MODULES = ('maps', 'skills', 'project_dependencies', 'review_logs')
 

@@ -433,6 +433,15 @@ def capture(memory, event, host='codex'):
     if name in {'SessionStart', 'Stop'}:
         from .documents import sync
         refreshed = sync(memory)
+    if name == 'Stop':
+        # The vault of the user is regenerated after a session that wrote records. A full run does not fit the hook
+        # budget, so the refresh is detached and the hook returns without waiting for it. A failure never blocks a turn.
+        from . import vault
+        try:
+            if vault.needs_refresh(memory):
+                vault.refresh_detached(memory)
+        except (OSError, ValueError, RuntimeError, sqlite3.Error):
+            pass
     with memory._write():
         binding = active_binding(memory,session)
         ep, decision = (binding['episode_id'], binding['decision_id']) if binding else (None, None)

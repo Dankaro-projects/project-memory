@@ -103,6 +103,28 @@ project-memory view --output review.html --include-bodies --no-open
 
 An existing file is protected unless you add `--replace`. Check the contents of an export before you share it, because it contains the project evidence.
 
+## Read the records in Obsidian
+
+The control panel answers the question of the day: what waits, what to decide, what to merge. To read across time instead, write the records as a folder of Markdown notes and open them in Obsidian:
+
+```sh
+project-memory export --obsidian ~/Documents/Vault
+```
+
+The command writes one note per record into the folder `Project Memory` inside that vault, and a later run reuses the folder without the option. A work item is a folder that holds its own decisions, outcomes and plans; sources, lessons and requirement revisions sit in shared folders beside it. Each note carries the record identifier, the kind, the state, the subject and the date in its frontmatter, and links to its work item and its evidence as wikilinks, so the graph, the backlinks and the search of Obsidian work on your project history.
+
+| Option | What it does |
+| --- | --- |
+| `--include-receipts` | Adds a note for every host receipt. They are tool observations, so they are left out by default. |
+| `--full` | Rewrites every note instead of only the records that changed. |
+| `--hook off` | Stops the session stop hook from refreshing the vault. `--hook on` starts it again. |
+
+The export runs in one direction. The database stays the source of truth, and a note edited inside the managed folder is lost on the next run. Keep a thought of your own in a file outside that folder and capture it with `memory_write document`, which stores it as evidence with a version.
+
+The export owns the folder `Project Memory` and writes or removes nothing outside it. Inside it, only a file that carries the marker of this project in its frontmatter is replaced or removed; any other file is kept and named in the report. A folder that already holds files without that marker refuses the run, so a mistyped path cannot overwrite an unrelated folder.
+
+After a session that wrote records, the session stop hook starts the refresh as a separate process and does not wait for it, because a full run does not fit the hook budget.
+
 ## When something is missing
 
 Previously captured Markdown files refresh at session start and at session stop. A file that changed during a task may not be captured yet; ask the assistant to refresh it with `memory_write sync`, or run `project-memory sync`. New or moved files need to be selected explicitly, because the hooks do not crawl the project.
