@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.6.0b10 (23 September 2026)
 
 Several criteria can be confirmed with one statement. On 23 September 2026 the latest checks of the 19 work items in review held 42 criteria reported as unknown, because no evidence of the day of the work was stored, and 2 reported as needing the user. The panel could confirm only the second kind, one criterion at a time, so the items stayed in review although their work was done. Now has a Criteria to confirm tab, and its form lists every open criterion of both kinds, grouped by work item, with the reviewer's reason and its kind. One statement is recorded with user origin for every selected criterion in one transaction, and one criterion that is no longer open refuses the whole batch. A met or unmet criterion is never offered. The confirmation does not finish an item: the next outcome check reads it as met on the evidence of the user, and Done still needs that check to pass. The workspace operation is `confirm_criteria`, and `confirm_criterion` now accepts an unknown criterion as well. The panel grew by 208 code characters in the views and 1,388 in forms.js, within a new allowance of 250 and 1,400.
 

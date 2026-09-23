@@ -96,8 +96,8 @@ The destination must be new. SQLite's backup API produces a consistent copy. Set
 Upgrade by running the current version's setup inside the project:
 
 ```sh
-uvx project-memory-mcp@0.6.0b9 setup --client codex --trust
-uvx project-memory-mcp@0.6.0b9 doctor
+uvx project-memory-mcp@0.6.0b10 setup --client codex --trust
+uvx project-memory-mcp@0.6.0b10 doctor
 ```
 
 Use `--client claude --trust` for Claude Code or `--client mcp` for another client. The recorded launcher is versioned, so setup updates the configuration and verifies the new host hashes. Start a new task afterwards. If you use a plugin, update it through the host's plugin manager as well; a task that is already running keeps the tool schemas it loaded.
