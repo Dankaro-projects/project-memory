@@ -19,7 +19,7 @@ from .shared import prior_result, run_summary, store_result
 KEY_REUSED = 'This action key was already used for different changes.'
 RECORD_OPERATIONS = ('plan', 'sprint', 'comment', 'requirements', 'lesson_review', 'allow_paths', 'link', 'component',
                      'answer_kickoff', 'instructions', 'phase', 'reassess', 'session_flag', 'session_flags', 'session_proposal',
-                     'confirm_criterion')
+                     'confirm_criterion', 'confirm_criteria')
 RUN_OPERATIONS = ('delegate', 'merge', 'discard', 'review', 'cancel_run', 'request_work_review', 'focus_check', 'focus_start',
                   'hive_post', 'hive_close', 'hive_purge', 'reconcile', 'reconcile_read_only')
 # Promotion actions write to the machine memory, which is a second database, so they run outside the
@@ -43,6 +43,7 @@ FIELDS = {
     'session_flags': ({'flag_ids', 'status'}, {'reason'}),
     'session_proposal': ({'proposal_id', 'status', 'reason'}, {'episode_id', 'expected_version'}),
     'confirm_criterion': ({'episode_id', 'criterion', 'statement'}, set()),
+    'confirm_criteria': ({'items', 'statement'}, set()),
     'reconcile': ({'receipt_id', 'resolution', 'reason'}, set()),
     'reconcile_read_only': ({'reason'}, set()),
     'delegate': ({'episode_id'}, {'host', 'max_seconds'}),
@@ -74,6 +75,7 @@ MESSAGES = {
     'session_flags': 'Name the flagged messages and confirm or dismiss them together. The reason is optional.',
     'session_proposal': 'Select the proposal, accept or reject it, and give the reason. Acceptance needs the work item and its current version.',
     'confirm_criterion': 'Select the work item and the criterion, and write your confirmation.',
+    'confirm_criteria': 'Select the criteria, each with its work item, and write one confirmation for all of them.',
     'reconcile': 'Select the tool call, its resolution and the reason.',
     'reconcile_read_only': 'Write the reason for resolving the read-only calls.',
     'delegate': 'Select the work item to delegate. The host and time limit are optional.',
@@ -451,11 +453,17 @@ def confirm_criterion(memory, data, request_key):
     return reviews.confirm_criterion(memory, data['episode_id'], data['criterion'], data['statement'], request_key)
 
 
+def confirm_criteria(memory, data, request_key):
+    """Confirm several criteria across work items with one statement. One criterion that is not open refuses them all."""
+    from . import reviews
+    return reviews.confirm_criteria(memory, data['items'], data['statement'], request_key)
+
+
 RECORD_HANDLERS = {'plan': plan, 'sprint': sprint, 'comment': comment, 'requirements': requirements,
                    'lesson_review': lesson_review, 'allow_paths': allow_paths, 'link': link, 'component': component,
                    'answer_kickoff': answer_kickoff, 'instructions': instructions, 'phase': phase, 'reassess': reassess,
                    'session_flag': session_flag, 'session_flags': session_flags, 'session_proposal': session_proposal,
-                   'confirm_criterion': confirm_criterion}
+                   'confirm_criterion': confirm_criterion, 'confirm_criteria': confirm_criteria}
 
 
 # Agent run actions.

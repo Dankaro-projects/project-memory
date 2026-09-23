@@ -155,7 +155,7 @@
   const openRules = () => P.go("learning", { tab: "instructions" }), openSessions = () => P.go("sessions");
   const ATTENTION = {
     scope_block: ["blocked", "Edit blocked", null, (entry, trigger) => (entry.episode_id ? P.openWork(entry.episode_id, trigger) : openRecordOf(entry, trigger))],
-    blocked_work: ["blocked", "Blocked", null, openWorkOf], work_to_review: ["review", "Needs review", null, openWorkOf],
+    blocked_work: ["blocked", "Blocked", null, openWorkOf], work_to_review: ["review", "Needs review", null, openWorkOf], criteria_to_confirm: ["review", "Criteria to confirm", null, openWorkOf],
     awaiting_merge: ["review", "Awaiting merge", "agent run", (entry, trigger) => openRun(entry, trigger)],
     agent_follow_up: ["review", "Agent follow up", "agent run", openRecordOf], guard_recurrence: ["blocked", "Repeated failure", "lesson", openRecordOf],
     failure_without_lesson: ["blocked", "Failure without a lesson", "outcome", openRecordOf],
@@ -205,7 +205,7 @@
   }
   // Now: one tab for each kind that waits with its count, the rows of the selected kind, and a pane that decides the item or
   // opens it. Lessons, flags and proposals are decided in the pane, and the next item opens after each decision.
-  const NOW_ICONS = { blocked_work: "work", work_to_review: "records", scope_block: "work", awaiting_merge: "agents", agent_follow_up: "agents",
+  const NOW_ICONS = { blocked_work: "work", work_to_review: "records", criteria_to_confirm: "records", scope_block: "work", awaiting_merge: "agents", agent_follow_up: "agents",
     lessons_to_accept: "learning", guard_recurrence: "learning", rules_over_cap: "learning", rule_ineffective: "learning", failure_without_lesson: "decisions",
     session_flags: "sessions", session_proposals: "sessions", machine_rules: "machine", capture_failure: "requirements", recording_gap: "requirements" };
   const DECIDED = { lessons_to_accept: ["learning", (data) => (data.proposed_lessons || {}).lessons, (item) => [item.do || item.title || "Proposed lesson", "From: " + (item.episode_title || item.episode_id)],
@@ -253,7 +253,8 @@
       put(container, P.listPane({ title: label, count: tab.count, tone, note: source ? source[3] : target ? "A row opens the " + target + "." : "A row opens the " + noun(1) + " with why it waits and its next step.",
         rows, empty: "Nothing of this kind waits for you.", foot: [h("span", null, rows.length ? `Showing ${from + 1} to ${from + rows.length} of ${Math.max(total, from + rows.length)}.` : ""),
           !source && P.live ? h("span", { class: "row" }, offset ? button("Previous 20", "now-previous", turn(Math.max(0, offset - 20)), "small") : null,
-            offset + rows.length < total ? button("Next 20", "now-next", turn(offset + 20), "small") : null) : null] }));
+            offset + rows.length < total ? button("Next 20", "now-next", turn(offset + 20), "small") : null) : null,
+          type === "criteria_to_confirm" ? P.formButton("Confirm criteria", "confirm_criteria", {}, { class: "small primary" }) : null] }));
   } });
 
   // The decision pane of a lesson, a session flag or a session proposal. A lesson needs a reason; a flag does not.

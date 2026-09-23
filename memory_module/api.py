@@ -448,6 +448,14 @@ def now(memory, params):
         attention.append({'type': 'work_to_review', 'id': item['id'], 'title': item['title'],
                           'detail': waits(item, 'It needs review before it can continue or finish.'),
                           'reason': item['title'] + ' needs review before it can continue or finish.'})
+    # Criteria that no machine could confirm, grouped by work item. One statement of the user confirms several of them.
+    from . import reviews
+    confirmations = reviews.pending_confirmations(memory, [item['id'] for item in by_state['review'] + by_state['in_progress'] + by_state['blocked']])
+    for group in confirmations:
+        total = len(group['criteria'])
+        attention.append({'type': 'criteria_to_confirm', 'id': group['episode_id'], 'title': group['title'], 'count': total,
+                          'detail': f'{total} criteri{"on" if total == 1 else "a"} of the latest check could not be confirmed by any machine.',
+                          'reason': f'{group["title"]} has {total} criteri{"on" if total == 1 else "a"} that only you can confirm.'})
     lessons = proposed_lesson_ids(memory)
     if lessons:
         attention.append({'type': 'lessons_to_accept', 'id': lessons[0], 'count': len(lessons),
@@ -494,7 +502,7 @@ def now(memory, params):
               'agents': {'active': runs, 'recent': recent},
               'latest_decisions': [_decision_summary(record) for record in latest_decisions(memory, limit=5)['records']],
               'scope_blocks': scope_blocks(memory, limit=5), 'scope_changes': guards.scope_changes(memory, limit=5),
-              'lessons_to_accept': len(lessons), 'failures_without_lesson': len(failures),
+              'lessons_to_accept': len(lessons), 'failures_without_lesson': len(failures), 'confirmations': confirmations,
               'recurrences': sum(entry['total'] for entry in recurring)}
     from .templates import setting
     template = setting(memory)

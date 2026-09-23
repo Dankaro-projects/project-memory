@@ -713,6 +713,25 @@
     },
     done: (result) => "Criterion " + result.criterion + " is confirmed. Request a new outcome check to use it.",
   });
+  // Several criteria across work items, confirmed with one statement. Nothing is selected in advance, so each criterion is a choice.
+  P.registerForm("confirm_criteria", { title: "Confirm criteria", submitLabel: "Record my confirmation",
+    async render(fields, context) {
+      const groups = context.groups = context.groups || (await P.get("now")).confirmations || [];
+      if (!groups.length) stop("No criterion waits for your confirmation.");
+      fields.append(hint("No machine could confirm these criteria. Unknown means the check found no evidence, so your statement stands in for it."),
+        ...groups.map((item) => group(item.title, item.criteria.map((entry) => P.field(entry.criterion + ": " + entry.condition + (entry.result === "unknown" ? " (unknown)" : " (needs you)"),
+          h("input", { type: "checkbox", name: "c:" + item.episode_id + ":" + entry.criterion }), entry.evidence)))),
+        reasonField("3", "Your confirmation", "Write what you checked. The same statement is recorded for every selected criterion."));
+    },
+    submit(values, context) {
+      const items = context.groups.flatMap((item) => item.criteria.filter((entry) => values["c:" + item.episode_id + ":" + entry.criterion])
+        .map((entry) => ({ episode_id: item.episode_id, criterion: entry.criterion })));
+      need(items, "Select at least one criterion.");
+      need(values.reason, "Write your confirmation.");
+      return { operation: "confirm_criteria", data: { items, statement: values.reason } };
+    },
+    done: (result) => `${result.confirmed} criteria are confirmed in ${result.episode_ids.length} work items. Request a new outcome check of each to use them.`,
+  });
   // An unconfirmed tool call. The transcript suggestion is preselected; the user's choice and reason are recorded.
   P.registerForm("reconcile", { title: "Reconcile the tool call", submitLabel: "Record the resolution",
     render(fields, context) {

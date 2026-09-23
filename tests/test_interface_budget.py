@@ -88,8 +88,13 @@ REDESIGN_LIMIT = 20_000
 REDESIGN_STYLE_ALLOWANCE = 8_000
 REDESIGN_STYLE_LIMIT = 8_000
 REDESIGN_SHELL_ALLOWANCE = 2_300
+# Allowance for the batch confirmation of criteria. The user approved it on 23 September 2026, after a pass by hand showed that
+# 42 of the 44 open criteria in review were unknown and could only be closed by the user. Measured against main at f1d7f05:
+# views_work.js grew by 208 with the Criteria to confirm kind of Now and its button, and forms.js by 1,388 with the
+# confirm_criteria form. Rounded up to the next 50, the allowance is 250 for the views and 1,400 for forms.js.
+BATCH_CONFIRM_ALLOWANCE = {'views': 250, 'forms.js': 1_400}
 ALLOWANCES = (FOCUS_ALLOWANCE, HIVE_ALLOWANCE, USAGE_ALLOWANCE, SESSIONS_ALLOWANCE, PANEL_ACTIONS_ALLOWANCE, USABILITY_ALLOWANCE,
-              REDESIGN_ALLOWANCE)
+              REDESIGN_ALLOWANCE, BATCH_CONFIRM_ALLOWANCE)
 TOTAL_SCRIPT_CHARACTERS = 196_000 + sum(sum(allowance.values()) for allowance in ALLOWANCES)
 FILE_BUDGETS = {'core.js': 36_000 + sum(allowance.get('core.js', 0) for allowance in ALLOWANCES),
                 'forms.js': 37_000 + sum(allowance.get('forms.js', 0) for allowance in ALLOWANCES), 'graphs.js': 41_000}

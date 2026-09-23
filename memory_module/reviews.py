@@ -380,6 +380,13 @@ def _confirmation_key(episode_id, condition):
     return CONFIRMATION_PREFIX + episode_id + ':' + hashlib.sha256(condition.encode('utf-8')).hexdigest()[:24]
 
 
+# What a confirmation of the user means to the next check, by the result the confirmed criterion had.
+CONFIRMATION_MEANING = {
+    'needs_user': 'The user confirmed this criterion in the control panel. Treat it as met on this evidence.',
+    'unknown': 'No machine found evidence for this criterion, and the user confirmed it in the control panel. '
+               'Treat it as met on the evidence of the user.'}
+
+
 def user_confirmations(memory, episode_id, checklist):
     """The criteria of the checklist that the user confirmed in the control panel, with the statement of the user."""
     confirmed = []
@@ -390,12 +397,19 @@ def user_confirmations(memory, episode_id, checklist):
             body = json.loads(row['body'])
             confirmed.append({'criterion': item['id'], 'condition': item['condition'], 'statement': body['statement'],
                               'origin': 'user', 'source_id': row['id'], 'confirmed_at': row['checked_at'],
-                              'meaning': 'The user confirmed this criterion in the control panel. Treat it as met on this evidence.'})
+                              'meaning': CONFIRMATION_MEANING[body.get('result', 'needs_user')]})
     return confirmed
 
 
-def awaiting_user(memory, episode_id):
-    """The criteria that the latest finished outcome check could not confirm by any machine, not yet confirmed by the user."""
+# A criterion is offered to the user when no machine could confirm it: the reviewer judged that only the user can (needs_user),
+# or found no evidence either way (unknown). A met or an unmet criterion is never offered, so a confirmation cannot overrule
+# a finding. The user chose on 23 September 2026 that unknown criteria are offered as well, each labelled as having no evidence.
+CONFIRMABLE_RESULTS = ('needs_user', 'unknown')
+CONFIRM_BATCH = 100
+
+
+def confirmable(memory, episode_id, results=CONFIRMABLE_RESULTS):
+    """The criteria of the latest finished outcome check with one of results, not yet confirmed by the user."""
     if not exists(memory):
         return []
     row = memory.db.execute("SELECT id,snapshot,report FROM review_runs WHERE episode_id=? AND role='outcome' AND report IS NOT NULL "
@@ -406,32 +420,82 @@ def awaiting_user(memory, episode_id):
     offered = []
     for check in json.loads(row['report']).get('checks', []):
         condition = conditions.get(check.get('criterion'))
-        if check.get('result') != 'needs_user' or not condition:
+        if check.get('result') not in results or not condition:
             continue
         if memory.db.execute('SELECT 1 FROM sources WHERE source_key=?', (_confirmation_key(episode_id, condition),)).fetchone():
             continue
-        offered.append({'criterion': check['criterion'], 'condition': condition, 'run_id': row['id'], 'evidence': check.get('evidence', '')})
+        offered.append({'criterion': check['criterion'], 'condition': condition, 'result': check['result'], 'run_id': row['id'],
+                        'evidence': check.get('evidence', '')})
     return offered
 
 
-def confirm_criterion(memory, episode_id, criterion, statement, request_key):
-    """Record the confirmation of the user for a criterion that no machine can confirm. Each criterion is offered once."""
-    _text(statement, 'statement', 2000)
-    offered = next((item for item in awaiting_user(memory, episode_id) if item['criterion'] == criterion), None)
-    if not offered:
-        raise InvalidRecord('This criterion is not awaiting a confirmation of the user. Only a criterion that the latest check '
-                            'reported as needs_user, and that the user has not confirmed yet, can be confirmed.',
-                            awaiting=[item['criterion'] for item in awaiting_user(memory, episode_id)])
+def awaiting_user(memory, episode_id):
+    """The criteria that the latest finished outcome check reported as needing the user, not yet confirmed by the user."""
+    return confirmable(memory, episode_id, ('needs_user',))
+
+
+def _confirm(memory, episode_id, offered, statement, request_key):
     episode = memory.episode(episode_id)
+    criterion = offered['criterion']
     body = {'episode_id': episode_id, 'criterion': criterion, 'condition': offered['condition'], 'statement': statement,
-            'run_id': offered['run_id'], 'actor': USER_ACTOR}
+            'result': offered['result'], 'run_id': offered['run_id'], 'actor': USER_ACTOR}
     source = memory.source(_confirmation_key(episode_id, offered['condition']), 'User confirmation of ' + criterion + ' for ' + episode['title'],
                            'The user confirms: ' + offered['condition'], dumps(body), 'user', subject=episode['subject'], internal=True)
     evidence = [{'source_id': source['id'], 'reason': 'The user confirmed this criterion in the control panel.'}]
-    note = memory.record(episode_id, 'note', {'text': 'The user confirmed criterion ' + criterion + ': ' + offered['condition'] +
+    unknown = ' No machine found evidence for it.' if offered['result'] == 'unknown' else ''
+    note = memory.record(episode_id, 'note', {'text': 'The user confirmed criterion ' + criterion + ': ' + offered['condition'] + unknown +
                                               ' The user wrote: ' + statement},
                          expected_version=episode['version'], actor=USER_ACTOR, evidence=evidence, request_key=request_key + ':note')
-    return {'id': note['id'], 'episode_id': episode_id, 'criterion': criterion, 'evidence': evidence}
+    return {'id': note['id'], 'episode_id': episode_id, 'criterion': criterion, 'result': offered['result'], 'evidence': evidence}
+
+
+def confirm_criterion(memory, episode_id, criterion, statement, request_key):
+    """Record the confirmation of the user for a criterion that no machine could confirm. Each criterion is offered once."""
+    _text(statement, 'statement', 2000)
+    offered = next((item for item in confirmable(memory, episode_id) if item['criterion'] == criterion), None)
+    if not offered:
+        raise InvalidRecord('This criterion is not open for a confirmation of the user. Only a criterion that the latest check '
+                            'reported as needs_user or unknown, and that the user has not confirmed yet, can be confirmed.',
+                            awaiting=[item['criterion'] for item in confirmable(memory, episode_id)])
+    return _confirm(memory, episode_id, offered, statement, request_key)
+
+
+def confirm_criteria(memory, items, statement, request_key):
+    """Record one statement of the user for several criteria across work items, in one transaction.
+
+    Every named criterion is checked before anything is written, so one criterion that is not open refuses them all.
+    A confirmation does not finish a work item: a new outcome check of each item reads it, and Done still needs that check to pass.
+    """
+    _text(statement, 'statement', 2000)
+    if (not isinstance(items, list) or not 1 <= len(items) <= CONFIRM_BATCH
+            or not all(isinstance(item, dict) and isinstance(item.get('episode_id'), str) and isinstance(item.get('criterion'), str) for item in items)):
+        raise InvalidRecord(f'Name 1 to {CONFIRM_BATCH} criteria, each with its episode_id and criterion.')
+    wanted = list(dict.fromkeys((item['episode_id'], item['criterion']) for item in items))
+    offers = {}
+    for episode_id, criterion in wanted:
+        if episode_id not in offers:
+            offers[episode_id] = {item['criterion']: item for item in confirmable(memory, episode_id)}
+        if criterion not in offers[episode_id]:
+            raise InvalidRecord(f'Criterion {criterion} of {episode_id} is not open for a confirmation of the user, so nothing was recorded. '
+                                'Only a criterion that the latest check reported as needs_user or unknown, and that the user has not '
+                                'confirmed yet, can be confirmed.', episode_id=episode_id, criterion=criterion,
+                                awaiting=sorted(offers[episode_id]))
+    with memory._write():
+        confirmed = [_confirm(memory, episode_id, offers[episode_id][criterion], statement, f'{request_key}:{episode_id}:{criterion}')
+                     for episode_id, criterion in wanted]
+    episodes = list(dict.fromkeys(item['episode_id'] for item in confirmed))
+    return {'confirmed': len(confirmed), 'items': confirmed, 'episode_ids': episodes,
+            'next_step': 'Request a new outcome check of each work item. A passing check is still required before Done.'}
+
+
+def pending_confirmations(memory, episode_ids):
+    """The confirmable criteria of the given work items, grouped by item, for the list of Now."""
+    groups = []
+    for episode_id in episode_ids:
+        offered = confirmable(memory, episode_id)
+        if offered:
+            groups.append({'episode_id': episode_id, 'title': memory.episode(episode_id)['title'], 'criteria': offered})
+    return groups
 
 
 # The requesting turn is bounded, so that a long session does not enlarge the prompt without limit.
