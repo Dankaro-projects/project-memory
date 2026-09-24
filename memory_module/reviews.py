@@ -26,7 +26,7 @@ from .reports import REPORT_MAX_CHARACTERS, REPORT_SCHEMA, report_schema, valida
 from .shared import git, git_message, latest_source, project_paths, run_summary, tree_signature
 
 ROLES = ('outcome', 'intent', 'recovery')
-RECEIPT_PREFIX, CONFIRMATION_PREFIX = VERIFIED_SOURCE_PREFIXES
+RECEIPT_PREFIX, CONFIRMATION_PREFIX, CLOSURE_PREFIX = VERIFIED_SOURCE_PREFIXES
 RECEIPT_STATEMENT = ('Project Memory verified this output against the sha256 of its host receipt before storing it. It is the '
                      'recorded tool output, not text written by the implementer.')
 ACTIVE = ('queued', 'running', 'cancelling')

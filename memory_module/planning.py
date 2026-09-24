@@ -152,11 +152,21 @@ def completion(memory, episode_id):
     return all(completed_result(memory, r[0]) for r in related)
 
 
+def user_closed(memory, episode_id, evidence):
+    """Whether evidence holds a close of this work item by the user, which only the close operation writes."""
+    prefix = 'user-closure:' + episode_id + ':'
+    return any(memory.db.execute("SELECT 1 FROM sources WHERE id=? AND origin='user' AND substr(source_key,1,?)=?",
+                                 (r['source_id'], len(prefix), prefix)).fetchone() for r in evidence)
+
+
 def completed_result(memory, episode_id):
     from .coverage import work_issues
+    plan = latest(memory, episode_id, 'work_plan')
+    # The user decided that this work is finished, so no check or open issue overrides that.
+    if plan and plan['state'] == 'done' and user_closed(memory, episode_id, memory.read(plan['id'])['evidence']):
+        return True
     if work_issues(memory,episode_id):
         return False
-    plan = latest(memory, episode_id, 'work_plan')
     if plan and plan['state'] == 'cancelled':
         return False
     decision = latest(memory, episode_id, 'decision')
@@ -217,7 +227,7 @@ def validate_event(memory, episode, kind, payload, evidence):
             raise InvalidRecord('Work dependencies cannot contain a cycle.')
     if payload.get('parent_id'):
         validate_parent(memory, episode, payload['parent_id'])
-    if payload['state'] == 'done' and not completion(memory, episode['id']):
+    if payload['state'] == 'done' and not user_closed(memory, episode['id'], evidence) and not completion(memory, episode['id']):
         step = completion_guidance(memory, card(memory, episode['id']))
         raise InvalidRecord('Done requires current completion evidence. '+step['reason'],
                             episode_id=episode['id'], next_step=step)
@@ -282,6 +292,43 @@ def progress(memory, *, episode_id, expected_version, payload, actor, request_ke
     return save(memory,'work_plan',episode_id=episode_id,expected_version=expected_version,
                 payload={**record['payload'],**payload},actor=actor,evidence=evidence,
                 request_key=request_key,session_id=session_id,links=record['links'])
+
+
+def close(memory, *, episode_id, expected_version, prompt_receipt_id, prompt, reason, actor, request_key, session_id=None):
+    """Record that the user closed a work item in the chat, on the exact words of the user's prompt.
+
+    The capture keeps only the hash of a prompt, so the text is verified against that hash and then stored as the
+    user's evidence under a reserved key. A notification, or a prompt of another session, cannot close work.
+    """
+    from .core import InvalidRecord, _text
+    from .codex_host import read_receipt, summary
+    _text(prompt, 'prompt', 100_000)
+    _text(reason, 'reason', 2000)
+    if not session_id:
+        raise InvalidRecord('Pass the session_id of the session that received the prompt of the user.')
+    receipt = read_receipt(memory, prompt_receipt_id)
+    observed = receipt['payload']
+    if receipt['event_name'] != 'UserPromptSubmit' or observed.get('notification'):
+        raise InvalidRecord('Name the receipt of a prompt that the user typed. A notification cannot close work.')
+    if receipt['session_id'] != session_id:
+        raise InvalidRecord('The prompt receipt belongs to another session. Name a prompt that this session received.')
+    if (observed.get('prompt') or {}).get('sha256') != summary(prompt)['sha256']:
+        raise InvalidRecord('The prompt text does not match its receipt. Pass the exact text that the user sent.')
+    previous = latest(memory, episode_id, 'work_plan')
+    if not previous:
+        raise InvalidRecord('Record a plan before closing the work item.')
+    if previous['state'] in {'done', 'cancelled'}:
+        raise InvalidRecord('The work item is already ' + previous['state'] + '.')
+    episode = memory.episode(episode_id)
+    source = memory.source('user-closure:' + episode_id + ':' + prompt_receipt_id, 'The user closed: ' + episode['title'][:1900],
+                           'The user closed this work item in the chat. ' + reason, 'The user wrote:\n\n' + prompt + '\n\nReason recorded by '
+                           + actor + ': ' + reason, 'user', subject=episode['subject'], internal=True)
+    record = memory.read(previous['id'])
+    evidence = [{'source_id': e['source_id'], 'reason': e['reason']} for e in record['evidence']]
+    evidence.append({'source_id': source['id'], 'reason': 'The user closed this work item in the chat.'})
+    return save(memory, 'work_plan', episode_id=episode_id, expected_version=expected_version,
+                payload={**record['payload'], 'state': 'done', 'reason': 'The user closed this work item. ' + reason},
+                actor=actor, evidence=evidence, request_key=request_key, session_id=session_id, links=record['links'])
 
 
 def card(memory, episode_id):

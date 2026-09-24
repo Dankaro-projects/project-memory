@@ -182,6 +182,10 @@ A piece of work takes two writes: its plan, and one `log` entry when it is done.
 
 A plan, record, log or progress write that names the session assesses the open prompts and capture gaps of that session, because the record states what the turn did. A turn that changed something and left no record still needs an assessment. An explicit `checkpoint` stays available to state conditions and exceptions.
 
+A check reads only the sources that the current outcome cites. To prove a criterion that a check reported as unknown, store the command output with the `evidence` operation, record an outcome that supersedes the current one and cites the returned sources, and request the check again with `retry` true. A request for unchanged evidence returns the earlier check and marks it as reused.
+
+When you tell the agent in the chat that a work item is finished, the agent can close it with the `close` operation, even when its check is uncertain. The operation takes the receipt of your prompt and its exact text, compares the text with the hash in the receipt, and refuses a notification or a prompt of another session. It stores your words as evidence that an agent cannot write itself, and the item reaches Done on that evidence.
+
 Only a call that acts outside the repository needs reconciliation when its result is missing: a push, a publication, a network command such as `gh` or `curl`, or a tool of another MCP server that does more than read. A local edit, test or commit that reports no result can be inspected in the repository instead. Calls captured before this rule keep the earlier treatment.
 
 ## Evidence and recovery

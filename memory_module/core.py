@@ -26,9 +26,10 @@ ASSESSMENTS = {"pending", "good", "bad", "unknown"}
 # in the control panel and the composed text of a run is written by Project Memory itself, so an
 # agent may not store a source under these keys and replace the instructions it is judged against.
 RESERVED_SOURCE_PREFIXES = ("instructions-base:", "instructions:")
-# Tool output verified against its receipt hash, and a criterion confirmed by the user in the control panel.
-# Project Memory writes both itself, so an agent cannot present its own text as either.
-VERIFIED_SOURCE_PREFIXES = ("receipt-evidence:", "criterion-confirmation:")
+# Tool output verified against its receipt hash, a criterion confirmed by the user in the control panel, and a work
+# item the user closed in the chat, verified against the hash of the prompt. Project Memory writes all three itself,
+# so an agent cannot present its own text as any of them.
+VERIFIED_SOURCE_PREFIXES = ("receipt-evidence:", "criterion-confirmation:", "user-closure:")
 # The phase of the project decides who may merge delegated work, so only the user changes it, in the
 # control panel. Project Memory writes this versioned source itself, through planning.set_phase.
 PHASE_SOURCE_KEY = "project-phase"
@@ -282,7 +283,8 @@ class Memory(Workflow):
         if not internal and source_key.startswith(VERIFIED_SOURCE_PREFIXES):
             raise InvalidRecord("The source key " + source_key + " is reserved for evidence that Project Memory verifies "
                                 "itself: tool output checked against its receipt, stored through the evidence operation, "
-                                "and criteria the user confirms in the control panel. Choose another source key.")
+                                "criteria the user confirms in the control panel, and work the user closes in the chat. "
+                                "Choose another source key.")
         if not internal and source_key.startswith("session-digest:"):
             raise InvalidRecord("The source key " + source_key + " is reserved for the session digests that Project Memory "
                                 "collects itself. Choose another source key.")

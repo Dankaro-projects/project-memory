@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+The user can close a work item in the chat. On 24 September 2026 the user asked to close a release item that a later release had replaced. Done was refused because the last check was uncertain, and the only route was to rewrite the acceptance and run another check. The new `close` operation takes the receipt of the user's prompt and its exact text. Project Memory compares the text with the hash that the capture kept, refuses a notification or a prompt of another session, stores the text as user evidence under the reserved key prefix `user-closure:`, and records the plan as done on that evidence. A closed item counts as complete for the work that depends on it. Every other route to Done keeps the strict rule on evidence.
+
 Proof reaches the check by the route the notice names. The notice for criteria without machine evidence said that the next check reads output stored with the evidence operation. It does not: a check reads only the sources that the current outcome cites. On 24 September 2026 this cost two checks that returned the same uncertain result. The notice now asks the agent to store the output with the evidence operation, record an outcome that supersedes the named current outcome and cites the returned sources, and request the check with `retry` true. The rules of the evidence operation say the same.
 
 A reused check says so. A request for a check of unchanged evidence returns the earlier check, as before, and now marks it with `reused` and a note that the result stands until an outcome cites new evidence or the request passes `retry` true.
