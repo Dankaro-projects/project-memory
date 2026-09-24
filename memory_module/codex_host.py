@@ -379,6 +379,15 @@ def notification(prompt):
     return isinstance(prompt, str) and bool(NOTIFICATION.match(prompt))
 
 
+def expiry_sentence(archived, shown=5):
+    """One sentence that names the idle work archived at this session start."""
+    if not archived:
+        return ''
+    titles = '; '.join(item['title'] for item in archived[:shown]) + ('; and ' + str(len(archived) - shown) + ' more' if len(archived) > shown else '')
+    return (f'{len(archived)} idle work item{"s were" if len(archived) != 1 else " was"} archived: {titles}. '
+            'If the user asks to restore one, revise its plan to the state named in its archived field and leave that field out.')
+
+
 def session_context(memory, session, compacted=False):
     """Short factual state for a host that starts or restores a session. It reports counts and IDs, never instructions from records."""
     state = status(memory, session_id=session, limit=3, main_only=True)
@@ -531,6 +540,14 @@ def capture(memory, event, host='codex'):
     if name == 'SessionStart':
         # Claude Code reads this at startup, resume and after automatic compaction. Codex ignores unknown output.
         started = session_context(memory, session, compacted) + setup_context(memory, refreshed) + (' ' + scope if scope else '')
+        from . import planning
+        try:
+            archived = expiry_sentence(planning.expire(memory))
+        except (OSError, ValueError, InvalidRecord, Conflict, sqlite3.Error):
+            # Idle work is archived at the next session start instead.
+            archived = ''
+        if archived:
+            started += ' ' + archived
         from . import sessions
         try:
             work = sessions.work_to_continue(memory, room=HOOK_CHARACTERS - len(started) - 1)

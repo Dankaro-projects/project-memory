@@ -8,7 +8,7 @@ CARD_LIMIT = 5000
 FIELDS = {
     'work_plan': ({'state', 'next_action', 'scope', 'autonomy', 'reason'},
                   {'sprint_id', 'depends_on', 'owner', 'priority', 'session_id', 'paths',
-                   'item_type', 'acceptance', 'parent_id', 'focus', 'worktree'}),
+                   'item_type', 'acceptance', 'parent_id', 'focus', 'worktree', 'archived'}),
     'sprint': ({'starts_on', 'ends_on', 'status', 'reason'}, set()),
 }
 # A revision of these plan fields changes what the work covers, so an earlier assessment no longer applies.
@@ -75,6 +75,12 @@ def validate_payload(kind, payload):
         elif kind == 'work_plan' and key == 'focus':
             from .focus import validate_block
             validate_block(value)
+        elif kind == 'work_plan' and key == 'archived':
+            if not isinstance(value, dict) or set(value) != {'idle_days', 'last_activity', 'restore_state'}:
+                raise InvalidRecord('archived names idle_days, last_activity and restore_state.')
+            if type(value['idle_days']) is not int or value['restore_state'] not in STATES:
+                raise InvalidRecord('archived needs whole idle_days and a known restore_state.')
+            _text(value['last_activity'], 'last_activity', 64)
         else:
             _text(value, key, 2000)
     if kind == 'sprint':
@@ -180,7 +186,13 @@ def validate_event(memory, episode, kind, payload, evidence):
         return
     if episode['task_type'] == 'sprint':
         raise InvalidRecord('Work belongs in its own episode, linked to the sprint.')
-    if payload['autonomy'] == 'act':
+    if 'archived' in payload:
+        mark = payload['archived']
+        if (payload['state'] != 'cancelled' or not isinstance(mark, dict)
+                or mark.get('restore_state') not in set(STATES) - {'done', 'cancelled'}):
+            raise InvalidRecord('Only a cancelled plan can be archived, and it must name the state to restore.')
+    # Cancelling or archiving work never acts, so it needs no permission of the user to act.
+    if payload['autonomy'] == 'act' and payload['state'] != 'cancelled':
         user = any(memory.db.execute("SELECT 1 FROM sources WHERE id=? AND origin='user'", (r['source_id'],)).fetchone()
                    and memory.source_status(r['source_id']) == 'current_copy' for r in evidence)
         if not user:
@@ -753,3 +765,89 @@ def set_phase(memory, *, phase, reason, actor):
         source = memory.source(PHASE_SOURCE_KEY, PHASE_TITLES[phase], text, body, 'user', internal=True)
     return {'phase': phase, 'reason': text, 'at': at, 'version': source['version'],
             'source_id': source['id'], 'actor': USER_ACTOR, 'meaning': PHASE_MEANING[phase]}
+
+
+# Idle work expires. On 24 September 2026 the project created 6.5 work items per active day and closed 2.0, and nothing left
+# the list unless someone closed it. The user chose 14 days without activity, and 7 days for an item waiting on another item.
+EXPIRY_DAYS = {'idle': 14, 'waiting': 7}
+OPEN_STATES = ('backlog', 'ready', 'in_progress', 'blocked', 'review')
+EXPIRY_ACTOR = 'project-memory'
+
+
+def expiry_days(memory):
+    """The idle periods after which open work is archived."""
+    days = dict(EXPIRY_DAYS)
+    for key in days:
+        row = memory.db.execute('SELECT value FROM settings WHERE key=?', ('expire_' + key + '_days',)).fetchone()
+        if row:
+            days[key] = int(row[0])
+    return days
+
+
+def set_expiry_days(memory, *, idle, waiting):
+    from .core import InvalidRecord
+    if any(type(value) is not int or not 1 <= value <= 365 for value in (idle, waiting)):
+        raise InvalidRecord('Expiry periods are whole numbers of days from 1 to 365.')
+    with memory._write():
+        for key, value in (('idle', idle), ('waiting', waiting)):
+            memory.db.execute('INSERT OR REPLACE INTO settings VALUES (?,?)', ('expire_' + key + '_days', str(value)))
+
+
+def expire(memory, now=None):
+    """Archive open work without activity for the idle period, or the shorter period when it waits on another item.
+
+    An archive is a plan revision to cancelled that names the state to restore. It adds records and removes none.
+    A parent with open children waits until they are closed. Return the archived items.
+    """
+    from datetime import datetime, timezone
+    from .core import InvalidRecord, Conflict
+    now = now or datetime.now(timezone.utc)
+    days = expiry_days(memory)
+    plans = {}
+    for row in memory.db.execute("""SELECT e.episode_id,e.id,e.payload FROM events e WHERE e.kind='work_plan'
+                                    AND e.seq=(SELECT max(n.seq) FROM events n WHERE n.episode_id=e.episode_id AND n.kind='work_plan')"""):
+        plans[row['episode_id']] = {'id': row['id'], **json.loads(row['payload'])}
+    open_ids = {ep for ep, plan in plans.items() if plan['state'] in OPEN_STATES}
+    parents = {plan.get('parent_id') for ep, plan in plans.items() if ep in open_ids}
+    archived, evidence = [], None
+    for ep in sorted(open_ids - parents):
+        plan = plans[ep]
+        waiting = any((plans.get(ref['episode_id']) or {}).get('state') in OPEN_STATES for ref in plan.get('depends_on', []))
+        limit = days['waiting' if waiting else 'idle']
+        last = memory.db.execute('SELECT max(created_at) FROM events WHERE episode_id=?', (ep,)).fetchone()[0]
+        idle = (now - datetime.fromisoformat(last)).total_seconds() / 86400
+        if idle < limit:
+            continue
+        if evidence is None:
+            source = memory.source('expiry:' + now.isoformat(), 'Idle work archived', 'Open work without activity is archived.',
+                                   f'Rule of the user of 24 September 2026: archive open work after {days["idle"]} days without '
+                                   f'activity, or {days["waiting"]} days when it waits on another item. Run at {now.isoformat()}.',
+                                   'tool', subject='general')
+            evidence = [{'source_id': source['id'], 'reason': 'The expiry rule archived this work.'}]
+        payload = {k: v for k, v in plan.items() if k not in {'id', 'session_id'}}
+        payload.update(state='cancelled', reason=f'Archived after {limit} days without activity. Ask in the chat to restore it.',
+                       archived={'idle_days': limit, 'last_activity': last, 'restore_state': plan['state']})
+        episode = memory.episode(ep)
+        if episode['status'] in {'settled', 'abandoned'}:
+            # A closed episode takes no new plan; its recorded state is outdated rather than open.
+            continue
+        try:
+            save(memory, 'work_plan', payload=payload, actor=EXPIRY_ACTOR, evidence=evidence, episode_id=ep,
+                 expected_version=episode['version'], request_key='expire:' + plan['id'])
+        except (InvalidRecord, Conflict):
+            # One refused item, for example one changed at the same moment, does not stop the others.
+            continue
+        archived.append({'episode_id': ep, 'title': episode['title'], 'idle_days': limit, 'restore_state': plan['state']})
+    return archived
+
+
+def restore(memory, episode_id, *, evidence, request_key, actor='agent'):
+    """Return archived work to the state it had before it was archived."""
+    from .core import InvalidRecord
+    plan = latest(memory, episode_id, 'work_plan')
+    if not plan or 'archived' not in plan:
+        raise InvalidRecord('This work item is not archived.')
+    payload = {k: v for k, v in plan.items() if k not in {'id', 'archived'}}
+    payload.update(state=plan['archived']['restore_state'], reason='Restored at the request of the user.')
+    return save(memory, 'work_plan', payload=payload, actor=actor, evidence=evidence, episode_id=episode_id,
+                expected_version=memory.episode(episode_id)['version'], request_key=request_key)
