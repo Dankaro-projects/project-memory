@@ -188,14 +188,15 @@ def operation_rules(operation):
                      'kind': {'type': ['string', 'null'], 'enum': list(SWARM_KINDS) + [None]},
                      'move': {'type': ['string', 'null'], 'enum': list(HIVE_MOVES) + [None]},
                      'blind': {'type': ['boolean', 'null']}, 'fields': {'type': ['object', 'null']}}
-    hidden = {'merge': {'override_reason'}, 'source': {'internal'}, 'delegate': {'focus_attempt'}}
+    hidden = {'merge': {'override_reason'}, 'source': {'internal'}, 'delegate': {'focus_attempt'}, 'evidence': {'found'}}
     return rules.get(operation, {}), hidden.get(operation, set())
 
 
 def validate_write_fields(memory, args):
     operation, data = args['operation'], args['data']
     parameters = inspect.signature(OPERATIONS[operation][1].target()).parameters
-    injected = {'self', 'memory', 'request_key', 'session_id'} | ({'kind'} if operation in {'plan', 'sprint'} else set())
+    # receipt_ids travels at the top level of the call, never inside data.
+    injected = {'self', 'memory', 'request_key', 'session_id', 'receipt_ids'} | ({'kind'} if operation in {'plan', 'sprint'} else set())
     extra, hidden = operation_rules(operation)
     properties = {key: S for key in parameters if key not in injected | hidden}
     typed(properties, {'expected_version', 'limit', 'offset', 'max_seconds'}, {'type': 'integer', 'minimum': 0})

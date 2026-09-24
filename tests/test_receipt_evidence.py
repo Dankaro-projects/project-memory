@@ -12,7 +12,7 @@ from unittest.mock import patch
 
 from memory_module import InvalidRecord, codex_host, reviews, sessions
 from memory_module.core import dumps
-from memory_module.mcp import write
+from memory_module.mcp import dispatch, write
 from memory_module.workspace import action
 from tests.test_sessions import Fixture, claude_line
 
@@ -102,6 +102,21 @@ class EvidenceTests(ReceiptEvidenceFixture):
             result = write(self.m, 'evidence', 'mcp-evidence', {}, SESSION, [receipt])
         self.assertEqual(result['evidence'][0]['source_id'],
                          self.m.db.execute("SELECT id FROM sources WHERE source_key=?", ('receipt-evidence:' + receipt,)).fetchone()[0])
+
+    def test_the_mcp_argument_check_accepts_top_level_receipt_ids_with_empty_data(self):
+        # On 24 September 2026 the argument check required data.receipt_ids while the handler refused any data.
+        receipt = self.call('toolu_run_view')
+        with patch.object(sessions, 'folders', return_value=self.found):
+            result = dispatch(self.m, 'memory_write', {'operation': 'evidence', 'request_key': 'mcp-evidence-dispatch',
+                                                       'data': {}, 'session_id': SESSION, 'receipt_ids': [receipt]})
+        self.assertEqual(len(result['evidence']), 1)
+
+    def test_the_mcp_argument_check_refuses_receipt_ids_inside_data(self):
+        receipt = self.call('toolu_run_view')
+        with self.assertRaises(InvalidRecord) as caught:
+            dispatch(self.m, 'memory_write', {'operation': 'evidence', 'request_key': 'mcp-evidence-inside',
+                                              'data': {'receipt_ids': [receipt]}, 'session_id': SESSION})
+        self.assertIn('arguments.data.receipt_ids: unexpected', str(caught.exception))
 
 
 class CheckTests(ReceiptEvidenceFixture):
