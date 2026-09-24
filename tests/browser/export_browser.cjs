@@ -33,6 +33,8 @@ function watch(page) {
   page.on("console", (message) => { if (message.type() === "error") problems.push("console: " + message.text()); });
   return problems;
 }
+// A row that opens an item: a row of a list or the title of a table row.
+const ROW = "#main .pane-row, #main button.db-open";
 const settle = (page) => page.waitForFunction(() => !document.querySelector("#main .view.pending, .detail-content.pending"));
 async function go(page, hash) {
   await page.evaluate((value) => { location.hash = value; }, hash);
@@ -84,43 +86,37 @@ const loaded = (page) => page.waitForFunction(() => !document.getElementById("de
       }
       assert.match(await text(page, "#main"), /requirements/i);
       await go(page, "#now");
-      assert.match(await text(page, "#view-summary"), /^\d+ items wait for you\.$/);
+      assert.match(await text(page, "#view-summary"), /\d+ work items? (is|are) in progress, \d+ (is|are) blocked and \d+ needs? review\./);
       await go(page, "#plan");
       assert.match(await text(page, "#view-summary"), /16 work items are planned in 7 phases\./);
-      assert.equal(await page.locator("#main .list-view .tree").count(), 1, `${kind}: the plan tree is not in the frame`);
-      await go(page, "#work/tab=list");
-      assert.equal(await page.locator("#main .pane-row").count(), 16, `${kind}: the snapshot does not list the work items as rows`);
+      assert.equal(await page.locator("#main .db-table button.db-open").count(), 16, `${kind}: the plan outline is not in the frame`);
+      await go(page, "#work");
+      assert.equal(await page.locator("#main button.db-open").count(), 16, `${kind}: the snapshot does not list the work items in the table`);
       await go(page, "#architecture");
       assert.equal(await text(page, "#main .view-head h2"), expected.architecture);
       await page.waitForSelector("#main .graph canvas");
       await go(page, "#dependencies");
       assert.match(await text(page, "#view-summary"), /8 dependencies connect 10 work items\./);
       await go(page, "#decisions");
-      assert.equal(await page.locator('#main [data-key^="decision-event_"]').count(), 3);
+      assert.equal(await page.locator('#main [data-key^="decisions-row-event_"]').count(), 3);
       step(`${kind}: all ten views render from the embedded responses`);
 
       await go(page, "#agents");
       assert.ok(!(await text(page, "#main")).includes("Not applicable"), `${kind}: the snapshot runs table prints Not applicable`);
-      // Every kind has its tab with the true count and its rows from the embedded response of the Now view.
+      // Now is the digest of the embedded board, and a lesson opens in the pane of a snapshot without a decision.
       await go(page, "#now");
-      const tabs = await page.evaluate(async () => {
-        const kinds = (await Panel.get("now")).attention_kinds;
-        return { expected: kinds.map((entry) => [entry.type, entry.count]), rows: kinds.reduce((sum, entry) => sum + entry.entries.length, 0),
-          shown: [...document.querySelectorAll(".view-tabs button .chip")].slice(0, kinds.length).map((node) => [node.parentNode.dataset.key.replace("now-kind-", ""), Number(node.textContent)]) };
+      const places = await page.evaluate(async () => {
+        const cards = (await Panel.get("board", { limit: "100" })).cards;
+        return [cards.filter((card) => card.state === "in_progress").length, cards.filter((card) => ["blocked", "review"].includes(card.state)).length,
+          document.querySelectorAll('[data-scroll="now-progress-table"] button.db-open').length, document.querySelectorAll('[data-scroll="now-paused-table"] button.db-open').length];
       });
-      assert.deepEqual(tabs.shown, tabs.expected);
-      assert.equal(tabs.rows, 9);
-      await page.click('[data-key="now-kind-guard_recurrence"]');
-      await page.waitForSelector('#main .view:not(.pending) [data-key="now-kind-guard_recurrence"][aria-pressed="true"]');
-      assert.match(await text(page, "#main .pane-row"), /occurred once after the lesson was accepted/);
-      // A lesson opens in the pane of a snapshot without a decision, because a snapshot is read only.
-      await page.click('[data-key="now-kind-lessons_to_accept"]');
-      await page.waitForSelector('#main .view:not(.pending) [data-key="now-kind-lessons_to_accept"][aria-pressed="true"]');
+      assert.deepEqual(places.slice(2), places.slice(0, 2));
+      await go(page, "#learning");
       await page.locator("#main .pane-row").first().click();
       await page.waitForFunction(() => document.getElementById("detail-kind").textContent === "Decide a lesson" && !document.querySelector(".detail-content.pending"));
       assert.equal(await page.locator("#detail .detail-foot button, #detail .detail-foot textarea").count(), 0);
       await page.evaluate(() => Panel.closePane());
-      step(`${kind}: the snapshot shows every kind of Now with its true count and its rows, and offers no decision`);
+      step(`${kind}: the snapshot shows Now as the digest of its board, and a lesson offers no decision`);
 
       // No action is offered and none can be opened.
       for (const name of VIEWS) {
@@ -175,7 +171,7 @@ const loaded = (page) => page.waitForFunction(() => !document.getElementById("de
       for (const [width, height] of [[1600, 640], [390, 800]]) {
         await page.setViewportSize({ width, height });
         await go(page, "#records");
-        await page.waitForSelector("#main .pane-row");
+        await page.waitForSelector(ROW);
         await fixedFrame(page, `${kind} #records at ${width} by ${height}`);
         await go(page, "#requirements");
         await fixedFrame(page, `${kind} #requirements at ${width} by ${height}`);
@@ -186,13 +182,13 @@ const loaded = (page) => page.waitForFunction(() => !document.getElementById("de
       }
       await page.setViewportSize({ width: 1440, height: 900 });
       await go(page, "#records");
-      const allKinds = await page.locator("#main .pane-row").count();
-      await page.locator("#records-view").selectOption("decisions");
+      const allKinds = await page.locator(ROW).count();
+      await page.locator("#records-view-decisions").click();
       await page.waitForFunction(() => /in decisions match/.test(document.getElementById("view-summary").textContent));
-      const decisions = await page.locator("#main .pane-row").count();
-      assert.ok(decisions > 0 && decisions < allKinds && (await page.locator("#main .kn-group").count()) === 0, `${kind}: the Kind filter of the snapshot did not change the rows: ${allKinds} before, ${decisions} after`);
+      const decisions = await page.locator(ROW).count();
+      assert.ok(decisions > 0 && decisions < allKinds && (await page.locator("#main .db-group").count()) === 0, `${kind}: the Kind view of the snapshot did not change the rows: ${allKinds} before, ${decisions} after`);
       assert.match(page.url(), /view=decisions/);
-      await page.locator("#main .pane-row").first().click();
+      await page.locator(ROW).first().click();
       await loaded(page);
       const narrow = await page.evaluate(() => document.getElementById("detail").getBoundingClientRect().width);
       await page.locator("#detail-wide").click();
@@ -228,7 +224,7 @@ const loaded = (page) => page.waitForFunction(() => !document.getElementById("de
     const scoped = await browser.newPage({ viewport: { width: 1440, height: 900 } });
     await scoped.goto(pathToFileURL(scopedFile).href);
     await scoped.waitForFunction(() => document.getElementById("view-title").textContent === "Work" && !document.querySelector("#main .view.pending"));
-    assert.ok(await scoped.locator("#main .board-column").count() >= 1, "the scoped snapshot opens on a view without content");
+    assert.ok(await scoped.locator("#main button.db-open").count() >= 1, "the scoped snapshot opens on a view without content");
     assert.equal(await scoped.locator('.nav-link[data-nav="now"]').getAttribute("aria-label"), "Now, not included in this snapshot");
     assert.equal(await scoped.locator('.nav-link[data-nav="work"]').getAttribute("aria-label"), null);
     await scoped.close();

@@ -65,9 +65,7 @@ def inspect(path, kind):
         if f'memory_module/{module}.py' in members:
             raise ValueError(f'Retired module is still packaged: memory_module/{module}.py')
     ui_files = (*ui_scripts(members), 'panel.css')
-    for name in tuple('memory_module/ui/' + name for name in ui_files) + ('memory_module/viewer.html', 'memory_module/vendor/cytoscape.min.js',
-                 'memory_module/assets/manrope-latin-400.woff2',
-                 'memory_module/assets/manrope-latin-700.woff2'):
+    for name in tuple('memory_module/ui/' + name for name in ui_files) + ('memory_module/viewer.html', 'memory_module/vendor/cytoscape.min.js'):
         if name not in members:
             raise ValueError(f'Required viewer asset is missing: {name}')
     return {'file': path.name, 'bytes': path.stat().st_size, 'members': len(members),

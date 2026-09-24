@@ -12,7 +12,7 @@ const { pathToFileURL } = require("node:url");
 
 const ROOT = path.resolve(__dirname, "../..");
 const PYTHON = process.env.MEMORY_PYTHON || "python";
-const RAIL = ["Now", "Plan", "Work", "Sessions", "Learning", "Decisions", "Records", "Requirements", "Architecture", "Dependencies", "Agents", "Machine", "Hive", "Usage"];
+const RAIL = ["Now", "Plan", "Work", "Decisions", "Records", "Requirements", "Learning", "Sessions", "Architecture", "Dependencies", "Agents", "Machine", "Hive", "Usage"];
 // The sizes at which the fixed frame is measured: a low wide window, a common laptop window and a phone.
 const FRAMES = [[1600, 640], [1440, 900], [390, 800]];
 // nodes is the number of items the architecture graph shows before any filter or toggle is changed.
@@ -87,39 +87,31 @@ const savedToast = async (page, pattern) => {
   assert.match(await page.locator(".toast").last().textContent(), pattern);
 };
 
-// The fixed frame shell: the rail with its groups, counts and foot, the header row and the project activity.
+// The fixed frame shell: the sidebar with its sections and foot, the breadcrumbs and the project activity.
 async function shell(page, kind) {
-  assert.deepEqual(await page.locator("#nav h2, #nav summary > span:not(.nav-count)").allTextContents(), ["Work", "Decide", "Look up", "More views"]);
+  assert.deepEqual(await page.locator("#nav h2, #nav summary > span").allTextContents(), ["Work", "Knowledge", "System"]);
   assert.equal(await page.locator(".nav-link svg.icon use").count(), RAIL.length);
-  const symbols = await page.evaluate(() => [...document.querySelectorAll(".nav-link use")].filter((use) => !document.getElementById(use.getAttribute("href").slice(1))).length);
-  assert.equal(symbols, 0, "a rail icon names a symbol that the page does not hold");
-  // The rail counts add up the kinds of the same response that Now shows, so the two cannot disagree.
-  const counts = await page.evaluate(async () => {
-    const kinds = new Map((await Panel.get("now")).attention_kinds.map((entry) => [entry.type, entry.count]));
-    const sum = (...types) => types.reduce((total, type) => total + (kinds.get(type) || 0), 0);
-    const shown = (name) => { const node = document.querySelector(`.nav-link[data-nav="${name}"] .nav-count`); return node.hidden ? 0 : parseInt(node.textContent, 10); };
-    const fold = document.querySelector("#nav-more summary .nav-count");
-    return { expected: [sum("session_flags", "session_proposals"), sum("lessons_to_accept", "rules_over_cap", "rule_ineffective"), sum("awaiting_merge", "agent_follow_up"), sum("machine_rules")],
-      shown: ["sessions", "learning", "agents", "machine"].map(shown), fold: fold.hidden ? 0 : parseInt(fold.textContent, 10), now: document.querySelector('.nav-link[data-nav="now"] .nav-count').hidden };
-  });
-  assert.deepEqual(counts.shown, counts.expected);
-  assert.ok(counts.expected.some((n) => n > 0), "the fixture holds nothing that a rail count would show");
-  assert.equal(counts.fold, counts.expected[2] + counts.expected[3]);
-  assert.equal(counts.now, true);
-  step(`${kind}: the rail groups 14 views with icons, and its counts equal the kinds of Now`);
+  const symbols = await page.evaluate(() => [...document.querySelectorAll(".nav-link use, #page-icon use")].filter((use) => !document.getElementById(use.getAttribute("href").slice(1))).length);
+  assert.equal(symbols, 0, "a sidebar or page icon names a symbol that the page does not hold");
+  // The panel counts nothing that waits for the reader, so the sidebar carries no count.
+  assert.equal(await page.locator("#nav .nav-count").count(), 0);
+  step(`${kind}: the sidebar groups 14 views with icons under Work, Knowledge and System, and shows no count of things to do`);
 
-  // More views stays folded until the reader opens it or works in one of its views.
+  // System stays folded until the reader opens it or works in one of its views, and the breadcrumbs name the place.
   assert.equal(await page.locator("#nav-more").evaluate((node) => node.open), false);
   await go(page, "#usage");
   assert.equal(await page.locator("#nav-more").evaluate((node) => node.open), true);
   assert.equal(await page.locator('.nav-link[data-nav="usage"]').getAttribute("aria-current"), "page");
+  assert.deepEqual((await page.locator("#crumbs li").allTextContents()).slice(1), ["System", "Usage"]);
+  assert.equal(await page.locator('#crumbs li[aria-current="page"]').textContent(), "Usage");
   await page.locator("#nav-more summary").click();
   await go(page, "#now");
+  assert.match(await text(page, "#project-name"), /Fixture|fixture/);
   const foot = await page.locator(".rail-foot").innerText();
-  assert.match(foot, /Fixture|fixture/);
   assert.match(foot, /Lifecycle\s*Development/);
   assert.match(foot, /Live/);
-  step(`${kind}: More views opens for a view it holds, and the foot of the rail names the project, the lifecycle stage and the live state`);
+  assert.deepEqual((await page.locator("#crumbs li").allTextContents()).slice(1), ["Now"]);
+  step(`${kind}: System opens for a view it holds, the breadcrumbs name the section and the view, and the sidebar names the project, the lifecycle stage and the live state`);
 
   // Project activity opens from the header row of every view and closes with Escape, with focus back on its button.
   await page.locator("#activity-toggle").click();
@@ -134,17 +126,17 @@ async function shell(page, kind) {
   await closePane(page);
   step(`${kind}: Project activity shows the work by state, opens the work in progress and closes with Escape`);
 
-  // Every focus stop shows a visible focus style: the five stops after the search field, which reach the header row and the view.
+  // Every focus stop shows a visible focus style: the five stops after the search field, which reach the links of the sidebar.
   await page.locator("#search-input").focus();
   const stops = [];
   for (let index = 0; index < 5; index++) {
     await page.keyboard.press("Tab");
-    stops.push(await page.evaluate(() => { const node = document.activeElement; return [node.id || node.dataset.key || node.className, getComputedStyle(node).outlineStyle]; }));
+    stops.push(await page.evaluate(() => { const node = document.activeElement; return [node.id || node.dataset.key || node.dataset.nav || node.className, getComputedStyle(node).outlineStyle]; }));
   }
   assert.ok(stops.every((stop) => stop[1] !== "none") && new Set(stops.map((stop) => stop[0])).size === 5, `${kind}: a focus stop shows no focus style: ${JSON.stringify(stops)}`);
   step(`${kind}: the five focus stops after the search field show a visible focus style`);
 
-  // No view scrolls the page at the three measured sizes. With More views folded the rail fits a window 640 pixels high.
+  // No view scrolls the page at the three measured sizes. With System folded the sidebar fits a window 640 pixels high.
   for (const [width, height] of FRAMES) {
     await page.setViewportSize({ width, height });
     for (const name of RAIL) {
@@ -156,7 +148,7 @@ async function shell(page, kind) {
   await go(page, "#now");
   await page.evaluate(() => { document.getElementById("nav-more").open = false; });
   const rail = await page.evaluate(() => { const node = document.getElementById("rail"); return [node.scrollHeight, node.clientHeight]; });
-  assert.ok(rail[0] <= rail[1], `${kind}: the rail with More views folded needs ${rail[0]} pixels in a window 640 pixels high`);
+  assert.ok(rail[0] <= rail[1], `${kind}: the sidebar with System folded needs ${rail[0]} pixels in a window 640 pixels high`);
   await page.setViewportSize({ width: 390, height: 800 });
   await page.locator("#menu-toggle").click();
   assert.equal(await page.locator('.nav-link[data-nav="requirements"]').isVisible(), true);
@@ -164,69 +156,49 @@ async function shell(page, kind) {
   await page.keyboard.press("Escape");
   await page.setViewportSize({ width: 1440, height: 900 });
   await go(page, "#now");
-  step(`${kind}: no view scrolls the page at ${FRAMES.map((size) => size.join(" by ")).join(", ")} pixels, and the narrow menu holds the rail with its foot`);
+  step(`${kind}: no view scrolls the page at ${FRAMES.map((size) => size.join(" by ")).join(", ")} pixels, and the narrow menu holds the sidebar with its foot`);
 }
 
+// The rows of a database table, as the text of their titles.
+// A row that opens an item: a row of a list or the title of a table row.
+const ROW = "#main .pane-row, #main button.db-open";
+const rowTitles = (page, scope = "#main") => page.locator(`${scope} button.db-open .db-title`).allTextContents();
 async function views(page, kind, expected) {
   await go(page, "#now");
   assert.deepEqual(await page.locator(".nav-link .nav-title").allTextContents(), RAIL);
-  // One tab for each kind with its true count, then the tabs of Now that are no kinds. The summary adds the kinds up.
-  const tabs = await page.evaluate(async () => {
-    const now = await Panel.get("now");
-    return { kinds: now.attention_kinds.map((entry) => [entry.type, entry.count]), total: now.attention_count,
-      shown: [...document.querySelectorAll(".view-tabs button")].map((node) => [node.dataset.key.replace("now-kind-", ""), node.querySelector(".chip") ? Number(node.querySelector(".chip").textContent) : null]) };
+  // Now is a digest: a table for each place of the work, which holds exactly the items of the board in that place.
+  const places = await page.evaluate(async () => {
+    const cards = (await Panel.get("board", { limit: "100" })).cards, of = (...states) => cards.filter((card) => states.includes(card.state)).map((card) => card.title).sort();
+    const shown = (id) => [...document.querySelectorAll(`[data-scroll="${id}-table"] .db-title`)].map((node) => node.textContent).sort();
+    return { expected: [of("in_progress"), of("blocked", "review"), of("ready")], shown: [shown("now-progress"), shown("now-paused"), shown("now-ready")],
+      headings: [...document.querySelectorAll("#main .digest-part h2")].map((node) => node.textContent) };
   });
-  assert.deepEqual(tabs.shown.slice(0, tabs.kinds.length), tabs.kinds);
-  assert.deepEqual(tabs.shown.slice(tabs.kinds.length).map((tab) => tab[0]), ["kickoff", "decisions", "scope_blocks"]);
-  assert.equal(await text(page, "#view-summary"), `${tabs.total} items wait for you.`);
-  assert.equal(tabs.kinds.reduce((sum, entry) => sum + entry[1], 0), tabs.total);
-  assert.match(await text(page, '[data-key="now-kind-machine_rules"]'), /Machine rules\s*1/);
-  step(`${kind}: Now shows one tab for each kind with its true count, and the summary adds them up`);
+  assert.deepEqual(places.headings, ["In progress", "Paused", "Ready to start", "Done", "Latest decisions"]);
+  assert.deepEqual(places.shown, places.expected);
+  assert.match(await text(page, "#view-summary"), /\d+ work items? (is|are) in progress, \d+ (is|are) blocked and \d+ needs? review\./);
+  assert.ok(!/wait for you|waits for you/.test(await text(page, "#main")), `${kind}: Now still counts what waits for the reader`);
+  step(`${kind}: Now shows the work in progress, paused and ready in tables that hold exactly the items of the board`);
   await shell(page, kind);
 
-  // The rows of a kind are 60 pixels high, name the item and why it waits, and open the pane beside the list.
-  const tab = async (name) => {
-    await page.click(`[data-key="now-kind-${name}"]`);
-    await page.waitForFunction((key) => { const node = document.querySelector(`#main .view:not(.pending) [data-key="${key}"]`); return node && node.getAttribute("aria-pressed") === "true"; }, "now-kind-" + name);
-    await settle(page);
-  };
-  await tab("blocked_work");
-  const rows = page.locator("#main .pane-row");
-  assert.equal(await rows.count(), 2);
-  assert.ok((await rows.evaluateAll((nodes) => nodes.map((node) => node.getBoundingClientRect().height))).every((height) => height >= 60));
-  assert.match(await text(page, "#main .pane-foot"), /Showing 1 to 2 of 2\./);
-  const blockedTitle = await rows.first().locator("strong").textContent();
-  await rows.first().click();
-  await page.waitForFunction((title) => document.getElementById("detail-title").textContent === title, blockedTitle);
-  await settle(page);
-  assert.equal(await rows.first().getAttribute("aria-current"), "true");
-  assert.match(await text(page, "#detail"), /Next step/);
-  const frame = await page.evaluate(() => { const list = document.querySelector("#main .pane-rows"), head = document.querySelector("#main .pane-head").getBoundingClientRect(), main = document.getElementById("main").getBoundingClientRect();
-    return [getComputedStyle(list).overflowY, head.top >= main.top, document.getElementById("main").scrollHeight <= document.getElementById("main").clientHeight]; });
-  assert.deepEqual(frame, ["auto", true, true]);
-  await closePane(page);
-  await tab("guard_recurrence");
-  assert.match(await text(page, "#main .pane-row"), /occurred once after the lesson was accepted/);
-  await tab("awaiting_merge");
-  assert.match(await text(page, "#main .pane-row"), /changed 1 file and awaits a merge decision/);
-  step(`${kind}: a tab lists its rows in a fixed list pane, and a row opens the work item beside it and counts a single event in the singular`);
-
-  // The kickoff checklist, the latest decisions and the scope blocks stay reachable from Now in tabs of their own.
-  await tab("kickoff");
-  assert.match(await text(page, "#main .card.kickoff"), new RegExp(expected.template));
-  await tab("decisions");
-  assert.equal(await page.locator("#main a[href='#decisions']").count(), 1);
-  await tab("scope_blocks");
-  assert.match(await text(page, "#main .pane-body"), /was blocked\. The allowed paths were/);
-  // A kind that another view decides opens that view, and a lesson opens its decision in the pane.
-  await tab("machine_rules");
-  await page.locator("#main .pane-row").first().click();
-  await page.waitForFunction(() => document.querySelector('#main .view[data-view="machine"]:not(.pending)'));
+  // A paused item names what it waits for, and its row opens the item beside the digest with its next step.
   await go(page, "#now");
-  await tab("lessons_to_accept");
+  const paused = page.locator('[data-scroll="now-paused-table"] button.db-open');
+  assert.match(await text(page, '[data-scroll="now-paused-table"]'), /Waits for \d+ prerequisite/);
+  const pausedTitle = await paused.first().locator(".db-title").textContent();
+  await paused.first().click();
+  await page.waitForFunction((title) => document.getElementById("detail-title").textContent === title, pausedTitle);
+  await settle(page);
+  assert.equal(await paused.first().getAttribute("aria-current"), "true");
+  assert.match(await text(page, "#detail"), /Next step/);
+  await closePane(page);
+  assert.match(await text(page, "#main .card.kickoff"), new RegExp(expected.template));
+  assert.equal(await page.locator("#main a[href='#decisions']").count(), 1);
+  step(`${kind}: a paused item names what it waits for and opens beside the digest, and the kickoff checklist and the latest decisions keep their place`);
+
+  // A proposed lesson opens its decision in the pane from Learning: Accept and Reject decide it, and Retire opens the review form.
+  await go(page, "#learning");
   await page.locator("#main .pane-row").first().click();
   await page.waitForFunction(() => document.getElementById("detail-kind").textContent === "Decide a lesson" && !document.querySelector(".detail-content.pending"));
-  // Every action of a proposed lesson is in the pane: Accept and Reject decide it, and Retire opens the review form with retired selected.
   assert.deepEqual(await page.locator("#detail .detail-foot button").allTextContents(), ["Accept", "Reject", "Retire"]);
   await page.locator('[data-key="decide-retired"]').click();
   await page.waitForSelector("#form-dialog[open]");
@@ -238,36 +210,71 @@ async function views(page, kind, expected) {
   assert.equal(await page.locator(".toast").last().textContent(), "Write the reason for your decision first.");
   assert.equal(await page.evaluate(() => document.activeElement.id), "decide-reason");
   await closePane(page);
-  step(`${kind}: the kickoff checklist, the decisions and the scope blocks keep their place in Now, and a lesson asks for its reason in the pane and offers Retire`);
+  step(`${kind}: a lesson asks for its reason in the pane and offers Retire`);
 
+  // Plan is an outline table with nested sub-items and a gallery of the phases.
   await go(page, "#plan");
   assert.match(await text(page, "#view-summary"), /16 work items are planned in 7 phases\. 0 are done\./);
-  assert.equal(await page.locator("#main .timeline > li").count(), 7);
-  const timeline = await page.locator("#main .timeline").evaluate((node) => [node.scrollWidth, node.clientWidth]);
-  assert.ok(timeline[0] <= timeline[1], `${kind}: the timeline clips its last phase: ${timeline}`);
-  step(`${kind}: Plan shows 7 phases and 16 work items, and the timeline shows every phase`);
+  assert.equal((await rowTitles(page)).length, 16);
+  assert.ok(await page.locator('#main [data-key^="plan-toggle-"]').count() > 0, `${kind}: the outline offers no fold of sub-items`);
+  const toggle = page.locator('#main [data-key^="plan-toggle-"][aria-expanded="true"]').first();
+  const toggleKey = await toggle.getAttribute("data-key");
+  await toggle.click();
+  await page.waitForFunction((key) => document.querySelector(`[data-key="${key}"]`).getAttribute("aria-expanded") === "false", toggleKey);
+  assert.ok((await rowTitles(page)).length < 16, `${kind}: folding a phase hides none of its sub-items`);
+  await page.locator(`[data-key="${toggleKey}"]`).click();
+  await page.locator("#plan-view-phases").click();
+  await page.waitForFunction(() => document.querySelectorAll("#main .gallery > li").length === 7);
+  const gallery = await page.locator("#main .gallery").evaluate((node) => [node.scrollWidth, node.clientWidth]);
+  assert.ok(gallery[0] <= gallery[1], `${kind}: the gallery clips its last phase: ${gallery}`);
+  step(`${kind}: Plan shows 16 work items in an outline whose phases fold, and a gallery of 7 phases`);
 
+  // Work is a database: a table that sorts, filters, groups, hides properties and searches, and a board.
   await go(page, "#work");
-  assert.equal(await page.locator("#main .board-column").count(), 5);
+  await page.waitForFunction(() => document.querySelectorAll("#main button.db-open").length === 16);
+  assert.equal(await page.locator("#work-view-table").getAttribute("aria-pressed"), "true");
+  assert.equal(await page.locator("#main [role=tab]").count(), 0);
+  await page.locator("#work-head-title").click();
+  await page.locator("#work-head-title").click();
+  await page.waitForFunction(() => /sort=title/.test(location.hash) && /dir=desc/.test(location.hash));
+  const titles = await rowTitles(page);
+  assert.deepEqual(titles, [...titles].sort((a, b) => (a.toLowerCase() < b.toLowerCase() ? 1 : a.toLowerCase() > b.toLowerCase() ? -1 : 0)), "the rows are not sorted by title in descending order");
+  await page.locator("#work-filter").click();
+  await page.locator("#work-state").selectOption("blocked");
+  await page.waitForFunction(() => document.querySelectorAll("#main button.db-open").length === 2);
+  assert.match(page.url(), /state=blocked/);
+  assert.match(await text(page, "#main .db-table tbody tr"), /Blocked[\s\S]*Waits for 1 prerequisite/);
+  await page.locator("#work-state").selectOption("");
+  await page.waitForFunction(() => document.querySelectorAll("#main button.db-open").length === 16);
+  await page.locator("#work-group").click();
+  await page.locator('[data-key="work-group-state"]').click();
+  await page.waitForFunction(() => /group=state/.test(location.hash) && document.querySelectorAll("#main .db-group").length > 1);
+  const groups = await page.evaluate(async () => new Set((await Panel.get("board", { limit: "100" })).cards.map((card) => card.state)).size);
+  assert.equal(await page.locator("#main .db-group").count(), groups);
+  const columns = await page.locator("#main .db-table thead th").count();
+  await page.locator("#work-properties").click();
+  await page.locator('[data-key="work-prop-next"]').click();
+  await page.keyboard.press("Escape");
+  await page.waitForFunction((count) => document.querySelectorAll("#main .db-table thead th").length === count - 1, columns);
+  assert.match(page.url(), /hide=next/);
+  await page.locator("#work-group").click();
+  await page.locator('[data-key="work-group-none"]').click();
+  // The search reads the title, the intent and the plan: the title of one row narrows the table and keeps that row.
+  const probe = (await rowTitles(page)).find((title) => title.length > 12);
+  await page.locator(".db-search .db-tool").click();
+  await page.locator("#work-query").fill(probe);
+  await page.waitForFunction((title) => { const shown = [...document.querySelectorAll("#main .db-title")].map((node) => node.textContent);
+    return /query=/.test(location.hash) && shown.includes(title) && shown.length < 16; }, probe);
+  await page.locator("#work-query").fill("");
+  await page.waitForFunction(() => document.querySelectorAll("#main button.db-open").length === 16);
+  step(`${kind}: Work shows 16 items in a table that sorts by title, filters by state, groups by state, hides a property and searches`);
+
+  await page.locator("#work-view-board").click();
+  await page.waitForFunction(() => document.querySelectorAll("#main .board-column").length === 5);
   const board = await page.locator("#main .board").evaluate((node) => [node.scrollWidth, node.clientWidth]);
   assert.ok(board[0] <= board[1], `${kind}: the board clips a column at 1440 pixels: ${board}`);
   assert.match(await text(page, "#main"), /Waits for \d+ prerequisite/);
-  await page.locator("#work-tab-list").click();
-  await page.waitForFunction(() => document.querySelectorAll("#main .pane-row").length === 16);
-  // The switch is a pair of pressed buttons, because a tab role without a tab panel misleads assistive technology.
-  assert.equal(await page.locator("#work-tab-list").getAttribute("aria-pressed"), "true");
-  assert.equal(await page.locator("#main [role=tab]").count(), 0);
-  // The rows are sorted by the chosen column, and the sort and its order are kept in the route.
-  await page.locator("#work-sort").selectOption("title");
-  await page.locator("#work-desc").check();
-  await page.waitForFunction(() => /sort=title/.test(location.hash) && /dir=desc/.test(location.hash));
-  const titles = await page.locator("#main .pane-row strong").allTextContents();
-  assert.deepEqual(titles, [...titles].sort((a, b) => (a.toLowerCase() < b.toLowerCase() ? 1 : a.toLowerCase() > b.toLowerCase() ? -1 : 0)), "the rows are not sorted by title in descending order");
-  await page.locator("#work-state").selectOption("blocked");
-  await page.waitForFunction(() => document.querySelectorAll("#main .pane-row").length === 2);
-  assert.match(page.url(), /state=blocked/);
-  assert.match(await text(page, "#main .pane-row"), /Blocked, task, \w+\. Waits for 1 prerequisite\. Created /);
-  step(`${kind}: Work lists 16 items as rows sorted by title, and the state filter keeps 2 blocked items`);
+  step(`${kind}: the board of Work shows 5 columns without clipping`);
 
   // Section 17.12: a board column shows ten cards at a time. For this step the board response carries 23 backlog cards.
   await page.route(/\/api\/board/, async (route) => {
@@ -279,8 +286,7 @@ async function views(page, kind, expected) {
       ...Array.from({ length: 23 }, (_, index) => ({ ...base, id: base.id + "-copy-" + index, title: "Copied item " + index, state: "backlog", issues: [] }))];
     await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(value) });
   });
-  await go(page, "#work");
-  await page.locator("#work-tab-board").click();
+  await go(page, "#work/tab=board");
   const backlog = '#main .board-column[data-tone="backlog"] li';
   await page.waitForFunction((selector) => document.querySelectorAll(selector).length === 10, backlog);
   assert.match(await text(page, '#main [data-key="work-more-backlog"]'), /Show 10 more of 13/);
@@ -397,22 +403,22 @@ async function views(page, kind, expected) {
   await page.setViewportSize({ width: 1440, height: 900 });
   step(`${kind}: the graphs of Architecture and Dependencies take the height of the frame at ${FRAMES.map((size) => size.join(" by ")).join(", ")} pixels, and neither view scrolls the page with or without a selected item`);
 
-  // Decisions in the frame: the filters sit in the head, each row carries its badges, and a filter keeps its route parameter.
+  // Decisions is a database with saved views: each row carries its outcome and review marker, and a view keeps its route parameter.
   await go(page, "#decisions");
   assert.match(await text(page, "#view-summary"), /3 decisions are recorded\. 2 have a bad outcome and 1 needs review\./);
-  assert.equal(await page.locator('#main .pane-row[data-key^="decision-event_"]').count(), 3);
-  assert.equal(await page.locator('#main .pane-row [data-state="needs-review-marker"]').count(), 1);
-  assert.equal(await page.locator("#main .list-head #decision-filters").count(), 1);
-  assert.match(await text(page, "#main .pane-foot"), /The list shows 3 of 3 decisions\./);
-  await page.locator("#decision-review").check();
-  await page.waitForFunction(() => document.querySelectorAll("#main .pane-row").length === 1);
-  assert.match(page.url(), /review=1/);
-  await page.locator("#decision-review").uncheck();
-  await page.waitForFunction(() => document.querySelectorAll("#main .pane-row").length === 3);
-  step(`${kind}: Decisions list 3 decisions as rows with outcome badges and the review marker under a filter head`);
+  assert.equal(await page.locator('#main button.db-open[data-key^="decisions-row-event_"]').count(), 3);
+  assert.equal(await page.locator('#main [data-state="needs-review-marker"]').count(), 1);
+  assert.equal(await page.locator("#main #decisions-filter").count(), 1);
+  assert.match(await text(page, "#main .db-foot"), /Count\s*3/);
+  await page.locator("#decisions-view-review").click();
+  await page.waitForFunction(() => document.querySelectorAll("#main button.db-open").length === 1);
+  assert.match(page.url(), /tab=review/);
+  await page.locator("#decisions-view-all").click();
+  await page.waitForFunction(() => document.querySelectorAll("#main button.db-open").length === 3);
+  step(`${kind}: Decisions show 3 decisions in a table with outcome badges and the review marker, and the Needs review view keeps 1`);
 
   if (kind === "product") {
-    await page.locator('#main [data-key^="decision-event_"]').first().click();
+    await page.locator('#main [data-key^="decisions-row-event_"]').first().click();
     await page.waitForFunction(() => /Lineage/.test(document.getElementById("detail-body").textContent));
     await settle(page);
     assert.equal(await page.locator("#detail-body .lineage-list").count(), 1, "a lineage of dozens of records still opens as a small picture");
@@ -423,11 +429,8 @@ async function views(page, kind, expected) {
 
   // Learning in the frame: one tab per part, the guards as rows, and the guard with the recurrence in the pane with its Reassess action.
   await go(page, "#learning");
-  // The summary is one sentence, so the title, the summary and the search share one row of the header at 1440 pixels.
-  const oneRow = () => page.evaluate(() => Math.abs(document.getElementById("view-title").getBoundingClientRect().top - document.getElementById("search").getBoundingClientRect().top) < 8);
   assert.match(await text(page, "#view-summary"), /^2 guards are active, 1 guard recorded a recurrence, 1 rule is ineffective and 1 lesson waits\.$/);
-  assert.ok(await oneRow(), `${kind}: the summary of Learning wraps the header row at 1440 pixels`);
-  assert.deepEqual((await page.locator("#main .view-tabs button").allTextContents()).map((label) => label.replace(/\d+$/, "")),
+  assert.deepEqual((await page.locator("#main .db-views button").allTextContents()).map((label) => label.replace(/\d+$/, "")),
     ["Proposed lessons", "Guards", "Failures without a lesson", "Instructions", "Scope changes", "Signals"]);
   assert.equal(await page.locator('#main [data-key="learning-tab-proposed"][aria-pressed="true"]').count(), 1);
   const learningTab = async (name) => {
@@ -491,19 +494,19 @@ async function views(page, kind, expected) {
   await closePane(page);
   step(`${kind}: the instructions pane keeps the base text and the rules on a 390 pixel screen`);
 
-  // Agents in the frame: the runs are rows under the Runs tab, the hosts wait under their own tab, and a row opens the
+  // Agents in the frame: the runs are a table under the Runs tab, the hosts wait under their own tab, and a row opens the
   // run pane with Merge and Discard in its foot.
   await go(page, "#agents");
   assert.match(await text(page, "#view-summary"), /configured hosts can run work now/);
   assert.match(await text(page, "#view-summary"), /1 delegated run awaits a merge decision/);
-  assert.equal(await page.locator("#main .pane-row").count(), 2);
-  assert.deepEqual((await page.locator("#main .view-tabs button").allTextContents()).map((label) => label.replace(/\d+$/, "")), ["Runs", "Hosts", "Follow ups"]);
+  assert.equal(await page.locator("#main button.db-open").count(), 2);
+  assert.deepEqual((await page.locator("#main .db-views button").allTextContents()).map((label) => label.replace(/\d+$/, "")), ["Runs", "Hosts", "Follow ups"]);
   await page.locator('[data-key="agents-tab-hosts"]').click();
   await page.waitForSelector('#main .view:not(.pending) [data-key="agents-tab-hosts"][aria-pressed="true"]');
   assert.equal(await page.locator("#main .pane-body .card").count(), 2);
   assert.match(await text(page, "#main .pane-body"), /Can run work|Cannot run work/);
   await go(page, "#agents");
-  step(`${kind}: Agents show the two recorded runs as rows and the hosts under their tab`);
+  step(`${kind}: Agents show the two recorded runs in a table and the hosts under their tab`);
 
   const agents = await text(page, "#main");
   assert.ok(!agents.includes("Not applicable"), `${kind}: the run rows still print Not applicable`);
@@ -512,12 +515,12 @@ async function views(page, kind, expected) {
   await page.setViewportSize({ width: 390, height: 900 });
   await page.waitForTimeout(250);
   const merge = await page.evaluate(() => {
-    const badge = [...document.querySelectorAll("#main .pane-row .badge")].find((node) => /Awaiting a decision|Not merged|merged/.test(node.textContent));
+    const badge = [...document.querySelectorAll("#main .db-table .badge")].find((node) => /Awaiting a decision|Not merged|merged/.test(node.textContent));
     return badge ? { right: badge.getBoundingClientRect().right, text: badge.textContent.trim() } : null;
   });
   assert.ok(merge && merge.right <= 390, `${kind}: the merge state sits off a 390 pixel screen: ${JSON.stringify(merge)}`);
   await page.setViewportSize({ width: 1440, height: 900 });
-  await page.locator("#main .pane-row").filter({ hasText: "Awaiting a decision" }).first().click();
+  await page.locator("#main .db-table tbody tr").filter({ hasText: "Awaiting a decision" }).first().locator("button.db-open").click();
   await page.waitForFunction(() => !document.getElementById("detail").hidden && document.getElementById("detail-title").textContent !== "Loading" && !document.querySelector(".detail-content.pending"));
   assert.equal(await page.evaluate(() => document.getElementById("detail-kind").textContent), "Agent run");
   const runActions = await text(page, "#detail .detail-foot");
@@ -534,7 +537,7 @@ async function views(page, kind, expected) {
   // each with the isolation notice, and the summary beside the title counts the rules and the proposals.
   await go(page, "#machine");
   assert.match(await text(page, "#view-summary"), /1 rule is in force on .+, promoted from 1 project\. 1 proposal from this project awaits your decision\./);
-  assert.deepEqual((await page.locator("#main .view-tabs button").allTextContents()).map((label) => label.replace(/\d+$/, "")), ["Proposals", "Rules in force", "Retired rules", "Projects"]);
+  assert.deepEqual((await page.locator("#main .db-views button").allTextContents()).map((label) => label.replace(/\d+$/, "")), ["Proposals", "Rules in force", "Retired rules", "Projects"]);
   assert.match(await text(page, '#main [data-key="machine-isolation"]'), /no outcome is combined across projects/);
   assert.equal(await page.locator('#main [data-key^="promotion-"]').count(), 2);
   assert.equal(await page.locator('#main [data-key^="accept-promotion-"]').count(), 1);
@@ -579,44 +582,43 @@ async function views(page, kind, expected) {
   step(`${kind}: the Usage cards and routing rows stay on a 390 pixel screen`);
 
   await go(page, "#records");
-  // Records is rows in the frame: every kind is a group among the rows, the kind, the search and the subject share one
-  // row of the head, the other five filters wait in a fold, and the summary beside the title counts the matches.
-  assert.ok(await page.locator("#main .pane-row").count() >= 10, "the records view lists no records");
-  assert.ok(await page.locator("#main .kn-group").count() >= 2, "the kinds are not grouped among the rows");
+  // Records is a database: every kind is a view, All record kinds is a table grouped by kind, and the filters wait as chips
+  // behind the Filter tool of the bar. The summary beside the title counts the matches.
+  assert.ok(await page.locator("#main button.db-open").count() >= 10, "the records view lists no records");
+  assert.ok(await page.locator("#main .db-group").count() >= 2, "the kinds are not grouped in the table");
+  assert.equal(await page.locator("#records-view-all").getAttribute("aria-pressed"), "true");
   const summary = (pattern) => page.waitForFunction((source) => new RegExp(source).test(document.getElementById("view-summary").textContent), pattern.source);
   await summary(/records match across all kinds\./);
-  const head = await page.evaluate(() => { const bottoms = ["records-view", "records-query", "records-subject", "records-more"].map((id) => Math.round(document.getElementById(id).getBoundingClientRect().bottom));
-    return { oneRow: Math.max(...bottoms) - Math.min(...bottoms) <= 4, folded: document.getElementById("records-fold").hidden, expanded: document.getElementById("records-more").getAttribute("aria-expanded") }; });
-  assert.deepEqual(head, { oneRow: true, folded: true, expanded: "false" }, `${kind}: the head of Records: ${JSON.stringify(head)}`);
-  await page.locator("#records-more").click();
-  assert.deepEqual(await page.evaluate(() => ["records-status", "records-episode", "records-from", "records-to", "records-order", "records-clear"].map((id) => document.getElementById(id).getClientRects().length > 0)), [true, true, true, true, true, true]);
-  assert.match(await text(page, "#records-more"), /Fewer filters/);
-  step(`${kind}: Records lists its kinds as groups of rows, and three filters share one row of the head with a fold for the other five`);
-  // The filters apply on change, as in Work, and typing keeps the focus while the results update.
-  assert.equal(await page.locator("#records-apply").count(), 0);
-  await page.locator("#records-view").selectOption("decisions");
+  assert.equal(await page.locator("#main .db-filters").count(), 0);
+  await page.locator("#records-filter").click();
+  await page.waitForSelector("#main .db-filters");
+  assert.deepEqual(await page.evaluate(() => ["records-subject", "records-status", "records-episode", "records-from", "records-to", "records-clear"].map((id) => document.getElementById(id).getClientRects().length > 0)), [true, true, true, true, true, true]);
+  step(`${kind}: Records groups its kinds in one table, and its filters wait as chips behind the Filter tool`);
+  // The filters apply on change, and typing keeps the focus while the results update.
+  await page.locator("#records-view-decisions").click();
   await summary(/in decisions match/);
   assert.match(page.url(), /view=decisions/);
+  await page.locator("#main .db-search .db-tool").click();
   await page.locator("#records-query").pressSequentially("zzzz");
   await summary(/^0 records in decisions/);
   assert.equal(await page.evaluate(() => document.activeElement.id), "records-query");
-  assert.match(await text(page, "#main .pane-rows .empty"), /No records match these filters\./);
+  assert.match(await text(page, "#main .db-scroll .empty"), /No records match these filters\./);
   await page.locator("#records-clear").click();
-  await summary(/across all kinds/);
+  await summary(/in decisions match/);
   step(`${kind}: the Records filters apply on change and keep the focus while the reader types`);
   // A work item carries one state word everywhere: Records shows the board state, not a second vocabulary.
-  await page.locator("#records-view").selectOption("episodes");
+  await page.locator("#records-view-episodes").click();
   await summary(/in work items match/);
-  assert.equal(await page.locator('#main .pane-row .badge[data-state="blocked"]').count(), 2);
-  assert.equal(await page.locator('#main .pane-row .badge[data-state="active"], #main .pane-row .badge[data-state="settled"]').count(), 0);
+  assert.equal(await page.locator('#main .db-table .badge[data-state="blocked"]').count(), 2);
+  assert.equal(await page.locator('#main .db-table .badge[data-state="active"], #main .db-table .badge[data-state="settled"]').count(), 0);
   step(`${kind}: Records shows the two blocked work items by their board state`);
   await go(page, "#requirements");
   assert.match(await text(page, "#view-summary"), /^The requirements are not established yet and wait for your review\.$/);
-  assert.ok(await oneRow(), `${kind}: the summary of Requirements wraps the header row at 1440 pixels`);
-  step(`${kind}: Records and Requirements render their current state with a summary of one line`);
+  assert.deepEqual(await page.locator("#main .block-heading").allTextContents(), ["Requirements", "Approval evidence", "History"]);
+  step(`${kind}: Requirements reads as a page with its properties, its numbered requirements, its evidence and its history`);
 
   // Opening an item never covers the list on a wide screen: the pane sits beside the view and the opening row stays marked.
-  await go(page, "#work");
+  await go(page, "#work/tab=board");
   const cards = page.locator("#main .board button.item");
   const loaded = () => page.waitForFunction(() => !document.getElementById("detail").hidden && document.getElementById("detail-title").textContent !== "Loading"
     && !document.querySelector(".detail-content.pending"));
@@ -648,19 +650,15 @@ async function views(page, kind, expected) {
   await page.keyboard.press("Escape");
   await page.waitForFunction(() => document.getElementById("detail").hidden && document.activeElement.matches("#main .board button.item"));
   assert.deepEqual(await page.evaluate(() => [getComputedStyle(document.getElementById("main")).visibility, document.querySelectorAll("#main [data-selected]").length]), ["visible", 0]);
-  await page.setViewportSize({ width: 500, height: 800 });
-  await go(page, "#plan");
-  await go(page, "#work");
-  assert.equal(await page.locator("#work-filters").evaluate((node) => node.open), false);
   await page.setViewportSize({ width: 1440, height: 900 });
-  step(`${kind}: below 1180 pixels one pane shows at a time, Escape returns to the opening row, and a narrow screen folds the Work filters`);
+  step(`${kind}: below 1180 pixels one pane shows at a time and Escape returns to the opening row`);
 
   // Work and Plan in the frame: the board keeps its five columns beside the open pane and scrolls sideways inside its
   // region, the filters stay at the top, and the pane keeps its actions in the foot, its quick edits and the list of the lineage.
-  await go(page, "#work");
+  await go(page, "#work/tab=board");
   await cards.first().click();
   await loaded();
-  const withPane = await page.evaluate(() => { const main = document.getElementById("main"), board = main.querySelector('[data-scroll="board"]'), filters = document.getElementById("work-filters").getBoundingClientRect();
+  const withPane = await page.evaluate(() => { const main = document.getElementById("main"), board = main.querySelector('[data-scroll="board"]'), filters = document.getElementById("work-filter").getBoundingClientRect();
     return { main: main.scrollHeight <= main.clientHeight, sideways: board.scrollWidth > board.clientWidth, columns: board.querySelectorAll(".board-column").length,
       filters: filters.top >= 0 && filters.bottom <= window.innerHeight, selected: board.querySelector("[data-selected]").getBoundingClientRect().left >= board.getBoundingClientRect().left }; });
   assert.deepEqual(withPane, { main: true, sideways: true, columns: 5, filters: true, selected: true }, `${kind}: the board beside the pane: ${JSON.stringify(withPane)}`);
@@ -673,25 +671,25 @@ async function views(page, kind, expected) {
   // Edit plan shows once in the foot: as the pinned next step of the first phase, and in the small action row of an item whose next step is another form.
   const editPlan = () => page.evaluate(() => { const foot = document.querySelector("#detail .detail-foot"), pinned = foot.querySelector("button.primary");
     return { count: [...foot.querySelectorAll("button")].filter((node) => node.textContent === "Edit plan").length, pinned: pinned ? pinned.textContent : null }; });
-  await go(page, "#work/tab=list");
-  await page.locator("#main .pane-row").first().click();
+  await go(page, "#work");
+  await page.locator("#main button.db-open").first().click();
   await loaded();
   assert.deepEqual(await editPlan(), { count: 1, pinned: "Edit plan" }, `${kind}: the foot of the first phase`);
-  await page.locator("#main .pane-row").nth(1).click();
+  await page.locator("#main button.db-open").nth(1).click();
   await loaded();
   assert.deepEqual(await editPlan(), { count: 1, pinned: "Open the prerequisite" }, `${kind}: the foot of the second phase`);
   step(`${kind}: the board keeps its five columns beside the open pane and scrolls sideways, the filters stay at the top, the pane keeps its actions, its quick edits and the list of the lineage, and Edit plan shows once`);
 
-  // At the three measured sizes Work as a board, Work as a list and Plan scroll only inside their region, with and
-  // without the pane, the filters stay in reach without scrolling, and the primary action of the item is visible.
+  // At the three measured sizes Work as a board, Work as a table and Plan scroll only inside their region, with and
+  // without the pane, the tools of the bar stay in reach without scrolling, and the primary action of the item is visible.
   const inReach = (page, selector) => page.evaluate((value) => { const box = document.querySelector(value).getBoundingClientRect(); return box.top >= 0 && box.bottom <= window.innerHeight; }, selector);
   for (const [width, height] of FRAMES) {
     await page.setViewportSize({ width, height });
-    for (const [hash, row, filters] of [["#work", "#main .board button.item", "#work-filters"], ["#work/tab=list", "#main .pane-row", "#work-filters"], ["#plan", '#main [data-key^="plan-open-"]', "#plan-filters"]]) {
+    for (const [hash, row, filters] of [["#work/tab=board", "#main .board button.item", "#work-filter"], ["#work", "#main button.db-open", "#work-filter"], ["#plan", "#main button.db-open", "#plan-filter"]]) {
       await go(page, hash);
       await page.waitForSelector(row);
       await fixedFrame(page, `${kind} ${hash} at ${width} by ${height}`);
-      const region = await page.evaluate(() => { const main = document.getElementById("main"), rows = main.querySelector("[data-scroll]"); return [main.scrollHeight <= main.clientHeight, rows.scrollHeight > rows.clientHeight]; });
+      const region = await page.evaluate(() => { const main = document.getElementById("main"), rows = main.querySelector("[data-scroll]"); return [main.scrollHeight <= main.clientHeight, ["auto", "scroll"].includes(getComputedStyle(rows).overflowY)]; });
       assert.deepEqual(region, [true, true], `${kind} ${hash} at ${width} by ${height}: the view scrolls outside its rows: ${region}`);
       assert.ok(await inReach(page, filters), `${kind} ${hash} at ${width} by ${height}: the filters are out of reach`);
       await page.locator(row).first().click();
@@ -709,10 +707,10 @@ async function views(page, kind, expected) {
     await page.setViewportSize({ width, height });
     for (const [hash, expected] of [["#learning", "Decide a lesson"], ["#learning/tab=guards", "Guard"], ["#learning/tab=instructions", "Instructions"], ["#decisions", "Decision"]]) {
       await go(page, hash);
-      await page.waitForSelector("#main .pane-row");
+      await page.waitForSelector(ROW);
       await fixedFrame(page, `${kind} ${hash} at ${width} by ${height}`);
       assert.ok(await page.evaluate(() => { const main = document.getElementById("main"); return main.scrollHeight <= main.clientHeight; }), `${kind} ${hash} at ${width} by ${height}: the view scrolls outside its rows`);
-      await page.locator("#main .pane-row").first().click();
+      await page.locator(ROW).first().click();
       await loaded();
       await fixedFrame(page, `${kind} ${hash} with the pane at ${width} by ${height}`);
       assert.equal(await page.evaluate(() => document.getElementById("detail-kind").textContent), expected);
@@ -735,18 +733,18 @@ async function views(page, kind, expected) {
   for (const [width, height] of FRAMES) {
     await page.setViewportSize({ width, height });
     await go(page, "#records/view=events");
-    await page.waitForSelector("#main .pane-row");
+    await page.waitForSelector(ROW);
     await fixedFrame(page, `${kind} #records at ${width} by ${height}`);
-    const region = await page.evaluate(() => { const main = document.getElementById("main"), rows = main.querySelector('[data-scroll="rows"]'), foot = main.querySelector(".pane-foot");
+    const region = await page.evaluate(() => { const main = document.getElementById("main"), rows = main.querySelector('[data-scroll="records-table"]'), foot = main.querySelector(".db-foot");
       return { frame: main.scrollHeight <= main.clientHeight, rows: rows.scrollHeight > rows.clientHeight, foot: foot.getBoundingClientRect().bottom <= window.innerHeight, pager: foot.textContent }; });
     assert.equal(region.frame && region.rows && region.foot, true, `${kind} #records at ${width} by ${height}: ${JSON.stringify(region)}`);
     assert.match(region.pager, /Showing 1 to \d+ of \d+\.\s*Previous\s*Next/);
-    assert.ok(await inReach(page, "#records-filters summary"), `${kind} #records at ${width} by ${height}: the filters are out of reach`);
-    await page.locator("#main .pane-row").first().click();
+    assert.ok(await inReach(page, "#records-filter"), `${kind} #records at ${width} by ${height}: the filters are out of reach`);
+    await page.locator(ROW).first().click();
     await loaded();
     await fixedFrame(page, `${kind} #records with the pane at ${width} by ${height}`);
     await go(page, "#records/view=lessons");
-    await page.locator("#main .pane-row").first().click();
+    await page.locator(ROW).first().click();
     await loaded();
     assert.ok(await inReach(page, "#detail .detail-foot button"), `${kind} lesson record at ${width} by ${height}: the decision of the lesson is out of reach`);
     await go(page, "#requirements");
@@ -770,7 +768,7 @@ async function views(page, kind, expected) {
       assert.deepEqual(region, [true, true], `${kind} ${hash} at ${width} by ${height}: the view scrolls outside its region: ${region}`);
     }
     await go(page, "#agents");
-    await page.locator("#main .pane-row").filter({ hasText: "Awaiting a decision" }).first().click();
+    await page.locator("#main .db-table tbody tr").filter({ hasText: "Awaiting a decision" }).first().locator("button.db-open").click();
     await loaded();
     await fixedFrame(page, `${kind} #agents with the pane at ${width} by ${height}`);
     assert.ok(await inReach(page, "#detail .detail-foot button"), `${kind} #agents at ${width} by ${height}: the merge decision of the run is out of reach`);
@@ -781,21 +779,23 @@ async function views(page, kind, expected) {
   // A long document reads at full width: the toggle of the pane bar hides the list beside the pane, and Escape
   // restores the list with the focus on the row that opened the record.
   await go(page, "#records/view=documents");
-  await page.locator("#main .pane-row").first().click();
+  await page.locator(ROW).first().click();
   await loaded();
   await page.waitForFunction(() => /Outline/.test(document.getElementById("detail-body").textContent));
   const narrow = await page.evaluate(() => document.getElementById("detail").getBoundingClientRect().width);
   await page.locator("#detail-wide").click();
   const wide = await page.evaluate((before) => { const detail = document.getElementById("detail").getBoundingClientRect(), panes = document.querySelector(".panes").getBoundingClientRect();
     return { fills: Math.round(detail.width) === Math.round(panes.width) && detail.width > before + 300, view: getComputedStyle(document.getElementById("main")).visibility,
-      pressed: document.getElementById("detail-wide").getAttribute("aria-pressed"), label: document.getElementById("detail-wide").textContent, document: document.querySelector("#detail .document").getBoundingClientRect().width > 900 }; }, narrow);
+      pressed: document.getElementById("detail-wide").getAttribute("aria-pressed"), label: document.getElementById("detail-wide").textContent,
+      // The page reads in a centred column of a Notion page, however wide the window is.
+      document: (() => { const box = document.querySelector("#detail .document").getBoundingClientRect(); return box.width >= 600 && box.width <= 780 && Math.abs((box.left - panes.left) - (panes.right - box.right)) < 40; })() }; }, narrow);
   assert.deepEqual(wide, { fills: true, view: "hidden", pressed: "true", label: "Show the list", document: true }, `${kind}: the record pane at full width: ${JSON.stringify(wide)}`);
   await fixedFrame(page, `${kind} the record pane at full width`);
   await page.keyboard.press("Escape");
   await page.waitForFunction(() => document.getElementById("detail").hidden);
-  assert.deepEqual(await page.evaluate(() => [getComputedStyle(document.getElementById("main")).visibility, "wide" in document.getElementById("app").dataset, document.activeElement.matches("#main .pane-row"), document.getElementById("detail-wide").textContent]),
+  assert.deepEqual(await page.evaluate((row) => [getComputedStyle(document.getElementById("main")).visibility, "wide" in document.getElementById("app").dataset, document.activeElement.matches(row), document.getElementById("detail-wide").textContent], ROW),
     ["visible", false, true, "Full width"]);
-  step(`${kind}: a document reads at full width with the list hidden beside the pane, and Escape restores the list`);
+  step(`${kind}: a document reads at full width in a centred column with the list hidden beside the pane, and Escape restores the list`);
 
   for (const width of [1440, 768, 390, 320]) {
     for (const hash of ["#now", "#plan", "#work", "#architecture", "#decisions", "#learning", "#machine", "#hive", "#usage"]) {
@@ -810,19 +810,19 @@ async function views(page, kind, expected) {
 // The editing checks run on one fixture, because each action changes the records the other checks read.
 async function editing(page, ids, posts) {
   await go(page, "#work");
-  const trigger = `[data-key="work-card-${ids.story}"]`;
+  const trigger = `[data-key="work-row-${ids.story}"]`;
   await page.locator(trigger).focus();
   await page.keyboard.press("Enter");
   await page.waitForFunction(() => document.getElementById("detail-title").textContent === "Parse client files");
   await settle(page);
   const shown = await text(page, "#detail");
-  for (const part of ["Intended result", "Done when", "Next step", "Acceptance criteria", "Scope and allowed paths", "src/app/**",
+  for (const part of ["Intended result", "Done when", "Next step", "Acceptance criteria", "Scope", "Allowed paths", "src/app/**",
     "Dependencies", "Agent checks and delegated runs", "Lineage", "History", "Edit plan", "Allow paths", "Delegate", "Request check", "Comment"]) {
     assert.ok(shown.includes(part), "the work pane lacks " + part);
   }
   // The history stays closed until the reader opens it, and sections without content share one sentence.
   assert.equal(await page.locator('#detail-body [data-key="work-history"]').evaluate((node) => node.open), false);
-  const headings = await page.locator("#detail-body h3").allTextContents();
+  const headings = await page.locator("#detail-body .block-heading").allTextContents();
   const folded = await page.locator('#detail-body [data-key="work-folded"]').allTextContents();
   for (const name of ["Dependencies", "Issues"]) {
     assert.notEqual(headings.includes(name), folded.join(" ").includes(name), "the section " + name + " is shown twice or not at all");
@@ -835,7 +835,7 @@ async function editing(page, ids, posts) {
   await page.locator(trigger).click();
   await settle(page);
   await page.locator("#work-quick-priority").selectOption("high");
-  await page.waitForFunction(() => /High priority/.test(document.getElementById("detail-body").textContent), null, { timeout: 15000 });
+  await page.waitForFunction(() => /Priority\s*High/.test(document.querySelector("#detail-body .props").innerText), null, { timeout: 15000 });
   assert.equal(await page.locator(".toast").last().textContent(), "The priority is now high.");
   assert.equal(await page.locator("#form-dialog[open]").count(), 0);
   const kept = await page.evaluate(async (id) => (await Panel.get("work", { id })).card.plan, ids.story);
@@ -870,22 +870,12 @@ async function editing(page, ids, posts) {
   step("Reload saved version draws the saved plan and the next save succeeds");
   await closePane(page);
 
-  // Creating a work item from the Plan view.
+  // The panel creates no work item: Plan and Work offer no Add item, because new work is planned in the chat.
   await go(page, "#plan");
-  await page.getByRole("button", { name: "Add item" }).first().click();
-  await page.waitForSelector("#form-dialog[open]");
-  await field(page, "title").fill("Export the parsed records");
-  await field(page, "objective").fill("Export the parsed records for the sales team.");
-  await field(page, "criterion").fill("The sales team receives a complete export.");
-  await field(page, "scope").fill("The export of the parsed records.");
-  await field(page, "next_action").fill("Write the export.");
-  await field(page, "acceptance").fill("The export lists every record.");
-  await field(page, "paths").fill("src/app/**");
-  await field(page, "reason").fill("The user plans the export.");
-  await page.locator("#form-save").click();
-  await savedToast(page, /is created/);
-  await page.waitForFunction(() => /17 work items are planned/.test(document.getElementById("view-summary").textContent));
-  step("a new work item is created from the Plan view and the plan counts it");
+  assert.equal(await page.getByRole("button", { name: "Add item" }).count(), 0);
+  await go(page, "#work");
+  assert.equal(await page.getByRole("button", { name: "Add item" }).count(), 0);
+  step("Plan and Work offer no Add item, because new work is planned in the chat");
 
   // Accepting a proposed lesson with its triggers: the row opens the decision, the full lesson opens from it, and the
   // form of the full lesson takes the triggers.
@@ -966,16 +956,18 @@ async function editing(page, ids, posts) {
   await closePane(page);
   step("the user reassesses the counted recurrence from the guard pane and the recurrence count drops from 1 to 0");
 
-  // Allowing the blocked path of the scope block.
-  await go(page, "#now");
-  await page.click("[data-key=now-kind-scope_blocks]");
-  await page.locator("#main .pane-body").getByRole("button", { name: "Allow paths" }).first().click();
+  // Allowing the blocked path of the scope block from the side peek of its work item.
+  const blocked = await page.evaluate(async () => (await Panel.get("now")).scope_blocks[0].episode_id);
+  await go(page, "#work");
+  await page.locator(`[data-key="work-row-${blocked}"]`).click();
+  await page.waitForFunction(() => !document.getElementById("detail").hidden && !document.querySelector(".detail-content.pending"));
+  await page.locator('#detail [data-key="work-allow"]').click();
   await page.waitForSelector("#form-dialog[open]");
-  assert.equal(await field(page, "paths").inputValue(), "docs/brief.md");
+  await field(page, "paths").fill("docs/brief.md");
   await field(page, "reason").fill("The work item needs the brief.");
   await page.locator("#form-save").click();
   await savedToast(page, /docs\/brief\.md/);
-  step("the blocked path of a scope block is allowed from the scope blocks tab of the Now view");
+  step("the blocked path of a scope block is allowed from the side peek of its work item");
   await closePane(page);
 
   // The phase of the project, which decides who merges delegated work.
@@ -1017,7 +1009,7 @@ async function editing(page, ids, posts) {
   step("a rule of the machine memory is retired and stays readable");
 
   // Focus and the open view survive a new revision.
-  await go(page, "#work");
+  await go(page, "#work/tab=board");
   const card = `[data-key="work-card-${ids.review}"]`;
   await page.locator(card).focus();
   const revision = await page.evaluate(() => Panel.health().revision);
@@ -1061,7 +1053,7 @@ async function editing(page, ids, posts) {
   assert.deepEqual(await page.evaluate(() => [document.activeElement.id, document.getElementById("records-query").value]), ["records-query", "Parse"]);
   await page.locator("#records-query").fill("");
   await page.setViewportSize({ width: 1440, height: 900 });
-  await go(page, "#work");
+  await go(page, "#work/tab=board");
   step("a live update keeps the selected row, the scroll position of the view and of the pane, and the text typed into a field");
 
   // Focus that moves while a refresh is still loading has to survive the swap instead of falling back to the body.
@@ -1264,14 +1256,13 @@ async function hived(browser, fixture) {
   const problems = watch(page);
   await page.goto(fixture.url);
   await page.waitForFunction(() => document.getElementById("live-status").textContent === "Live", null, { timeout: 20000 });
-  // Session flags are low risk decisions: a row decides one at once, and one dialog decides the rest with an optional reason.
-  // Now decides a flag and a lesson in its pane without a dialog, and the next item opens by itself.
-  await go(page, "#now");
-  await page.click("[data-key=now-kind-session_flags]");
-  await page.waitForSelector('#main .view:not(.pending) [data-key="now-row-flag_fixture_4"]');
-  assert.match(await text(page, "[data-key=now-kind-session_flags]"), /Session flags\s*4/);
+  // Session flags are low risk decisions: a row of Sessions decides one in its pane without a dialog, and the next item
+  // opens by itself. A proposed lesson of Learning is decided in the same pane with its reason.
+  await go(page, "#sessions");
+  await page.waitForSelector('#main .view:not(.pending) [data-key="session-row-flag_fixture_4"]');
+  assert.match(await text(page, "[data-key=sessions-tab-flags]"), /Flags\s*4/);
   assert.equal(await page.locator("#main .pane-row").count(), 4);
-  await page.click('[data-key="now-row-flag_fixture_4"]');
+  await page.click('[data-key="session-row-flag_fixture_4"]');
   await page.waitForFunction(() => /Wait for the review before the release/.test(document.getElementById("detail-title").textContent));
   await settle(page);
   assert.equal(await page.locator("#decide-reason").getAttribute("placeholder"), "Add a reason (optional)");
@@ -1281,30 +1272,29 @@ async function hived(browser, fixture) {
   await page.locator("#decide-reason").focus();
   await page.keyboard.type("dj");
   await page.waitForTimeout(400);
-  assert.deepEqual([await page.locator("#decide-reason").inputValue(), ...await quiet()], ["dj", true, "now-row-flag_fixture_4", false, false], "a key typed into the reason field decided the flag or moved the selection");
+  assert.deepEqual([await page.locator("#decide-reason").inputValue(), ...await quiet()], ["dj", true, "session-row-flag_fixture_4", false, false], "a key typed into the reason field decided the flag or moved the selection");
   await page.locator("#decide-reason").fill("");
   await page.locator("#search-input").focus();
   await page.keyboard.type("jk");
   await page.waitForTimeout(400);
-  assert.deepEqual([await page.locator("#search-input").inputValue(), ...await quiet()], ["jk", true, "now-row-flag_fixture_4", false, false], "a key typed into the search field moved the selection");
+  assert.deepEqual([await page.locator("#search-input").inputValue(), ...await quiet()], ["jk", true, "session-row-flag_fixture_4", false, false], "a key typed into the search field moved the selection");
   await page.locator("#search-input").fill("");
-  step("now: the decision letters and J and K stay quiet while the reader types in the reason field and in the search field");
+  step("sessions: the decision letters and J and K stay quiet while the reader types in the reason field and in the search field");
   await page.locator("#detail-title").focus();
   await page.keyboard.press("d");
   await page.waitForFunction(() => !/Wait for the review/.test(document.getElementById("detail-title").textContent) && !["Loading", "This item is decided"].includes(document.getElementById("detail-title").textContent), null, { timeout: 15000 });
-  assert.equal(await page.locator("#form-dialog[open]").count(), 0, "a flag of Now still needs a dialog");
+  assert.equal(await page.locator("#form-dialog[open]").count(), 0, "a flag still needs a dialog");
   assert.equal(await page.locator("#detail").isHidden(), false);
-  await page.waitForFunction(() => /Session flags\s*3/.test(document.querySelector("#main .view:not(.pending) [data-key=now-kind-session_flags]").textContent), null, { timeout: 15000 });
+  await page.waitForFunction(() => /Flags\s*3/.test(document.querySelector("#main .view:not(.pending) [data-key=sessions-tab-flags]").textContent), null, { timeout: 15000 });
   await closePane(page);
-  await page.click("[data-key=now-kind-lessons_to_accept]");
-  await page.waitForSelector("#main .view:not(.pending) [data-key=now-kind-lessons_to_accept][aria-pressed=true]");
+  await go(page, "#learning");
   await page.locator("#main .pane-row").first().click();
   await page.waitForFunction(() => document.getElementById("detail-kind").textContent === "Decide a lesson" && !document.querySelector(".detail-content.pending"));
   await page.locator("#decide-reason").fill("The practice prevents unclear release notes.");
   await page.locator('[data-key="decide-accepted"]').click();
   await page.waitForFunction(() => [...document.querySelectorAll(".toast")].some((node) => node.textContent === "The lesson is accepted."), null, { timeout: 15000 });
-  await page.waitForFunction(() => document.getElementById("detail").hidden && !document.querySelector("#main .view:not(.pending) [data-key=now-kind-lessons_to_accept]"), null, { timeout: 15000 });
-  step("now: a flag is dismissed with one key and the next flag opens by itself, and a lesson is accepted in the pane with its reason");
+  await page.waitForFunction(() => document.getElementById("detail").hidden, null, { timeout: 15000 });
+  step("sessions: a flag is dismissed with one key and the next flag opens by itself, and a lesson is accepted in the pane with its reason");
   // Sessions in the frame: the flags are rows under a tab, and no size scrolls the page with or without the pane, whose
   // Confirm action stays in reach.
   const flagPane = (pattern) => page.waitForFunction((source) => new RegExp(source).test(document.getElementById("detail-title").textContent) && !document.querySelector(".detail-content.pending"), pattern.source);
@@ -1332,7 +1322,7 @@ async function hived(browser, fixture) {
   // without a dialog, the next flag opens by itself, and one dialog without a reason dismisses the rest.
   await go(page, "#sessions");
   await page.waitForFunction(() => /3 open flags/.test(document.getElementById("view-summary").textContent));
-  assert.deepEqual((await page.locator("#main .view-tabs button").allTextContents()).map((label) => label.replace(/\d+$/, "")), ["Flags", "Proposals", "Digests"]);
+  assert.deepEqual((await page.locator("#main .db-views button").allTextContents()).map((label) => label.replace(/\d+$/, "")), ["Flags", "Proposals", "Digests"]);
   assert.equal(await page.locator("#main .pane-row").count(), 3);
   await page.click('[data-key="session-row-flag_fixture_3"]');
   await flagPane(/Use the second file instead/);

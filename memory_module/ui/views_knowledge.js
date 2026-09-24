@@ -25,7 +25,8 @@
   const number = (n) => Number(n || 0).toLocaleString("en-GB");
   const isAre = (n) => (n === 1 ? "is" : "are");
   const purpose = (text) => h("p", { class: "muted" }, text);
-  const heading = (text, extra) => h("div", { class: "row kn-heading" }, h("h3", null, text), extra || null);
+  // A section reads as a heading of a Notion page, with its count or its control beside the heading.
+  const heading = (text, extra) => h("div", { class: "block-head" }, P.heading(2, text), extra || null);
   const section = (title, extra, ...children) => h("section", { class: "stack" }, heading(title, extra), children);
   const counted = (n, noun) => h("span", { class: "muted" }, P.count(n, noun));
   const chips = (values, prefix) => (values || []).map((value) => h("span", { class: "chip mono" }, (prefix || "") + value));
@@ -246,11 +247,17 @@
       const tab = tabs.find((entry) => entry.id === params.tab) || tabs[0];
       container.classList.add("list-view");
       put(container, P.viewTabs("The parts of Agents", "agents-tab-", tabs, tab, (id) => P.go("agents", { tab: id }), ctx));
-      if (tab.id === "runs") put(container, P.listPane({ title: "Runs", count: runs.length, rows: runs.map((run) => P.paneRow("run-" + run.id, "agents", P.words(run.role) + " run on " + P.words(run.host),
-        h("span", { class: "row" }, P.badge(run.state), reviewLabel(run), mergeLabel(run), h("span", { class: "muted" }, [episodeTitle(run.episode_id),
-          run.role === "work" ? P.count(run.changed_files, "changed file") : null, P.date(run.created_at)].filter(Boolean).join(", "))), openRun(run.id))),
-      note: "A row opens the run with its report, its diff summary and its actions. The changed files, the review and the merge state describe delegated work and stay empty for an agent check.",
-      empty: "No agent run is recorded.", foot: pager({ offset, count: runs.length, more: (data.runs || {}).more, limit: 20 }, "runs", (next) => P.go("agents", { ...params, offset: next ? String(next) : "" })) }));
+      // Runs are a table: the review and the merge describe delegated work and stay empty for an agent check.
+      if (tab.id === "runs") put(container, h("p", { class: "muted db-note" }, "A row opens the run with its report, its diff summary and its actions. Review, Merge and Changed files describe delegated work and stay empty for an agent check."),
+        h("section", { class: "list-pane" }, P.dbTable({ id: "runs", rows: runs, rowKey: (run) => run.id, onOpen: (run, t) => openRun(run.id)(t), keepOrder: true, empty: "No agent run is recorded.",
+          properties: [{ key: "title", label: "Run", type: "title", width: 240, sortable: false, rowIcon: () => "agents", get: (run) => P.words(run.role) + " run on " + P.words(run.host) },
+            { key: "state", label: "State", type: "status", width: 130, sortable: false },
+            { key: "review", label: "Review", type: "custom", icon: "check", width: 130, sortable: false, render: (run) => (run.role === "work" && run.review ? P.badge(run.review.state) : null) },
+            { key: "merge", label: "Merge", type: "custom", icon: "relation", width: 170, sortable: false, render: (run) => (run.role === "work" ? mergeLabel(run) : null) },
+            { key: "work", label: P.term("work_item"), type: "text", icon: "relation", width: 220, sortable: false, get: (run) => episodeTitle(run.episode_id) },
+            { key: "changed", label: "Changed files", type: "number", width: 124, sortable: false, get: (run) => (run.role === "work" ? String(run.changed_files || 0) : "") },
+            { key: "created_at", label: "Started", type: "date", width: 128, sortable: false }],
+          foot: pager({ offset, count: runs.length, more: (data.runs || {}).more, limit: 20 }, "runs", (next) => P.go("agents", { ...params, offset: next ? String(next) : "" })) })));
       else if (tab.id === "hosts") put(container, region(data.configured ? null : h("div", { class: "notice" }, h("p", null, "Configure an agent host for this project before you delegate work or request checks.")),
         grid(hosts, hostCard, "No agent host is configured for this project.")));
       else put(container, region(listOf(attention, (item) => [h("p", null, item.reason),
@@ -315,7 +322,6 @@
     ["drift", "Records to recheck"], ["documents", "Documents"], ["sources", "Sources"], ["direction", "Requirement versions"], ["research", "Research"],
     ["corrections", "Corrections"], ["lessons", "Lessons"], ["patterns", "Patterns"], ["events", "All events"], ["captures", "Host captures"]];
   const FILTERS = ["query", "subject", "status", "episode", "from", "to", "order"];
-  const FOLDED = ["status", "episode", "from", "to", "order"];
   const RECORD_ICONS = { episode: "work", decision: "decisions", lesson: "learning", project_revision: "requirements" };
   // The filter box and its fold keep their open state across renders, so a live update does not fold them again.
   const folds = new Map();
@@ -334,79 +340,75 @@
     return P.get("records", { view, ...filters, limit: String(limit), offset: offset ? String(offset) : "" });
   }
   const openRecordAny = (record, trigger) => (record.kind === "episode" ? P.openWork(record.id, trigger) : P.openRecord(record.id, trigger));
-  // One row per record: its state, then its kind, subject, work item and date in one line.
-  const recordRow = (record) => P.paneRow("record-" + record.id, RECORD_ICONS[record.kind] || "records", record.title || record.id,
-    h("span", { class: "row" }, P.badge(record.state || record.status), h("span", { class: "muted" }, [record.kind === "episode" ? P.term("work_item") : P.words(record.kind), P.words(record.subject),
-      record.episode_id && record.episode_id !== record.id ? episodeTitle(record.episode_id) : null, record.date ? P.date(record.date) : "No date"].filter(Boolean).join(", "))),
-    (trigger) => openRecordAny(record, trigger));
-  const rowList = (records, message) => (records.length ? h("ul", { class: "pane-rows", dataset: { scroll: "rows" } }, records) : h("div", { class: "pane-rows" }, P.empty(message)));
-  function recordFilters(params, view) {
+  // Records is a database: each kind of record is a view, the filters are chips under the bar, and every kind shows as
+  // a table whose title opens the record beside it. All record kinds is a table grouped by kind with five rows each.
+  const MAIN_VIEWS = new Set(["all", "episodes", "decisions", "documents", "sources", "lessons", "events"]);
+  const VIEW_ICONS = { all: "table", episodes: "work", decisions: "decisions", documents: "page", sources: "records", lessons: "learning", events: "timeline",
+    pending: "decisions", drift: "alert", direction: "requirements", research: "search", corrections: "flag", patterns: "learning", captures: "agents" };
+  const KIND_OF = { episodes: "Work items", events: "Events", sources: "Sources", captures: "Host captures", direction: "Requirement versions" };
+  const recordProperties = () => [
+    { key: "title", label: "Title", type: "title", width: 360, sortable: true, get: (record) => record.title || record.id,
+      rowIcon: (record) => RECORD_ICONS[record.kind] || "page" },
+    { key: "state", label: "State", type: "status", width: 150, sortable: false, get: (record) => record.state || record.status },
+    { key: "kind", label: "Kind", type: "select", width: 132, sortable: false, labelOf: (record) => (record.kind === "episode" ? P.term("work_item") : P.words(record.kind)) },
+    { key: "subject", label: "Subject", type: "select", width: 112, sortable: false },
+    { key: "work", label: P.term("work_item"), type: "text", icon: "relation", width: 240, sortable: false,
+      get: (record) => (record.episode_id && record.episode_id !== record.id ? record.episode_title || episodeTitle(record.episode_id) : "") },
+    { key: "date", label: "Date", type: "date", width: 128, sortable: true },
+  ];
+  function recordFilters(params, update) {
     const episodes = ((P.health() || {}).episodes || []).map((item) => [item.id, item.title]);
-    const more = folds.has("records-more") ? folds.get("records-more") : FOLDED.some((name) => params[name]);
-    const fold = h("div", { class: "toolbar kn-fold", id: "records-fold", hidden: !more },
-      P.field("Status", P.select("status", [["", "Any status"], ...STATUSES], params.status || "", { id: "records-status" })),
-      P.field(P.term("work_item"), P.select("episode", [["", "Any " + P.term("work_item").toLowerCase()], ...episodes], params.episode || "", { id: "records-episode" })),
-      P.field("From", P.input("from", params.from, { id: "records-from", type: "date" })),
-      P.field("To", P.input("to", params.to, { id: "records-to", type: "date" })),
-      P.field("Order", P.select("order", [["newest", "Newest first"], ["oldest", "Oldest first"], ["title", "Title"]], params.order || "newest", { id: "records-order" })),
-      h("button", { type: "button", class: "quiet", id: "records-clear", on: { click: () => P.go("records", {}) } }, "Clear"));
-    const label = (open) => (open ? "Fewer filters" : "More filters");
-    const toggle = h("button", { type: "button", class: "quiet", id: "records-more", "aria-expanded": String(more), "aria-controls": "records-fold", on: { click: (event) => {
-      const open = fold.hidden; fold.hidden = !open; folds.set("records-more", open);
-      event.currentTarget.textContent = label(open); event.currentTarget.setAttribute("aria-expanded", String(open));
-    } } }, label(more));
-    const form = h("form", { class: "toolbar", role: "search", "aria-label": "Record filters" },
-      P.field("Kind", P.select("view", recordViews(), view, { id: "records-view" })),
-      P.field("Search", P.input("query", params.query, { id: "records-query", type: "search" })),
-      P.field("Subject", P.select("subject", [["", "Any subject"], ...SUBJECTS], params.subject || "", { id: "records-subject" })), toggle, fold);
-    // The filters apply on change, as in Work. The refresh keeps the focus and the caret, so typing continues.
-    let timer = null;
-    const apply = (event) => {
-      if (event) event.preventDefault();
-      const values = P.formValues(form);
-      if (values.order === "newest") values.order = "";
-      if (values.view === "all") values.view = "";
-      P.setParams(values);
-      P.refresh();
-    };
-    form.addEventListener("submit", apply);
-    form.addEventListener("change", () => apply());
-    form.addEventListener("input", (event) => { if (event.target.type === "search") { clearTimeout(timer); timer = setTimeout(apply, 200); } });
-    const active = FILTERS.some((name) => params[name]) || view !== "all", id = "records-filters";
-    return h("div", { class: "list-head" }, h("details", { class: "kn-filter-box", id, open: folds.has(id) ? folds.get(id) : active || window.innerWidth >= 640 },
-      h("summary", { on: { click: (event) => folds.set(id, !event.currentTarget.parentNode.open) } }, active ? "Filters are applied" : "Filters"), form));
+    const dateField = (name, label) => P.field(label, h("input", { type: "date", id: "records-" + name, name, value: params[name] || "",
+      on: { change: (event) => update(name, event.currentTarget.value) } }));
+    return P.filterRow(
+      P.filterField("select", "records-subject", "Subject", params.subject || "", (value) => update("subject", value), [["", "Any subject"], ...SUBJECTS.map((name) => [name, P.words(name)])]),
+      P.filterField("select", "records-status", "Status", params.status || "", (value) => update("status", value), [["", "Any status"], ...STATUSES.map((name) => [name, P.words(name)])]),
+      P.filterField("select", "records-episode", P.term("work_item"), params.episode || "", (value) => update("episode", value), [["", "Any " + P.term("work_item").toLowerCase()], ...episodes]),
+      dateField("from", "From"), dateField("to", "To"),
+      h("button", { type: "button", class: "quiet small", id: "records-clear", on: { click: () => P.go("records", params.view ? { view: params.view } : {}) } }, "Clear filters"));
   }
   P.registerView("records", { title: "Records", async render(container, params, ctx) {
       const view = params.view || "all", labels = Object.fromEntries(recordViews()), label = labels[view] || P.words(view);
       const filters = Object.fromEntries(FILTERS.filter((name) => params[name]).map((name) => [name, params[name]]));
-      const filtered = Object.keys(filters).length > 0, notes = [];
+      const filtered = Object.keys(filters).some((name) => name !== "order"), notes = [];
       if (!P.live) notes.push("This snapshot filters the first " + SNAPSHOT_PAGE + " records of each kind in the browser.");
+      // A filter keeps the view in place: the route changes and the view renders again with the focus and the caret kept.
+      const go = (next) => { P.setParams(Object.fromEntries(Object.entries({ ...params, offset: "", ...next }).filter(([, value]) => value))); P.refresh(); };
+      const update = (name, value) => go({ [name]: value });
+      const active = ["subject", "status", "episode", "from", "to"].filter((name) => params[name]).length;
+      const open = folds.has("records-filters") ? folds.get("records-filters") : active > 0;
+      const order = params.order || "newest", sort = order === "title" ? { key: "title", dir: "asc" } : { key: "date", dir: order === "oldest" ? "asc" : "desc" };
+      const setSort = (key, dir) => update("order", key === "title" ? "title" : dir === "asc" ? "oldest" : "");
       container.classList.add("list-view");
-      put(container, recordFilters(params, view));
-      const pane = (title, count, rows, foot) => h("section", { class: "list-pane" }, h("div", { class: "pane-head" }, h("h2", null, title, P.chip(number(count))),
-        notes.length ? h("p", { class: "muted" }, notes.join(" ")) : null), rows, foot ? h("div", { class: "pane-foot" }, foot) : null);
+      put(container, h("div", { class: "db-controls" }, P.dbBar({ id: "records", label: "Record kinds", view,
+        views: recordViews().map(([id, text]) => ({ id, label: id === "all" ? "All" : text, icon: VIEW_ICONS[id], more: !MAIN_VIEWS.has(id) })),
+        onView: (id) => P.go("records", { ...filters, view: id === "all" ? "" : id }),
+        filter: { active, open, onToggle: () => { folds.set("records-filters", !open); P.refresh(); } },
+        sort: { options: [["date", "Date"], ["title", "Title"]], key: sort.key, dir: sort.dir, quiet: !params.order, onChange: setSort },
+        search: { id: "records-query", value: params.query || "", placeholder: "Search records", onInput: (value) => update("query", value) } }),
+      open ? recordFilters(params, update) : null));
+      const properties = recordProperties(), note = notes.join(" ");
       if (view === "all") {
         const groups = await Promise.all(ALL_VIEWS.map((name) => loadRecords(name, filters, 0, 5).then((page) => [name, page], (error) => [name, null, error])));
         const total = groups.reduce((sum, [, page]) => sum + (page ? page.total : 0), 0);
         ctx.setSummary(P.count(total, "record") + " " + (total === 1 ? "matches" : "match") + (filtered ? " these filters." : " across all kinds."));
-        // Each kind is a group of its first five rows with a link to the whole kind.
-        const items = [];
-        for (const [name, page, error] of groups) {
-          const title = labels[name];
-          if (error) { items.push(h("li", { class: "kn-group" }, h("h3", null, title), failed(error))); continue; }
-          if (!page.total) continue;
-          items.push(h("li", { class: "kn-group" }, h("h3", null, title, counted(page.total, "record")),
-            page.total > page.records.length ? button("Show all " + number(page.total), "records-all-" + name, () => P.go("records", { ...filters, view: name }), "small") : null),
-          ...page.records.map((record) => h("li", null, recordRow(record))));
-        }
-        put(container, pane("All record kinds", total, rowList(items, "No records match these filters.")));
+        const pages = new Map(groups.filter(([, page]) => page && page.total).map(([name, page]) => [name, page]));
+        const rows = [...pages].flatMap(([name, page]) => page.records.map((record) => ({ ...record, group: name })));
+        const errors = groups.filter(([, , error]) => error).map(([name, , error]) => h("div", { class: "stack" }, h("strong", null, labels[name]), failed(error)));
+        put(container, h("section", { class: "list-pane" }, errors, P.dbTable({ id: "records", rows, rowKey: (record) => record.id, onOpen: openRecordAny,
+          properties: [...properties, { key: "group", label: "Kind", type: "select", hidden: true, order: ALL_VIEWS, labelOf: (record) => KIND_OF[record.group] || labels[record.group] }],
+          hidden: ["group"], group: "group", sort: null, empty: "No records match these filters.", foot: [note, "Each kind shows its five latest records."].filter(Boolean).join(" "),
+          groupExtra: (name) => { const page = pages.get(name); return page && page.total > page.records.length
+            ? button("Show all " + number(page.total), "records-all-" + name, () => P.go("records", { ...filters, view: name }), "quiet small") : null; } })));
         return;
       }
       const offset = Number(params.offset) || 0, page = await loadRecords(view, filters, offset, PAGE);
       ctx.setSummary(P.count(page.total, "record") + " in " + label.toLowerCase() + " " + (page.total === 1 ? "matches" : "match") + (filtered ? " these filters." : "."));
       if (page.partial) notes.push("This kind holds more records than the snapshot includes.");
-      put(container, pane(label, page.total, rowList(page.records.map((record) => h("li", null, recordRow(record))), "No records match these filters."),
-        pager({ offset, count: page.records.length, total: page.total, more: page.more, limit: PAGE }, "records", (next) => P.go("records", { ...params, offset: next ? String(next) : "" }))));
+      put(container, h("section", { class: "list-pane" }, P.dbTable({ id: "records", rows: page.records, rowKey: (record) => record.id, onOpen: openRecordAny, properties,
+        sort, onSort: setSort, empty: "No records match these filters.", keepOrder: true,
+        foot: [notes.length ? h("span", null, notes.join(" ")) : null,
+          pager({ offset, count: page.records.length, total: page.total, more: page.more, limit: PAGE }, "records", (next) => update("offset", next ? String(next) : ""))] })));
   } });
 
   // Record pane: fields, evidence, reverse references and paged source text with an outline.
@@ -463,8 +465,11 @@
       const detail = record.detail || {}, payload = detail.payload || {};
       ctx.setTitle(record.title || record.id);
       ctx.setKind(record.kind === "episode" ? P.term("work_item") : P.words(record.kind));
-      put(body, h("div", { class: "row" }, P.badge(record.state || record.status), h("span", { class: "chip" }, P.words(record.subject)), h("span", { class: "muted" }, P.date(record.date))),
-        h("p", { class: "mono muted" }, record.id));
+      const work = record.episode_id && record.episode_id !== record.id
+        ? openButton([P.icon("page"), record.episode_title || episodeTitle(record.episode_id)], record.episode_id, { work: true, prefix: "pane-episode-", class: "link-button" }) : null;
+      put(body, P.props([["status", "State", P.badge(record.state || record.status)],
+        ["select", "Kind", P.chip(record.kind === "episode" ? P.term("work_item") : P.words(record.kind))], ["select", "Subject", P.chip(P.words(record.subject))],
+        ["relation", P.term("work_item"), work], ["date", "Date", P.date(record.date)], ["number", "Identifier", h("span", { class: "mono muted" }, record.id)]]));
       if (record.kind === "lesson" && ctx.canEdit) {
         const lesson = { ...payload, id: record.id, episode_id: record.episode_id };
         const status = detail.lesson_status || record.status;
@@ -472,23 +477,25 @@
           actionButton("Reject", "pane-reject", lessonReview(lesson, "rejected"))));
         if (status === "accepted") put(ctx.foot, h("div", { class: "row" }, actionButton("Retire", "pane-retire", lessonReview(lesson, "retired"))));
       }
-      if (record.episode_id && record.episode_id !== record.id) put(body, h("p", null, P.term("work_item") + ": ",
-        openButton(record.episode_title || episodeTitle(record.episode_id), record.episode_id, { work: true, prefix: "pane-episode-" })));
       const fields = record.kind === "episode" ? { objective: detail.objective, criterion: detail.criterion, task_type: detail.task_type, status: detail.status, version: detail.version }
         : record.kind === "source" ? { summary: detail.summary, origin: detail.origin, version: detail.version, checked_at: detail.checked_at, review_after: detail.review_after, ...(detail.document ? { path: detail.document.path, format: detail.document.format, authority: detail.document.authority } : {}) }
           : record.kind === "project_revision" ? { requirements: detail.requirements, reason: detail.reason, actor: detail.actor }
             : record.kind === "host_receipt" ? { event_name: detail.event_name, tool_name: detail.tool_name, session_id: detail.session_id, ...(detail.payload || {}) }
               : { ...payload, actor: detail.actor };
       const shown = Object.entries(fields).filter(([, value]) => value !== undefined && value !== null && value !== "");
-      if (shown.length) put(body, h("dl", { class: "kv" }, shown.map(([name, value]) => [h("dt", null, P.words(name)), h("dd", null, valueNode(value, name))])));
-      if ((detail.review_reasons || []).length) put(body, h("div", { class: "notice", dataset: { tone: "review" } }, h("p", null, "This record needs review."), valueNode(detail.review_reasons)));
+      // Short values are properties of the page, and long text is its body under a heading of its own.
+      const long = ([, value]) => typeof value === "string" && value.length > 90;
+      const short = shown.filter((entry) => !long(entry)), text = shown.filter(long);
+      if ((detail.review_reasons || []).length) put(body, P.callout("alert", [h("strong", null, "This record needs review."), valueNode(detail.review_reasons)], "review"));
+      if (short.length) put(body, P.props(short.map(([name, value]) => ["text", P.words(name), valueNode(value, name)])));
+      if (text.length) put(body, P.divider(), text.map(([name, value]) => h("section", { class: "stack" }, P.heading(3, P.words(name)), h("p", { class: "kn-text" }, value))));
       if (record.outcome) {
         const assessment = (record.outcome.detail.payload || {}).assessment;
         put(body, section("Latest outcome", P.badge(assessment === "bad" ? "failed" : assessment === "good" ? "good" : "mixed", "Assessment: " + P.words(assessment)),
           h("p", null, openButton(record.outcome.title, record.outcome.id, { prefix: "pane-outcome-" }))));
       }
       const chain = [["Replaces", detail.supersedes], ["Replaced by", detail.replaced_by], ["Decision", detail.decision_id]].filter(([, id]) => id);
-      if (chain.length) put(body, h("dl", { class: "kv" }, chain.map(([label, id]) => [h("dt", null, label), h("dd", null, titledButton(id, { prefix: "pane-chain-" }))])));
+      if (chain.length) put(body, P.props(chain.map(([label, id]) => ["relation", label, titledButton(id, { prefix: "pane-chain-", class: "link-button" })])));
       if (record.kind === "source") put(body, typeof detail.body === "string" ? sourceText(record.id, detail)
         : section("Content", null, h("p", { class: "muted" }, "The source text is not included in this snapshot.")));
       const evidence = detail.evidence || [];
@@ -511,25 +518,31 @@
       const established = items.status !== "not_established";
       ctx.setSummary(established ? "Version " + current.version + " is current with " + P.count(items.total, "requirement") + "."
         : "The requirements are not established yet and wait for your review.");
+      // The requirements read as one Notion page: its properties, a callout, the numbered text and its history.
+      const history = revisions.map((revision) => ({ ...revision, id: "direction_" + revision.version, title: "Version " + revision.version,
+        reason_text: revision.reason || (revision.version === current.version ? current.reason : "") || "" }));
       container.classList.add("list-view");
-      put(container, h("section", { class: "list-pane" },
-        h("div", { class: "pane-head" }, h("h2", null, "Current requirements", P.badge(established ? items.status : "review", established ? P.words(items.status) : "Not established")),
-          h("p", { class: "muted" }, "The recorded requirements govern decisions. They do not prove that the project covers every need.")),
-        h("div", { class: "pane-rows pane-body", dataset: { scroll: "requirements" } },
-          kv([["Version", String(items.version)], ["Reason", current.reason || "Not recorded"], ["Approved by", current.actor || "Not recorded"],
-            ["Approved on", current.created_at ? P.date(current.created_at) : "Not recorded"]]),
-          h("ol", { class: "kn-requirements", start: String(offset + 1) }, items.items.map((item) => h("li", null, item.text))),
-          pager({ offset, count: items.items.length, total: items.total, more: items.more, limit: PAGE }, "requirements", (next) => P.go("requirements", { ...params, offset: next ? String(next) : "" })),
-          section("Approval evidence", counted(items.evidence_total || 0, "reference"),
-            listOf(items.evidence || [], (ref, index) => [openButton(ref.title || "Approval source " + (offset + index + 1), ref.source_id, { prefix: "requirement-evidence-" }),
-              ref.reason ? h("p", { class: "muted" }, ref.reason) : null], "No approval evidence is recorded for this version.")),
-          section("History", null, table(["Version", "Requirements", "Evidence", "Approved by", "Date", "Reason"], revisions.map((revision) => h("tr", null,
-            cell("Version", openButton("Version " + revision.version, "direction_" + revision.version, { prefix: "revision-" })),
-            cell("Requirements", number(revision.requirement_count)), cell("Evidence", number(revision.evidence_count)), cell("Approved by", revision.actor || "Not recorded"),
-            dateCell("Date", revision.created_at), cell("Reason", revision.reason || (revision.version === current.version ? current.reason : "") || "Not recorded")))),
-          pager({ offset: revisionOffset, count: revisions.length, more: data.more, limit: 10 }, "revisions", (next) => P.go("requirements", { ...params, revision_offset: next ? String(next) : "" })))),
-        h("div", { class: "pane-foot" }, h("span", null, established ? P.count(items.total, "requirement") + " in version " + items.version + "." : "No version is approved yet."),
-          ctx.canEdit ? h("button", { type: "button", class: "primary small", id: "review-requirements", on: { click: (event) => P.openForm("requirements", {}, event.currentTarget) } }, "Review requirements") : null)));
+      put(container, h("section", { class: "list-pane" }, h("div", { class: "pane-rows pane-body doc", dataset: { scroll: "requirements" } },
+        P.props([["status", "Status", P.badge(established ? items.status : "review", established ? P.words(items.status) : "Not established")],
+          ["number", "Version", String(items.version)], ["person", "Approved by", current.actor], ["date", "Approved on", current.created_at ? P.date(current.created_at) : null],
+          ["text", "Reason", current.reason]]),
+        P.callout("info", h("p", null, "The recorded requirements govern decisions. They do not prove that the project covers every need.")),
+        P.divider(),
+        h("div", { class: "block-head" }, P.heading(2, "Requirements"), counted(items.total, "requirement")),
+        items.items.length ? h("ol", { class: "kn-requirements", start: String(offset + 1) }, items.items.map((item) => h("li", null, item.text))) : P.empty("No requirement is recorded yet."),
+        pager({ offset, count: items.items.length, total: items.total, more: items.more, limit: PAGE }, "requirements", (next) => P.go("requirements", { ...params, offset: next ? String(next) : "" })),
+        section("Approval evidence", counted(items.evidence_total || 0, "reference"),
+          listOf(items.evidence || [], (ref, index) => [openButton([P.icon("page"), ref.title || "Approval source " + (offset + index + 1)], ref.source_id, { prefix: "requirement-evidence-", class: "link-button" }),
+            ref.reason ? h("p", { class: "muted" }, ref.reason) : null], "No approval evidence is recorded for this version.")),
+        section("History", null, h("div", { class: "db-inline" }, P.dbTable({ id: "revisions", rows: history, rowKey: (revision) => revision.version, keepOrder: true,
+          onOpen: (revision, t) => P.openRecord(revision.id, t), empty: "No earlier version is recorded.",
+          properties: [{ key: "title", label: "Version", type: "title", width: 150, sortable: false, rowIcon: () => "requirements" },
+            { key: "requirement_count", label: "Requirements", type: "number", width: 130, sortable: false }, { key: "evidence_count", label: "Evidence", type: "number", width: 110, sortable: false },
+            { key: "actor", label: "Approved by", type: "text", icon: "person", width: 140, sortable: false }, { key: "created_at", label: "Date", type: "date", width: 130, sortable: false },
+            { key: "reason_text", label: "Reason", type: "text", width: 320, sortable: false }],
+          foot: pager({ offset: revisionOffset, count: revisions.length, more: data.more, limit: 10 }, "revisions", (next) => P.go("requirements", { ...params, revision_offset: next ? String(next) : "" })) })))),
+        ctx.canEdit ? h("div", { class: "pane-foot" }, h("span", null, established ? P.count(items.total, "requirement") + " in version " + items.version + "." : "No version is approved yet."),
+          h("button", { type: "button", class: "primary small", id: "review-requirements", on: { click: (event) => P.openForm("requirements", {}, event.currentTarget) } }, "Review requirements")) : null));
   } });
 
   // Machine: the rules the user promoted out of single projects, the projects on this computer and the proposals

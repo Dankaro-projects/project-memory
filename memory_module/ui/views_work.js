@@ -13,7 +13,7 @@
   const P = Panel, { h, chip, button, put, kv, lower } = P;
   const STATES = ["backlog", "ready", "in_progress", "blocked", "review", "done", "cancelled"];
   const TYPES = ["phase", "epic", "story", "task", "research", "deliverable", "workflow"];
-  const CHILD_TYPE = { phase: "epic", epic: "story", story: "task" }, PRIORITY = { high: 0, normal: 1, low: 2 }, REVIEW_STATUS = ["needs_review", "review_due"];
+  const REVIEW_STATUS = ["needs_review", "review_due"];
   const remembered = { open: new Map(), history: new Map(), timers: {} };
 
   // Shared helpers.
@@ -24,7 +24,7 @@
   const heading = (title, count) => h("h3", null, h("span", null, title), typeof count === "number" ? chip(String(count)) : null);
   const listOf = (items, render, message) => (items && items.length
     ? h("ul", { class: "list" }, items.map((item, index) => h("li", null, render(item, index)))) : P.empty(message));
-  const section = (title, ...children) => h("section", { class: "stack" }, h("h3", null, title), ...children);
+  const section = (title, ...children) => h("section", { class: "stack" }, P.heading(2, title), ...children);
   const textList = (items) => h("ul", null, items.map((item) => h("li", null, typeof item === "string" ? item : JSON.stringify(item))));
 
   const openDecision = (id, trigger) => P.openPane("decision", { id }, trigger);
@@ -83,13 +83,6 @@
   }, className) : null);
   const selectControl = (id, label, options, value, onChange) => P.filterField("select", id, label, value, onChange, options);
   const checkControl = (id, label, checked, onChange) => P.filterField("check", id, label, checked, onChange);
-  // The search boxes of this file filter while the reader types, after a short pause.
-  const searchControl = (id, label, value, onInput) => P.field(label, P.input(id, value, { id, type: "search", autocomplete: "off", on: { input: (event) => {
-    const text = event.currentTarget.value;
-    clearTimeout(remembered.timers[id]);
-    remembered.timers[id] = setTimeout(() => onInput(text.trim()), 200);
-  } } }));
-
   // graphs.js draws the lineage and keeps its own toggle between the graph and a readable vertical list.
   const lineageBlock = (host, focus, data) => P.lineageGraph(host, focus, { data, compact: true, title: "Lineage", open: openNode });
 
@@ -149,34 +142,6 @@
     h("div", { class: "notice" }, h("p", null, h("strong", null, "Next step. "), step.reason || "No next step is recorded."), kickoffStep(step, kickoff)), details);
     return card;
   }
-  // One row per kind: tone, label, what the row opens in words (null names the work item) and the action that opens it.
-  const openRecordOf = (entry, trigger) => (entry.id && openable(entry.id) ? P.openRecord(entry.id, trigger) : null);
-  const openWorkOf = (entry, trigger) => P.openWork(entry.id, trigger), openCaptures = () => P.go("records", { view: "captures" });
-  const openRules = () => P.go("learning", { tab: "instructions" }), openSessions = () => P.go("sessions");
-  const ATTENTION = {
-    scope_block: ["blocked", "Edit blocked", null, (entry, trigger) => (entry.episode_id ? P.openWork(entry.episode_id, trigger) : openRecordOf(entry, trigger))],
-    blocked_work: ["blocked", "Blocked", null, openWorkOf], work_to_review: ["review", "Needs review", null, openWorkOf], criteria_to_confirm: ["review", "Criteria to confirm", null, openWorkOf],
-    awaiting_merge: ["review", "Awaiting merge", "agent run", (entry, trigger) => openRun(entry, trigger)],
-    agent_follow_up: ["review", "Agent follow up", "agent run", openRecordOf], guard_recurrence: ["blocked", "Repeated failure", "lesson", openRecordOf],
-    failure_without_lesson: ["blocked", "Failure without a lesson", "outcome", openRecordOf],
-    capture_failure: ["blocked", "Recording failed", "captures", openCaptures], recording_gap: ["review", "Recording gap", "captures", openCaptures],
-    lessons_to_accept: ["review", "Lessons to accept", "proposed lessons", () => P.go("learning", { tab: "proposed" })],
-    rules_over_cap: ["review", "Too many rules", "instructions", openRules], rule_ineffective: ["review", "Rule without effect", "instructions", openRules],
-    session_flags: ["review", "Session flags", "flags", openSessions], session_proposals: ["review", "Session proposals", "proposals", openSessions],
-    machine_rules: ["review", "Machine rules", "proposed rules", () => P.go("machine")] };
-  const attentionOf = (type) => ATTENTION[type] || ["neutral", P.words(type), "record", openRecordOf];
-  const decisionItem = (decision, prefix) => openItem(prefix + decision.id, (t) => openDecision(decision.id, t),
-    h("span", { class: "row" }, outcomeBadge(decision.outcome && decision.outcome.assessment), decision.status !== "recorded" ? P.badge(decision.status) : null),
-    h("strong", null, decision.title), h("span", { class: "muted" }, [decision.episode_title, P.date(decision.date)].filter(Boolean).join(". ")));
-  function scopeBlock(block) {
-    const outside = block.still_outside || [];
-    const allowed = (block.allowed_patterns || []).join(", ") || "not recorded";
-    return h("div", { class: "stack" }, h("span", { class: "row" }, outside.length ? toneBadge("blocked", "Still outside the allowed paths") : toneBadge("ready", "Now allowed"),
-      block.host ? chip(P.words(block.host)) : null, h("span", { class: "muted" }, P.date(block.created_at))),
-    h("p", null, `An edit to ${(block.blocked || []).join(", ")} was blocked. The allowed paths were ${allowed}.`),
-    h("div", { class: "row" }, block.episode_id ? button("Open the " + noun(1), "now-block-" + block.id, (t) => P.openWork(block.episode_id, t), "small") : null,
-      outside.length && P.canEdit() && block.episode_id ? button("Allow paths", "now-allow-" + block.id, (t) => P.openForm("allow_paths", { episode_id: block.episode_id, paths: outside, block }, t), "small") : null));
-  }
   const allLink = (href, text) => h("a", { href }, text);
 
   const BOARD_PAGE = 10;
@@ -203,58 +168,52 @@
       bulk && P.canEdit() ? P.formButton(`Resolve ${bulk} read-only ${bulk === 1 ? "call" : "calls"}`, "reconcile_read_only", { count: bulk }, { class: "small" }) : null,
       listOf(items, unconfirmedItem));
   }
-  // Now: one tab for each kind that waits with its count, the rows of the selected kind, and a pane that decides the item or
-  // opens it. Lessons, flags and proposals are decided in the pane, and the next item opens after each decision.
-  const NOW_ICONS = { blocked_work: "work", work_to_review: "records", criteria_to_confirm: "records", scope_block: "work", awaiting_merge: "agents", agent_follow_up: "agents",
-    lessons_to_accept: "learning", guard_recurrence: "learning", rules_over_cap: "learning", rule_ineffective: "learning", failure_without_lesson: "decisions",
-    session_flags: "sessions", session_proposals: "sessions", machine_rules: "machine", capture_failure: "requirements", recording_gap: "requirements" };
-  const DECIDED = { lessons_to_accept: ["learning", (data) => (data.proposed_lessons || {}).lessons, (item) => [item.do || item.title || "Proposed lesson", "From: " + (item.episode_title || item.episode_id)],
-      "An accepted lesson guides every later agent run that matches it."],
-    session_flags: ["sessions", (data) => data.flags, (item) => ["\u201C" + item.excerpt + "\u201D", P.words(item.category) + ", from " + item.session_key],
-      "A message of yours that may hold a direction no record followed. Each flag is a low confidence hint."],
-    session_proposals: ["sessions", (data) => data.proposals, (item) => [item.text, P.words(item.slot) + ", " + lower(P.words(item.confidence)) + " confidence"],
-      "A proposal from an earlier session becomes a record only when you accept it."] };
-  const NOW_EXTRA = { unconfirmed: "Needs reconciliation", kickoff: "Kickoff", decisions: "Latest decisions", scope_blocks: "Scope blocks" };
-  // The tabs of a list view: one button per tab with its count and tone, the selected tab pressed and brought into sight.
+  // The tabs of a list view read as the views of a Notion database: an icon, the name and a quiet count, with the
+  // selected tab underlined and brought into sight. entry.icon names the icon, and the table icon is the default.
   P.viewTabs = (label, prefix, tabs, selected, open, ctx) => {
-    const node = h("div", { class: "tabs view-tabs", role: "group", "aria-label": label }, tabs.map((entry) => button([entry.label,
-      typeof entry.count === "number" ? chip(String(entry.count), entry.tone ? { dataset: { tone: entry.tone } } : null) : null], prefix + entry.id, () => open(entry.id), null,
-    { "aria-pressed": String(entry === selected) })));
+    const node = h("div", { class: "db-bar" }, h("div", { class: "db-views", role: "group", "aria-label": label }, tabs.map((entry) => button([P.icon(entry.icon || "list"),
+      h("span", null, entry.label), typeof entry.count === "number" ? h("span", { class: "db-count", dataset: entry.tone && entry.count ? { tone: entry.tone } : null }, String(entry.count)) : null],
+    prefix + entry.id, () => open(entry.id), "db-view", { "aria-pressed": String(entry === selected) }))));
     // The row of tabs scrolls sideways, so the selected tab is brought into sight.
     ctx.onShown(() => node.querySelector('[aria-pressed="true"]').scrollIntoView({ block: "nearest", inline: "nearest" }));
     return node;
   };
+  // Now is the home page of the project: a digest of the work in progress, the paused work, the work that can start and
+  // the finished work, each item with its one next step, and the latest decisions. Nothing on it waits for the reader.
+  const digestProperties = (extra) => [
+    { key: "title", label: "Title", type: "title", width: 320, sortable: false, rowIcon: (c) => TYPE_ICONS[(c.plan || {}).item_type] || "work" },
+    { key: "state", label: "State", type: "status", width: 128, sortable: false },
+    ...(extra || []),
+    { key: "next", label: "Next step", type: "text", width: 420, sortable: false, get: (c) => (c.plan || {}).next_action || "" },
+    { key: "type", label: "Type", type: "select", width: 108, sortable: false, get: (c) => (c.plan || {}).item_type || "task", labelOf: (c) => typeLabel((c.plan || {}).item_type) },
+  ];
+  const WHY = { key: "why", label: "Waiting for", type: "custom", icon: "alert", width: 220, sortable: false,
+    render: (c) => { const issue = issueInfo(c.issues); return issue ? chip(issue.text, { dataset: { tone: issue.tone } }) : c.state === "review" ? chip("A check or a review") : null; } };
+  const digestTable = (id, rows, extra, empty) => h("div", { class: "db-inline" }, P.dbTable({ id, rows, rowKey: (c) => c.id, onOpen: (c, t) => P.openWork(c.id, t),
+    properties: digestProperties(extra), keepOrder: true, empty }));
   P.registerView("now", { title: "Now", async render(container, params, ctx) {
-      const now = await P.get("now"), waiting = now.attention_count || 0, kinds = now.attention_kinds || [];
-      ctx.setSummary(waiting ? `${waiting} ${verb(waiting, "item waits", "items wait")} for you.` : "Nothing waits for you.");
+      const [now, board] = await Promise.all([P.get("now"), P.get("board", { limit: "100" })]);
+      const cards = board.cards || [], byState = (...states) => cards.filter((c) => states.includes(c.state));
+      const newest = (list) => [...list].sort((a, b) => String(b.date).localeCompare(String(a.date)));
+      const progress = byState("in_progress"), paused = byState("blocked", "review"), ready = byState("ready"), done = newest(byState("done"));
+      ctx.setSummary(nowSentence(now));
       const [unconfirmed, kickoff] = await Promise.all([unconfirmedCard({}), kickoffCard(now)]);
-      const extra = { unconfirmed, kickoff, decisions: () => [listOf(now.latest_decisions, (decision) => decisionItem(decision, "now-decision-"), "No decision is recorded."), allLink("#decisions", "Open all decisions")],
-        scope_blocks: () => listOf(now.scope_blocks, scopeBlock, "No edit was blocked for being outside the allowed paths.") };
-      const tabs = [...kinds.map((kind) => ({ id: kind.type, label: attentionOf(kind.type)[1], count: kind.count, tone: attentionOf(kind.type)[0], kind })),
-        ...Object.keys(NOW_EXTRA).filter((id) => extra[id]).map((id) => ({ id, label: NOW_EXTRA[id], count: id === "unconfirmed" ? Number(unconfirmed.dataset.total) : id === "scope_blocks" ? (now.scope_blocks || []).length : null }))];
-      const tab = tabs.find((entry) => entry.id === params.kind) || tabs[0], offset = Number(params.offset) || 0;
+      const part = (title, count, ...children) => h("section", { class: "stack digest-part" }, h("div", { class: "block-head" }, P.heading(2, title), h("span", null, String(count))), ...children);
+      const decisions = now.latest_decisions || [];
       container.classList.add("list-view");
-      put(container, P.viewTabs("What waits for you, by kind", "now-kind-", tabs, tab, (id) => P.go("now", { kind: id }), ctx));
-      if (!tab.kind) { put(container, h("div", { class: "list-pane" }, paneBody("rows", typeof extra[tab.id] === "function" ? extra[tab.id]() : extra[tab.id]))); return; }
-      // The rows of a decided kind come from the view that owns them, and every other kind pages through the response of Now.
-      const type = tab.id, [tone, label, target, open] = attentionOf(type);
-      let rows, total = tab.kind.rows, source = DECIDED[type];
-      if (source) {
-        // A snapshot holds no session messages, so its flags and proposals stay one row that names their number.
-        const items = await P.get(source[0]).then(source[1], () => null);
-        if (!items) source = null;
-        if (items) { total = tab.count; rows = items.map((item) => { const [title, sub] = source[2](item); return P.paneRow("now-row-" + item.id, NOW_ICONS[type], title, sub, (t) => P.openPane("decide", { kind: type, id: item.id, from: item.episode_title }, t)); }); }
-      }
-      if (!rows) {
-        const page = offset && P.live ? (await P.get("now", { attention_type: type, attention_offset: String(offset) })).attention : tab.kind.entries || [];
-        rows = page.map((entry, index) => P.paneRow("now-attention-" + type + "-" + (entry.id || index), NOW_ICONS[type] || "records", entry.title || label, entry.detail || entry.reason, (t) => open(entry, t)));
-      }
-      const from = source ? 0 : offset, turn = (to) => () => P.go("now", { kind: type, offset: to ? String(to) : "" });
-      put(container, P.listPane({ title: label, count: tab.count, tone, note: source ? source[3] : target ? "A row opens the " + target + "." : "A row opens the " + noun(1) + " with why it waits and its next step.",
-        rows, empty: "Nothing of this kind waits for you.", foot: [h("span", null, rows.length ? `Showing ${from + 1} to ${from + rows.length} of ${Math.max(total, from + rows.length)}.` : ""),
-          !source && P.live ? h("span", { class: "row" }, offset ? button("Previous 20", "now-previous", turn(Math.max(0, offset - 20)), "small") : null,
-            offset + rows.length < total ? button("Next 20", "now-next", turn(offset + 20), "small") : null) : null,
-          type === "criteria_to_confirm" ? P.formButton("Confirm criteria", "confirm_criteria", {}, { class: "small primary" }) : null] }));
+      put(container, h("div", { class: "list-pane" }, h("div", { class: "pane-rows pane-body digest", dataset: { scroll: "rows" } },
+        kickoff, unconfirmed,
+        part("In progress", progress.length, progress.length ? digestTable("now-progress", progress, null, "") : P.empty(`No ${noun(1)} is in progress.`)),
+        part("Paused", paused.length, paused.length ? [h("p", { class: "muted" }, `A paused ${noun(1)} waits for another item, a check or a review. Its next step says what moves it.`),
+          digestTable("now-paused", paused, [WHY], "")] : P.empty(`No ${noun(1)} is paused.`)),
+        part("Ready to start", ready.length, ready.length ? digestTable("now-ready", ready, null, "") : P.empty(`No ${noun(1)} is ready to start.`)),
+        part("Done", done.length, done.length ? P.toggle("now-done", `Show the ${Math.min(done.length, 10)} most recent`, digestTable("now-done", done.slice(0, 10), null, ""), false)
+          : P.empty(`No ${noun(1)} is done yet.`)),
+        part("Latest decisions", decisions.length, decisions.length ? [h("div", { class: "db-inline" }, P.dbTable({ id: "now-decisions", rows: decisions, rowKey: (d) => d.id, keepOrder: true,
+          onOpen: (d, t) => openDecision(d.id, t), properties: [{ key: "title", label: "Decision", type: "title", width: 360, sortable: false, rowIcon: () => "decisions" },
+            { key: "outcome", label: "Outcome", type: "custom", icon: "status", width: 170, sortable: false, render: (d) => outcomeBadge(d.outcome && d.outcome.assessment) },
+            { key: "episode_title", label: P.term("work_item"), type: "text", icon: "relation", width: 260, sortable: false }, { key: "date", label: "Date", type: "date", width: 128, sortable: false }] })),
+          allLink("#decisions", "Open all decisions")] : P.empty("No decision is recorded.")))));
   } });
 
   // The decision pane of a lesson, a session flag or a session proposal. A lesson needs a reason; a flag does not.
@@ -322,73 +281,83 @@
     const active = node.descendants - (node.rollup.cancelled || 0);
     return active ? `${node.rollup.done} of ${active} done` : "No items below";
   };
-  function planNode(node, cards, filter, depth) {
-    const children = (node.children || []).map((child) => planNode(child, cards, filter, depth + 1)).filter(Boolean);
-    const filtered = Boolean(filter.type || filter.state || filter.query);
-    if (!matches(node, filter) && !children.length) return null;
-    const open = filtered || (remembered.open.has(node.id) ? remembered.open.get(node.id) : depth < 2);
-    const card = cards.get(node.id);
-    const acceptance = card && card.plan ? card.plan.acceptance || [] : [];
-    const toggle = children.length ? button(open ? "▾" : "▸", "plan-toggle-" + node.id, (trigger) => {
-      remembered.open.set(node.id, !open);
-      trigger.dispatchEvent(new CustomEvent("plan-redraw", { bubbles: true }));
-    }, "quiet small", { "aria-expanded": String(open), "aria-label": (open ? "Hide" : "Show") + " the items below " + node.title, disabled: filtered }) : h("span");
-    return h("li", null, h("div", { class: "tree-row" }, toggle,
-      openItem("plan-open-" + node.id, (t) => P.openWork(node.id, t),
-        h("span", { class: "row" }, chip(typeLabel(node.item_type)), P.badge(node.state), node.owner === "human" ? chip("Owner: person") : null), h("strong", null, node.title)),
-      h("div", { class: "tree-meta" }, node.descendants ? [P.progress(node.progress, "Progress of " + node.title), h("span", { class: "muted" }, progressText(node))] : null,
-        P.canEdit() ? button("Add item", "plan-add-" + node.id, (t) => P.openForm("plan", { parent_id: node.id, item_type: CHILD_TYPE[node.item_type] || "task", parent: node }, t),
-          "small tree-add", { "aria-label": "Add an item below " + node.title }) : null)),
-    node.acceptance_total ? h("details", { class: "acceptance" }, h("summary", null, `Acceptance criteria (${node.acceptance_total})`),
-      acceptance.length ? h("ol", null, acceptance.map((line) => h("li", null, line))) : h("p", { class: "muted" }, "Open the item to read its acceptance criteria.")) : null,
-    children.length ? h("ul", { hidden: !open }, children) : null);
-  }
   // Plan and Work fill the frame: the filters sit in a box at the top, which stays folded on a narrow screen until the
   // reader opens it, and the tree, the board or the rows scroll under it. The foot stays in place under them.
   const filterBox = (id, filtered, ...fields) => h("details", { class: "kn-filter-box", id, open: remembered.open.has(id) ? remembered.open.get(id) : filtered || window.innerWidth >= 640 },
     h("summary", { on: { click: (event) => remembered.open.set(id, !event.currentTarget.parentNode.open) } }, filtered ? "Filters are applied" : "Filters"), h("div", { class: "toolbar" }, fields));
   P.filterBox = filterBox;
-  const paneBody = (name, ...children) => h("div", { class: "pane-rows pane-body", dataset: { scroll: name } }, children);
   const paneFoot = (...children) => h("div", { class: "pane-foot" }, children);
+  // The filter chips under the bar of a database. The Filter tool of the bar shows and hides them.
+  const filterRow = (...fields) => h("div", { class: "db-filters" }, h("div", { class: "kn-filter-box" }, h("div", { class: "toolbar" }, fields)));
+  P.filterRow = filterRow;
+  // Plan is a database of the plan tree with two views: Outline, a table whose rows nest their sub-items as Notion
+  // sub-items do, and Phases, a gallery of the phases with their progress.
+  const TYPE_ICONS = { phase: "timeline", epic: "board", story: "page", task: "work", research: "search", deliverable: "page", workflow: "outline" };
+  const planProperties = () => [
+    { key: "title", label: "Title", type: "title", width: 380, sortable: false, rowIcon: (node) => TYPE_ICONS[node.item_type] || "work" },
+    { key: "state", label: "State", type: "status", width: 132, sortable: false },
+    { key: "type", label: "Type", type: "select", width: 112, sortable: false, get: (node) => node.item_type, labelOf: (node) => typeLabel(node.item_type) },
+    { key: "progress", label: "Progress", type: "custom", icon: "status", width: 200, sortable: false,
+      render: (node) => (node.descendants ? h("span", { class: "db-progress" }, P.progress(node.progress, "Progress of " + node.title), h("span", null, progressText(node))) : null) },
+    { key: "acceptance", label: "Acceptance", type: "number", icon: "check", width: 116, sortable: false, get: (node) => (node.acceptance_total ? P.count(node.acceptance_total, "criterion", "criteria") : "") },
+    { key: "owner", label: "Owner", type: "select", icon: "person", width: 104, sortable: false, get: (node) => node.owner, labelOf: (node) => (node.owner === "human" ? "Person" : "Agent") },
+  ];
+  // The rows of the outline: a node shows when it matches the filters or holds a match, and a filter opens every fold.
+  function planRows(nodes, filter, depth, out) {
+    const filtered = Boolean(filter.type || filter.state || filter.query);
+    for (const node of nodes) {
+      const below = [];
+      planRows(node.children || [], filter, depth + 1, below);
+      if (!matches(node, filter) && !below.length) continue;
+      const open = filtered || (remembered.open.has(node.id) ? remembered.open.get(node.id) : depth < 2);
+      out.push({ ...node, depth, folds: below.length > 0, open });
+      if (open) out.push(...below);
+    }
+    return out;
+  }
   P.registerView("plan", { title: "Plan", async render(container, params, ctx) {
-      const [plan, board] = await Promise.all([P.get("plan"), P.get("board", { limit: "100" }).catch(() => null)]);
-      const cards = new Map(((board && board.cards) || []).map((card) => [card.id, card]));
+      const plan = await P.get("plan");
       const roots = plan.roots || [], counts = plan.counts || {}, phases = roots.filter((node) => node.item_type === "phase");
       const active = (plan.total || 0) - (counts.cancelled || 0), done = counts.done || 0;
       ctx.setSummary(`${plan.total || 0} ${noun(plan.total || 0)} ${verb(plan.total || 0, "is", "are")} planned` +
         (phases.length ? ` in ${P.count(phases.length, "phase")}.` : ".") + ` ${done} ${verb(done, "is", "are")} done.`);
-      const filter = { type: params.type || "", state: params.state || "", query: params.query || "" };
-      const tree = h("div", { class: "stack" }), head = h("div", { class: "list-head" });
-      const drawTree = () => {
-        const nodes = roots.map((node) => planNode(node, cards, filter, 0)).filter(Boolean);
-        return nodes.length ? h("ul", { class: "tree" }, nodes) : P.empty(plan.total ? `No ${noun(2)} match these filters.` : `No ${noun(2)} are planned yet.`);
-      };
-      tree.addEventListener("plan-redraw", () => redraw(tree, drawTree));
-      // The search box keeps its focus while the reader types, so a typed query redraws the tree alone.
-      const update = (name, value) => { filter[name] = value; P.setParams({ ...filter }); if (name !== "query") redraw(head, drawHead); redraw(tree, drawTree); };
+      const st = { tab: params.tab === "phases" && phases.length ? "phases" : "outline", type: params.type || "", state: params.state || "", query: params.query || "" };
+      const results = h("section", { class: "list-pane" }), controls = h("div", { class: "db-controls" }), properties = planProperties();
+      const save = () => P.setParams({ tab: st.tab === "phases" ? "phases" : "", type: st.type, state: st.state, query: st.query });
+      const total = h("span", { class: "row" }, P.progress(active ? done / active : null, "Share of work items done"), h("span", null, `${done} of ${P.count(active, noun(1), noun(2))} done.`));
+      const draw = () => redraw(results, () => {
+        if (st.tab === "phases") return [h("ol", { class: "gallery pane-rows", dataset: { scroll: "phases" }, "aria-label": "Phases" }, phases.filter((phase) => matches(phase, st)).map((phase, index) =>
+          h("li", { dataset: { tone: phase.state } }, button([h("span", { class: "gallery-cover", dataset: { tone: phase.state } }, P.badge(phase.state)),
+            h("span", { class: "gallery-body" }, h("span", { class: "muted" }, "Phase " + (index + 1)), h("strong", null, phase.title),
+              P.progress(phase.progress, "Progress of " + phase.title), h("span", { class: "muted" }, progressText(phase)))], "plan-phase-" + phase.id,
+          (t) => P.openWork(phase.id, t), "item")))), paneFoot(total)];
+        const rows = planRows(roots, st, 0, []);
+        return [P.dbTable({ id: "plan", rows, rowKey: (node) => node.id, onOpen: (node, t) => P.openWork(node.id, t), properties, keepOrder: true,
+          tree: { depth: (node) => node.depth, toggle: (node) => (node.folds ? h("button", { type: "button", class: "db-toggle", dataset: { key: "plan-toggle-" + node.id },
+            "aria-expanded": String(node.open), "aria-label": (node.open ? "Hide" : "Show") + " the items below " + node.title, disabled: Boolean(st.type || st.state || st.query),
+            on: { click: () => { remembered.open.set(node.id, !node.open); draw(); } } }, P.icon("down")) : null) },
+          empty: plan.total ? `No ${noun(2)} match these filters.` : `No ${noun(2)} are planned yet.`,
+          foot: [total, plan.note ? h("span", null, plan.note) : null, plan.truncated ? h("span", null, "The plan is limited, so some work items are not shown.") : null] })];
+      });
+      const update = (name, value) => { st[name] = value; save(); drawControls(); draw(); };
       const typesPresent = TYPES.filter((type) => JSON.stringify(roots).includes('"item_type":"' + type + '"'));
-      const drawHead = () => filterBox("plan-filters", Boolean(filter.type || filter.state || filter.query),
-        selectControl("plan-type", "Item type", [["", "All types"], ...typesPresent.map((type) => [type, typeLabel(type)])], filter.type, (value) => update("type", value)),
-        selectControl("plan-state", "State", [["", "All states"], ...STATES.map((state) => [state, P.words(state)])], filter.state, (value) => update("state", value)),
-        searchControl("plan-query", "Search titles", filter.query, (value) => update("query", value)));
+      const activeFilters = () => [st.type, st.state].filter(Boolean).length;
+      const filtersOpen = () => (remembered.open.has("plan-filters") ? remembered.open.get("plan-filters") : activeFilters() > 0);
+      const drawControls = () => redraw(controls, () => [
+        P.dbBar({ id: "plan", label: "Plan views", view: st.tab, onView: (value) => update("tab", value),
+          views: [{ id: "outline", label: "Outline", icon: "outline" }, ...(phases.length ? [{ id: "phases", label: "Phases", icon: "board" }] : [])],
+          filter: { active: activeFilters(), open: filtersOpen(), onToggle: () => { remembered.open.set("plan-filters", !filtersOpen()); drawControls(); } },
+          search: { id: "plan-query", value: st.query, placeholder: "Search titles", onInput: (value) => { st.query = value; save(); draw(); } } }),
+        filtersOpen() ? filterRow(
+          selectControl("plan-type", "Item type", [["", "All types"], ...typesPresent.map((type) => [type, typeLabel(type)])], st.type, (value) => update("type", value)),
+          selectControl("plan-state", "State", [["", "All states"], ...STATES.map((state) => [state, P.words(state)])], st.state, (value) => update("state", value))) : null]);
       container.classList.add("list-view");
-      put(container, head, h("section", { class: "list-pane" }, paneBody("rows",
-        phases.length ? h("section", { class: "stack", "aria-label": "Timeline by phase" }, h("h3", null, "Timeline by phase"),
-          h("ol", { class: "timeline" }, phases.map((phase, index) => h("li", { dataset: { tone: phase.state } },
-            button([h("span", { class: "muted" }, "Phase " + (index + 1)), h("strong", null, phase.title), h("span", { class: "row" }, P.badge(phase.state)),
-              P.progress(phase.progress, "Progress of " + phase.title), h("span", { class: "muted" }, progressText(phase))], "plan-phase-" + phase.id,
-            (t) => P.openWork(phase.id, t), "item"))))) : null,
-        tree, plan.note ? h("p", { class: "muted" }, plan.note) : null, plan.truncated ? h("p", { class: "notice" }, "The plan is limited, so some work items are not shown.") : null),
-      paneFoot(h("span", { class: "row" }, P.progress(active ? done / active : null, "Share of work items done"), h("span", null, `${done} of ${P.count(active, noun(1), noun(2))} done.`)),
-        P.canEdit() ? button("Add item", "plan-add-root", (t) => P.openForm("plan", { parent_id: null, item_type: phases.length ? "epic" : "phase" }, t), "primary small") : null)));
-      redraw(head, drawHead);
-      redraw(tree, drawTree);
+      put(container, controls, results);
+      drawControls();
+      draw();
   } });
 
-  // Work.
-  const SORTS = { title: (c) => String(c.title).toLowerCase(), state: (c) => STATES.indexOf(c.state), type: (c) => (c.plan || {}).item_type || "task",
-    subject: (c) => c.subject, priority: (c) => PRIORITY[(c.plan || {}).priority || "normal"], issues: (c) => (c.issues || []).length, date: (c) => c.date };
-  const COLUMNS = [["title", "Title"], ["state", "State"], ["type", "Type"], ["subject", "Subject"], ["priority", "Priority"], ["issues", "Issues"], ["date", "Created"]];
+  // Work: a database of work items with a table view and a board view, in the manner of Notion.
   function filterCards(cards, st) {
     const query = st.query.toLowerCase();
     return cards.filter((c) => (!st.subject || c.subject === st.subject) && (!st.state || c.state === st.state)
@@ -410,25 +379,32 @@
         () => { remembered.open.set("column-" + state, columnShown(state) + BOARD_PAGE); P.refresh(); }, "small quiet") : null))),
     hidden && !st.state ? `${hidden} empty ${verb(hidden, "column is", "columns are")} hidden.` : ""];
   }
-  // The list mode is one row per work item, sorted by the chosen column, and a row opens the item beside the list.
-  const rowSub = (c) => { const plan = c.plan || {}, issue = issueInfo(c.issues);
-    return [[P.words(c.state), lower(typeLabel(plan.item_type)), lower(P.words(c.subject)), plan.priority && plan.priority !== "normal" ? lower(P.words(plan.priority)) + " priority" : null].filter(Boolean).join(", "),
-      issue ? issue.text : null, "Created " + P.date(c.date)].filter(Boolean).join(". ") + "."; };
-  function listNode(cards, st) {
-    const getter = SORTS[st.sort] || SORTS.state;
-    const ordered = [...cards].sort((a, b) => { const x = getter(a), y = getter(b); return (x < y ? -1 : x > y ? 1 : 0) * (st.dir === "desc" ? -1 : 1); });
-    return [ordered.length ? h("ul", { class: "pane-rows", dataset: { scroll: "rows" } }, ordered.map((c) => h("li", null, P.paneRow("work-row-" + c.id, "work", c.title, rowSub(c), (t) => P.openWork(c.id, t)))))
-      : h("div", { class: "pane-rows" }, P.empty(`No ${noun(1)} matches these filters.`)), ""];
-  }
+  const PRIORITY_TONE = { high: "blocked", normal: "backlog", low: "done" };
+  const workProperties = (sprintTitle) => [
+    { key: "title", label: "Title", type: "title", width: 320, rowIcon: () => "work" },
+    { key: "state", label: "State", type: "status", width: 132, order: STATES },
+    { key: "type", label: "Type", type: "select", width: 116, get: (c) => (c.plan || {}).item_type || "task", labelOf: (c) => typeLabel((c.plan || {}).item_type), order: TYPES },
+    { key: "priority", label: "Priority", type: "select", width: 104, get: (c) => (c.plan || {}).priority || "normal", order: ["high", "normal", "low"],
+      tone: (c) => PRIORITY_TONE[(c.plan || {}).priority || "normal"] },
+    { key: "issues", label: "Issues", type: "custom", icon: "alert", width: 196, sortValue: (c) => (c.issues || []).length,
+      render: (c) => { const issue = issueInfo(c.issues); return issue ? chip(issue.text, { dataset: { tone: issue.tone } }) : null; } },
+    { key: "next", label: "Next step", type: "text", width: 340, get: (c) => (c.next_action !== undefined ? c.next_action : (c.plan || {}).next_action) },
+    { key: "subject", label: "Subject", type: "select", width: 112 },
+    { key: "sprint", label: "Sprint", type: "select", width: 150, icon: "timeline", get: (c) => (c.plan || {}).sprint_id || "", labelOf: (c) => sprintTitle.get((c.plan || {}).sprint_id) || "No sprint" },
+    { key: "date", label: "Created", type: "date", width: 128 },
+  ];
+  const WORK_GROUPS = [["state", "State"], ["type", "Type"], ["priority", "Priority"], ["subject", "Subject"], ["sprint", "Sprint"]];
   P.registerView("work", { title: "Work", async render(container, params, ctx) {
       const [base, sprints] = await Promise.all([P.get("board", { limit: "100" }), P.get("sprints", { limit: "100" }).then((value) => value.sprints || [], () => [])]);
-      const st = { tab: params.tab === "list" ? "list" : "board", subject: params.subject || "", state: params.state || "", sprint: params.sprint || "",
-        type: params.type || "", query: params.query || "", empty: params.empty === "1", sort: params.sort || "state", dir: params.dir === "desc" ? "desc" : "asc" };
+      const sprintTitle = new Map(sprints.map((sprint) => [sprint.id, sprint.title])), properties = workProperties(sprintTitle);
+      const st = { tab: params.tab === "board" ? "board" : "table", subject: params.subject || "", state: params.state || "", sprint: params.sprint || "",
+        type: params.type || "", query: params.query || "", empty: params.empty === "1", sort: params.sort || "", dir: params.dir === "desc" ? "desc" : "asc",
+        group: params.group || "", hide: (params.hide || "").split(",").filter(Boolean) };
       ctx.setSummary(nowSentence({ total: base.total, counts: base.counts }));
-      const results = h("section", { class: "list-pane" }), controls = h("div", { class: "list-head" });
+      const results = h("section", { class: "list-pane" }), controls = h("div", { class: "db-controls" });
       let token = 0;
-      const save = () => P.setParams({ tab: st.tab === "list" ? "list" : "", subject: st.subject, state: st.state, sprint: st.sprint, type: st.type, query: st.query,
-        empty: st.empty ? "1" : "", sort: st.sort === "state" ? "" : st.sort, dir: st.dir === "desc" ? "desc" : "" });
+      const save = () => P.setParams({ tab: st.tab === "board" ? "board" : "", subject: st.subject, state: st.state, sprint: st.sprint, type: st.type, query: st.query,
+        empty: st.empty ? "1" : "", sort: st.sort, dir: st.dir === "desc" ? "desc" : "", group: st.group, hide: st.hide.join(",") });
       const draw = async () => {
         const mine = ++token;
         let cards = base.cards || [];
@@ -437,27 +413,39 @@
           cards = await P.get("board", { limit: "100", subject: st.subject, sprint_id: st.sprint, query: st.query }).then((value) => value.cards || [], () => cards);
         }
         if (mine !== token) return;
-        const shown = filterCards(cards, st), [body, note] = st.tab === "board" ? boardNode(shown, st) : listNode(shown, st);
-        // The count of the shown items and the Add item action stay in the foot, in reach under the scrolling board or rows.
-        redraw(results, () => [body, paneFoot(h("p", { role: "status" }, `The view shows ${shown.length} of ${base.total || 0} ${noun(base.total || 0)}.` +
-          (base.more ? ` Only the first ${(base.cards || []).length} are loaded without filters.` : "") + (note ? " " + note : "")),
-        P.canEdit() ? button("Add item", "work-add", (t) => P.openForm("plan", { parent_id: null, item_type: "task" }, t), "primary small") : null)]);
+        // Without a sort of the reader the rows follow the order of the states, as the board does.
+        const shown = P.sortRows(filterCards(cards, st), properties, { key: "state", dir: "asc" }), more = base.more ? `Only the first ${(base.cards || []).length} are loaded without filters.` : "";
+        if (st.tab === "table") {
+          redraw(results, () => P.dbTable({ id: "work", rows: shown, rowKey: (c) => c.id, onOpen: (c, t) => P.openWork(c.id, t), properties,
+            sort: { key: st.sort, dir: st.dir }, onSort: (key, dir) => { st.sort = key; st.dir = dir; save(); drawControls(); draw(); },
+            group: st.group, hidden: st.hide, empty: `No ${noun(1)} matches these filters.`, foot: [`${shown.length} of ${base.total || 0} shown.`, more].filter(Boolean).join(" ") }));
+          return;
+        }
+        const [body, note] = boardNode(shown, st);
+        redraw(results, () => [body, paneFoot(h("p", { role: "status" }, `The view shows ${shown.length} of ${base.total || 0} ${noun(base.total || 0)}.` + (more ? " " + more : "") + (note ? " " + note : "")))]);
       };
       const update = (name, value) => { st[name] = value; save(); drawControls(); draw(); };
       const subjects = [...new Set((base.cards || []).map((c) => c.subject).concat(st.subject ? [st.subject] : []))].sort();
       const typesPresent = TYPES.filter((type) => (base.cards || []).some((c) => ((c.plan || {}).item_type || "task") === type) || st.type === type);
+      const active = () => [st.subject, st.state, st.sprint, st.type].filter(Boolean).length;
+      const filtersOpen = () => (remembered.open.has("work-filters") ? remembered.open.get("work-filters") : active() > 0);
+      const table = () => st.tab === "table";
       const drawControls = () => redraw(controls, () => [
-        h("div", { class: "tabs", role: "group", "aria-label": "Work display" }, [["board", "Board"], ["list", "List"]].map(([value, label]) =>
-          h("button", { type: "button", id: "work-tab-" + value, "aria-pressed": String(st.tab === value), on: { click: () => update("tab", value) } }, label))),
-        filterBox("work-filters", Boolean(st.subject || st.state || st.sprint || st.type || st.query),
+        P.dbBar({ id: "work", label: "Work views", view: st.tab, onView: (value) => update("tab", value),
+          views: [{ id: "table", label: "Table", icon: "table" }, { id: "board", label: "Board", icon: "board" }],
+          filter: { active: active(), open: filtersOpen(), onToggle: () => { remembered.open.set("work-filters", !filtersOpen()); drawControls(); } },
+          sort: table() ? { options: properties.map((property) => [property.key, property.label]), key: st.sort, dir: st.dir,
+            onChange: (key, dir) => { st.sort = key; st.dir = dir; save(); drawControls(); draw(); } } : null,
+          group: table() ? { options: WORK_GROUPS, key: st.group, onChange: (key) => update("group", key) } : null,
+          properties: table() ? { list: properties.slice(1).map((property) => [property.key, property.label]), hidden: st.hide,
+            onChange: (hide) => { st.hide = hide; save(); draw(); } } : null,
+          search: { id: "work-query", value: st.query, placeholder: "Search " + noun(2), onInput: (value) => { st.query = value; save(); draw(); } } }),
+        filtersOpen() ? filterRow(
           selectControl("work-subject", "Subject", [["", "All subjects"], ...subjects.map((subject) => [subject, P.words(subject)])], st.subject, (value) => update("subject", value)),
           selectControl("work-state", "State", [["", "All states"], ...STATES.map((state) => [state, P.words(state)])], st.state, (value) => update("state", value)),
           selectControl("work-sprint", "Sprint", [["", "All sprints"], ["unassigned", "No sprint"], ...sprints.map((sprint) => [sprint.id, sprint.title])], st.sprint, (value) => update("sprint", value)),
           selectControl("work-type", "Item type", [["", "All types"], ...typesPresent.map((type) => [type, typeLabel(type)])], st.type, (value) => update("type", value)),
-          searchControl("work-query", "Search", st.query, (value) => { st.query = value; save(); draw(); }),
-          st.tab === "board" ? checkControl("work-empty", "Show empty columns", st.empty, (value) => update("empty", value))
-            : [selectControl("work-sort", "Sort by", COLUMNS, st.sort, (value) => update("sort", value)),
-              checkControl("work-desc", "Descending order", st.dir === "desc", (value) => update("dir", value ? "desc" : "asc"))])]);
+          st.tab === "board" ? checkControl("work-empty", "Show empty columns", st.empty, (value) => update("empty", value)) : null) : null]);
       drawControls();
       container.classList.add("list-view");
       put(container, controls, results);
@@ -589,7 +577,7 @@
       const hasIssues = (card.issues || []).length > 0, hasDependencies = Boolean(plan && (plan.depends_on || []).length);
       const hasRuns = runs.length > 0 || reports.length > 0 || Boolean(reviews.current) || reviews.configured === false;
       const hasHistory = Boolean(history.error || history.total);
-      const folded = [[Boolean(plan), "Scope and allowed paths"], [hasDependencies, "Dependencies"], [hasIssues, "Issues"],
+      const folded = [[Boolean(plan), "Scope"], [hasDependencies, "Dependencies"], [hasIssues, "Issues"],
         [hasRuns, "Agent checks and delegated runs"], [hasHistory, "History"]].filter(([present]) => !present).map(([, name]) => name);
       // The next step and the actions of the item stay pinned under the scrolling body.
       const next = nextAction(work, card), pinned = next && next.tagName === "BUTTON";
@@ -599,55 +587,62 @@
         plan ? button("Delegate", "work-delegate", (t) => P.openForm("delegate", workContext(card), t), "small", { disabled: Boolean(noDelegation) }) : null,
         button("Request check", "work-check", (t) => P.openForm("review", workContext(card, { role: "outcome" }), t), "small"),
         button("Comment", "work-comment", (t) => P.openForm("comment", workContext(card), t), "small")) : null);
+      const ownerText = plan && plan.owner ? (plan.owner === "human" ? "Person" : "Agent") : null;
+      const block = (title, count, ...children) => h("section", { class: "stack" }, P.heading(2, title, count), ...children);
       put(body,
-        h("div", { class: "row" }, P.badge(card.state),
-          chip(P.words(card.subject)), plan && plan.priority && plan.priority !== "normal" ? chip(P.words(plan.priority) + " priority") : null,
-          plan && plan.owner ? chip("Owner: " + (plan.owner === "human" ? "person" : "agent")) : null, h("span", { class: "muted" }, "Version " + card.version)),
+        // The properties of the item, as the property block at the top of a Notion page.
+        P.props([["status", "State", P.badge(card.state)], ["select", "Type", chip(typeLabel((plan && plan.item_type) || "task"))],
+          ["select", "Subject", chip(P.words(card.subject))],
+          ["flag", "Priority", plan && plan.priority ? chip(P.words(plan.priority), { dataset: { tone: PRIORITY_TONE[plan.priority] || "backlog" } }) : null],
+          ["person", "Owner", ownerText], ["relation", "Part of", plan && plan.parent_id ? button([P.icon("page"), titles.get(plan.parent_id) || "Open the parent item"], "work-parent", (t) => P.openWork(plan.parent_id, t), "link-button") : null],
+          ["timeline", "Sprint", plan && plan.sprint_id ? sprintTitles.get(plan.sprint_id) || h("span", { class: "mono" }, plan.sprint_id) : null],
+          ["date", "Created", card.date ? P.date(card.date) : null], ["number", "Version", String(card.version)]]),
         ctx.canEdit && noDelegation ? h("p", { class: "muted", dataset: { key: "work-delegate-blocked" } }, noDelegation) : null,
         ctx.canEdit && plan && !["done", "cancelled"].includes(plan.state) ? h("div", { class: "toolbar", dataset: { key: "work-quick" } },
           quickEdit(card, "state", "Recorded state", plan.owner === "human" ? [...QUICK_STATES.slice(0, 2), "in_progress", ...QUICK_STATES.slice(2)] : QUICK_STATES),
           quickEdit(card, "priority", "Priority", ["high", "normal", "low"])) : null,
+        P.divider(),
+        P.callout(card.state === "blocked" ? "alert" : "flag", [h("strong", null, "Next step"), h("p", null, step.reason || "No next step is recorded."),
+          step.next_step && step.next_step.reason && step.next_step.reason !== step.reason ? h("p", { class: "muted" }, step.next_step.reason) : null, pinned ? null : next],
+        card.state === "blocked" ? "blocked" : card.state === "review" ? "review" : null),
         card.recorded_state && card.recorded_state !== card.state ? h("p", { class: "muted", dataset: { key: "work-recorded-state" } },
           `The plan records this ${noun(1)} as ${lower(P.words(card.recorded_state))}. It shows as ${lower(P.words(card.state))}, because ${stateReason(card)}`) : null,
-        kv([["Intended result", card.intent], ["Done when", card.done_when]]),
-        h("section", { class: "notice", dataset: card.state === "blocked" ? { tone: "blocked" } : null }, h("h3", null, "Next step"),
-          h("p", null, step.reason || "No next step is recorded."),
-          step.next_step && step.next_step.reason && step.next_step.reason !== step.reason ? h("p", { class: "muted" }, step.next_step.reason) : null, pinned ? null : next),
-        hasIssues ? section("Issues", listOf(card.issues, (issue, index) => h("div", { class: "stack" }, h("span", { class: "row" }, toneBadge("review", P.words(issue.type))), h("span", null, issue.reason),
-          issue.source_id || issue.record_id ? button("Open the evidence", "work-issue-" + index, (t) => P.openRecord(issue.source_id || issue.record_id, t), "small") : null,
-          issue.run_id ? button("Open the check", "work-issue-run-" + index, (t) => openRun({ id: issue.run_id, episode_id: card.id }, t), "small") : null))) : null,
-        (reviews.awaiting_user || []).length ? section("Needs your confirmation",
-          h("p", { class: "muted" }, "The latest check found no evidence that a machine can use to confirm these criteria. Each is offered to you once, and your statement is recorded as your confirmation."),
+        card.intent ? block("Intended result", null, h("p", null, card.intent)) : null,
+        card.done_when ? block("Done when", null, h("p", null, card.done_when)) : null,
+        plan && (plan.acceptance || []).length ? block("Acceptance criteria", plan.acceptance.length, h("ol", { class: "block-list" }, plan.acceptance.map((line) => h("li", null, line)))) : null,
+        hasIssues ? block("Issues", card.issues.length, h("ul", { class: "block-list plain" }, card.issues.map((issue, index) => h("li", { class: "stack" },
+          h("span", { class: "row" }, toneBadge(issue.type === "dependency" ? "backlog" : "review", P.words(issue.type))), h("span", null, issue.reason),
+          issue.source_id || issue.record_id ? button("Open the evidence", "work-issue-" + index, (t) => P.openRecord(issue.source_id || issue.record_id, t), "link-button") : null,
+          issue.run_id ? button("Open the check", "work-issue-run-" + index, (t) => openRun({ id: issue.run_id, episode_id: card.id }, t), "link-button") : null)))) : null,
+        (reviews.awaiting_user || []).length ? block("Needs your confirmation", reviews.awaiting_user.length,
+          h("p", { class: "muted" }, "The latest check found no evidence that a machine can use to confirm these criteria. Confirm them in the chat, and your statement is recorded as your confirmation."),
           listOf(reviews.awaiting_user, (item) => h("div", { class: "stack", dataset: { key: "confirm-" + item.criterion } },
             h("span", { class: "row" }, chip(item.criterion)), h("strong", null, item.condition), h("span", { class: "muted" }, item.evidence),
             P.canEdit() ? P.formButton("Confirm", "confirm_criterion", { episode_id: card.id, criterion: item.criterion, condition: item.condition }, { class: "small primary" }) : null))) : null,
         callsHost,
-        plan && (plan.acceptance || []).length ? section("Acceptance criteria", h("ol", null, plan.acceptance.map((line) => h("li", null, line)))) : null,
-        plan ? section("Scope and allowed paths", kv([["Scope", plan.scope], ["Autonomy", P.words(plan.autonomy)], ["Next action", plan.next_action], ["Reason", plan.reason],
-          ["Allowed paths", (plan.paths || []).length ? h("div", { class: "row" }, plan.paths.map((path) => chip(path, { class: "chip mono" })))
-            : "No allowed paths are recorded. Delegated work needs at least one path."],
-          ["Part of", plan.parent_id ? button(titles.get(plan.parent_id) || "Open the parent item", "work-parent", (t) => P.openWork(plan.parent_id, t), "small") : null],
-          ["Sprint", plan.sprint_id ? sprintTitles.get(plan.sprint_id) || h("span", { class: "mono" }, plan.sprint_id) : null]])) : null,
-        hasDependencies ? section("Dependencies", listOf(plan.depends_on, (ref) => openItem("work-dependency-" + ref.episode_id, (t) => P.openWork(ref.episode_id, t),
+        plan ? block("Scope", null, h("p", null, plan.scope || "No scope is recorded."), P.props([["select", "Autonomy", chip(P.words(plan.autonomy))], ["flag", "Next action", plan.next_action],
+          ["text", "Reason", plan.reason], ["page", "Allowed paths", (plan.paths || []).length ? h("div", { class: "row" }, plan.paths.map((path) => chip(path, { class: "chip mono" })))
+            : "No allowed paths are recorded. Delegated work needs at least one path."]])) : null,
+        hasDependencies ? block("Dependencies", plan.depends_on.length, listOf(plan.depends_on, (ref) => openItem("work-dependency-" + ref.episode_id, (t) => P.openWork(ref.episode_id, t),
           h("span", { class: "row" }, dependencyIssues.has(ref.episode_id) ? toneBadge("blocked", "Not finished") : toneBadge("ready", "Finished")),
-          h("strong", null, titles.get(ref.episode_id) || ref.episode_id), h("span", null, ref.reason)))) : null,
-        hasRuns ? section("Agent checks and delegated runs",
+          h("strong", null, titles.get(ref.episode_id) || ref.episode_id), h("span", { class: "muted" }, ref.reason)))) : null,
+        hasRuns ? block("Agent checks and delegated runs", runs.length || null,
           h("p", { class: "muted" }, reviews.configured === false ? "No agent host is configured, so agent checks and delegation cannot run."
             : reviews.current ? `The current ${P.words(reviews.current.role).toLowerCase()} check is ${P.words(reviews.current.state).toLowerCase()}.` : "No outcome check is required yet."),
           listOf(runs, (run) => runButton(run, "work-run-"), "No agent run is recorded."), reports) : null,
         focusHost, lineageHost,
-        // The history is the longest part of the pane, so it starts closed. Paging keeps it open.
-        !hasHistory ? null : h("details", { class: "stack", dataset: { key: "work-history" }, open: remembered.open.get("history-" + card.id) === true || offset > 0,
+        // The history is the longest part of the page, so it starts folded. Paging keeps it open.
+        !hasHistory ? null : h("details", { class: "toggle", dataset: { key: "work-history" }, open: remembered.open.get("history-" + card.id) === true || offset > 0,
           on: { toggle: (event) => remembered.open.set("history-" + card.id, event.currentTarget.open) } },
-        h("summary", null, h("h3", { class: "summary-title" }, "History"), history.total ? " " + P.count(history.total, "record") : ""),
-        history.error ? P.errorState(history.error) : [
+        h("summary", null, P.icon("chev"), h("span", null, "History"), history.total ? h("span", { class: "block-count" }, P.count(history.total, "record")) : null),
+        h("div", { class: "toggle-body" }, history.error ? P.errorState(history.error) : [
           h("p", { class: "muted" }, history.total ? `Records ${history.offset + 1} to ${history.offset + history.records.length} of ${history.total} are shown, oldest first.` : "No history is recorded."),
           listOf(history.records, (record) => openItem("work-history-" + record.id, (t) => openNode(record, t),
             h("span", { class: "row" }, chip(P.words(record.kind)), P.badge(record.status)), h("strong", null, record.title), h("span", { class: "muted" }, P.date(record.date))), ""),
           h("div", { class: "row" },
             history.offset > 0 ? button("Earlier records", "work-history-previous", () => { remembered.history.set(card.id, Math.max(0, history.offset - history.limit)); P.refresh(); }, "small") : null,
             history.more ? (P.live ? button("Later records", "work-history-next", () => { remembered.history.set(card.id, history.offset + history.limit); P.refresh(); }, "small")
-              : h("p", { class: "muted" }, "This snapshot includes the first page of history only.")) : null)]),
+              : h("p", { class: "muted" }, "This snapshot includes the first page of history only.")) : null)])),
         // Sections without content share one sentence.
         folded.length ? h("p", { class: "muted", dataset: { key: "work-folded" } }, "Nothing is recorded yet in: " + folded.join(", ") + ".") : null);
       const unconfirmedIssue = (card.issues || []).some((issue) => issue.type === "execution_unconfirmed");
@@ -665,41 +660,57 @@
     return reasons;
   }
   const assessmentOf = (record) => (record.outcome ? ((record.outcome.detail || {}).payload || {}).assessment || "unknown" : "none");
-  // Decisions fill the frame: the filters sit in the head, one row per decision carries its outcome badge and its review
-  // marker, the count stays in the foot, and a row opens the decision beside the list.
+  // Decisions is a database with three saved views: all decisions, the decisions that need review and the current
+  // ones without a revision. Outcome is a filter chip, and the table sorts, groups and hides its properties.
+  const OUTCOME_ORDER = ["bad", "mixed", "unknown", "pending", "good", "none"];
+  const decisionProperties = () => [
+    { key: "title", label: "Decision", type: "title", width: 380, rowIcon: () => "decisions" },
+    { key: "outcome", label: "Outcome", type: "custom", icon: "status", width: 170, get: assessmentOf, order: OUTCOME_ORDER, sortValue: (record) => OUTCOME_ORDER.indexOf(assessmentOf(record)),
+      labelOf: (record) => (OUTCOMES[assessmentOf(record)] || ["", "No outcome recorded"])[1], render: (record) => outcomeBadge(record.outcome && assessmentOf(record)) },
+    { key: "review", label: "Review", type: "custom", icon: "alert", width: 140, get: (record) => (reviewReasons(record).length ? "needs_review" : ""),
+      labelOf: () => "Needs review", render: (record) => (reviewReasons(record).length ? toneBadge("review", "Needs review", "needs-review-marker") : null) },
+    { key: "status", label: "Status", type: "status", width: 130 },
+    { key: "work", label: P.term("work_item"), type: "text", icon: "relation", width: 240, get: (record) => record.episode_title || "" },
+    { key: "actor", label: "Recorded by", type: "text", icon: "person", width: 140, get: (record) => (record.detail || {}).actor || "" },
+    { key: "date", label: "Date", type: "date", width: 128 },
+  ];
+  const DECISION_VIEWS = [{ id: "all", label: "All decisions", icon: "table" }, { id: "review", label: "Needs review", icon: "alert" }, { id: "current", label: "Current", icon: "check" }];
   P.registerView("decisions", { title: "Decisions", async render(container, params, ctx) {
-      const page = await P.get("records", { view: "decisions", limit: "100" }), records = page.records || [];
-      const filter = { query: params.query || "", outcome: params.outcome || "", review: params.review === "1", current: params.current === "1" };
-      const results = h("section", { class: "list-pane" }), head = h("div", { class: "list-head" });
-      const draw = () => {
-        const query = filter.query.toLowerCase();
-        const shown = records.filter((record) => (!filter.outcome || assessmentOf(record) === filter.outcome) && (!filter.review || reviewReasons(record).length)
-          && (!filter.current || !(record.detail || {}).replaced_by) && (!query || (record.title + " " + (record.episode_title || "") + " " + JSON.stringify((record.detail || {}).payload || {})).toLowerCase().includes(query)));
-        return [shown.length ? h("ul", { class: "pane-rows", dataset: { scroll: "rows" } }, shown.map((record) => {
-          const reasons = reviewReasons(record);
-          return h("li", null, P.paneRow("decision-" + record.id, "decisions", record.title, h("span", { class: "row" }, outcomeBadge(record.outcome && assessmentOf(record)),
-            record.status !== "recorded" ? P.badge(record.status) : null, reasons.length ? toneBadge("review", "Needs review", "needs-review-marker") : null,
-            h("span", { class: "muted" }, [record.episode_title, P.date(record.date), ...reasons].filter(Boolean).join(". "))), (t) => openDecision(record.id, t)));
-        })) : h("div", { class: "pane-rows" }, P.empty(records.length ? "No decision matches these filters." : "No decision is recorded.")),
-        paneFoot(h("p", { role: "status" }, `The list shows ${shown.length} of ${P.count(page.total || 0, "decision")}.` +
-          (page.more ? ` Only the first ${records.length} are loaded. Search the records to find earlier decisions.` : "")))];
-      };
-      const update = (name, value) => { filter[name] = value; P.setParams({ query: filter.query, outcome: filter.outcome, review: filter.review ? "1" : "", current: filter.current ? "1" : "" });
-        if (name !== "query") redraw(head, drawHead); redraw(results, draw); };
-      const drawHead = () => filterBox("decision-filters", Boolean(filter.query || filter.outcome || filter.review || filter.current),
-        searchControl("decision-query", "Search", filter.query, (value) => update("query", value)),
-        selectControl("decision-outcome", "Outcome", [["", "All outcomes"], ["good", "Good"], ["bad", "Bad"], ["mixed", "Mixed"], ["unknown", "Unknown"], ["pending", "Pending"], ["none", "No outcome recorded"]],
-          filter.outcome, (value) => update("outcome", value)),
-        checkControl("decision-review", "Only decisions that need review", filter.review, (value) => update("review", value)),
-        checkControl("decision-current", "Hide replaced decisions", filter.current, (value) => update("current", value)));
+      const page = await P.get("records", { view: "decisions", limit: "100" }), records = page.records || [], properties = decisionProperties();
+      const st = { tab: DECISION_VIEWS.some((view) => view.id === params.tab) ? params.tab : "all", query: params.query || "", outcome: params.outcome || "",
+        sort: params.sort || "date", dir: params.sort ? (params.dir === "desc" ? "desc" : "asc") : "desc", group: params.group || "", hide: (params.hide || "").split(",").filter(Boolean) };
+      const results = h("section", { class: "list-pane" }), controls = h("div", { class: "db-controls" });
+      const save = () => P.setParams({ tab: st.tab === "all" ? "" : st.tab, query: st.query, outcome: st.outcome, sort: st.sort === "date" && st.dir === "desc" ? "" : st.sort,
+        dir: st.sort === "date" && st.dir === "desc" ? "" : st.dir, group: st.group, hide: st.hide.join(",") });
+      const draw = () => redraw(results, () => {
+        const query = st.query.toLowerCase();
+        const shown = records.filter((record) => (!st.outcome || assessmentOf(record) === st.outcome) && (st.tab !== "review" || reviewReasons(record).length)
+          && (st.tab !== "current" || !(record.detail || {}).replaced_by) && (!query || (record.title + " " + (record.episode_title || "") + " " + JSON.stringify((record.detail || {}).payload || {})).toLowerCase().includes(query)));
+        return P.dbTable({ id: "decisions", rows: shown, rowKey: (record) => record.id, onOpen: (record, t) => openDecision(record.id, t), properties,
+          sort: { key: st.sort, dir: st.dir }, onSort: (key, dir) => { st.sort = key; st.dir = dir; save(); drawControls(); draw(); }, group: st.group, hidden: st.hide,
+          empty: records.length ? "No decision matches these filters." : "No decision is recorded.",
+          foot: page.more ? `Only the first ${records.length} are loaded. Search the records to find earlier decisions.` : "" });
+      });
+      const update = (name, value) => { st[name] = value; save(); drawControls(); draw(); };
+      const filtersOpen = () => (remembered.open.has("decision-filters") ? remembered.open.get("decision-filters") : Boolean(st.outcome));
+      const drawControls = () => redraw(controls, () => [
+        P.dbBar({ id: "decisions", label: "Decision views", view: st.tab, views: DECISION_VIEWS, onView: (value) => update("tab", value),
+          filter: { active: st.outcome ? 1 : 0, open: filtersOpen(), onToggle: () => { remembered.open.set("decision-filters", !filtersOpen()); drawControls(); } },
+          sort: { options: properties.map((property) => [property.key, property.label]), key: st.sort, dir: st.dir, quiet: !params.sort && st.sort === "date",
+            onChange: (key, dir) => { st.sort = key; st.dir = dir; save(); drawControls(); draw(); } },
+          group: { options: [["outcome", "Outcome"], ["review", "Review"], ["status", "Status"], ["work", P.term("work_item")]], key: st.group, onChange: (key) => update("group", key) },
+          properties: { list: properties.slice(1).map((property) => [property.key, property.label]), hidden: st.hide, onChange: (hide) => { st.hide = hide; save(); draw(); } },
+          search: { id: "decision-query", value: st.query, placeholder: "Search decisions", onInput: (value) => { st.query = value; save(); draw(); } } }),
+        filtersOpen() ? filterRow(selectControl("decision-outcome", "Outcome", [["", "All outcomes"], ["good", "Good"], ["bad", "Bad"], ["mixed", "Mixed"], ["unknown", "Unknown"],
+          ["pending", "Pending"], ["none", "No outcome recorded"]], st.outcome, (value) => update("outcome", value))) : null]);
       const bad = records.filter((record) => assessmentOf(record) === "bad").length;
       const review = records.filter((record) => reviewReasons(record).length).length;
       ctx.setSummary(`${P.count(page.total || 0, "decision")} ${verb(page.total || 0, "is", "are")} recorded. ` +
         `${bad} ${verb(bad, "has", "have")} a bad outcome and ${review} ${verb(review, "needs", "need")} review.`);
       container.classList.add("list-view");
-      put(container, head, results);
-      redraw(head, drawHead);
-      redraw(results, draw);
+      put(container, controls, results);
+      drawControls();
+      draw();
   } });
   P.registerPane("decision", { async render(body, params, ctx) {
       const { record } = await P.get("record", { id: params.id });
@@ -709,16 +720,21 @@
       ctx.setKind(P.words(record.kind));
       const reasons = reviewReasons(record);
       const lineageHost = h("div", { class: "stack" });
+      const link = (label, key, open) => button([P.icon("page"), label], key, open, "link-button");
       put(body,
-        h("div", { class: "row" }, P.badge(record.status), record.kind === "decision" ? outcomeBadge(observed && (observed.assessment || "unknown")) : null,
-          reasons.length ? toneBadge("review", "Needs review", "needs-review-marker") : null, detail.actor ? chip("Recorded by " + detail.actor) : null,
-          h("span", { class: "muted" }, P.date(record.date))),
-        reasons.length ? h("div", { class: "notice", dataset: { tone: "review" } }, reasons.map((reason) => h("p", null, reason))) : null,
-        h("div", { class: "row" }, record.episode_id ? button(`Open the ${noun(1)}${record.episode_title ? ": " + record.episode_title : ""}`, "decision-work", (t) => P.openWork(record.episode_id, t), "small") : null,
-          detail.supersedes ? button("Open the earlier decision", "decision-earlier", (t) => openDecision(detail.supersedes, t), "small") : null,
-          detail.replaced_by ? button("Open the revised decision", "decision-revised", (t) => openDecision(detail.replaced_by, t), "small") : null),
-        kv([["Decision", payload.decision], ["Reason", payload.why], ["Reconsider when", payload.reconsider_when], ["Uncertainty", payload.uncertainty || (record.kind === "decision" ? "No uncertainty is recorded." : null)]]),
-        record.kind === "decision" ? h("section", { class: "stack" }, h("h3", null, "Expected and observed"), h("div", { class: "compare" },
+        P.props([["status", "Status", P.badge(record.status)], record.kind === "decision" ? ["status", "Outcome", outcomeBadge(observed && (observed.assessment || "unknown"))] : null,
+          ["alert", "Review", reasons.length ? toneBadge("review", "Needs review", "needs-review-marker") : null],
+          ["relation", P.term("work_item"), record.episode_id ? link(record.episode_title || "Open the " + noun(1), "decision-work", (t) => P.openWork(record.episode_id, t)) : null],
+          ["relation", "Earlier decision", detail.supersedes ? link("Open the earlier decision", "decision-earlier", (t) => openDecision(detail.supersedes, t)) : null],
+          ["relation", "Revised decision", detail.replaced_by ? link("Open the revised decision", "decision-revised", (t) => openDecision(detail.replaced_by, t)) : null],
+          ["person", "Recorded by", detail.actor], ["date", "Date", P.date(record.date)]].filter(Boolean)),
+        reasons.length ? P.callout("alert", reasons.map((reason) => h("p", null, reason)), "review") : null,
+        P.divider(),
+        payload.decision ? h("section", { class: "stack" }, P.heading(2, "Decision"), h("p", null, payload.decision)) : null,
+        payload.why ? h("section", { class: "stack" }, P.heading(2, "Reason"), h("p", null, payload.why)) : null,
+        payload.reconsider_when ? h("section", { class: "stack" }, P.heading(3, "Reconsider when"), h("p", null, payload.reconsider_when)) : null,
+        record.kind === "decision" ? h("section", { class: "stack" }, P.heading(3, "Uncertainty"), h("p", { class: payload.uncertainty ? null : "muted" }, payload.uncertainty || "No uncertainty is recorded.")) : null,
+        record.kind === "decision" ? h("section", { class: "stack" }, P.heading(2, "Expected and observed"), h("div", { class: "compare" },
           h("div", { class: "card" }, h("h4", null, "Expected"), h("p", null, payload.expected || "No expected result is recorded.")),
           h("div", { class: "card" }, h("h4", null, "Observed"), observed ? [h("p", null, observed.observed || "The outcome has no observation text."),
             kv([["Assessment", observed.assessment_reason], ["Completion", observed.completion ? P.words(observed.completion) : null],

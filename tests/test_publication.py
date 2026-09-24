@@ -87,8 +87,6 @@ class PublicationTests(unittest.TestCase):
             for name in (*UI_SCRIPTS, 'panel.css'):
                 members['memory_module/ui/' + name] = b'/* public fixture */'
             members['memory_module/vendor/cytoscape.min.js'] = b'/* public fixture */'
-            for weight in (400, 700):
-                members[f'memory_module/assets/manrope-latin-{weight}.woff2'] = b'wOF2fixture'
             with zipfile.ZipFile(root / 'fixture.whl', 'w') as archive:
                 for member, body in members.items():
                     archive.writestr(member, body)

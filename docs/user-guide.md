@@ -49,9 +49,9 @@ Capturing a document does not approve its contents. A recorded plan does not aut
 
 ## Follow the work in the control panel
 
-Run `project-memory view` in the project folder, or ask the assistant to open Project Memory. Start on **Now**: it states the project position in one sentence, lists the work in progress and the blocked work, and shows an attention list of the items that need you. Every entry opens the record or the work item behind it.
+Run `project-memory view` in the project folder, or ask the assistant to open Project Memory. Start on **Now**: it states the project position in one sentence and lists the work in progress, the paused work, the work ready to start and the finished work, each item with its next step. Every row opens the work item behind it as a page beside the list.
 
-Use **Plan** for the hierarchy of phases and items, **Work** for the board and the work detail, and **Learning** for the lessons that await your acceptance. The [control panel guide](control-panel.md) describes every view.
+Use **Plan** for the outline of phases and items, **Work** for the table and the board of work items, and **Learning** for the lessons and their guards. The [control panel guide](control-panel.md) describes every view.
 
 ## Keep the records honest
 
@@ -105,7 +105,7 @@ An existing file is protected unless you add `--replace`. Check the contents of 
 
 ## Read the records in Obsidian
 
-The control panel answers the question of the day: what waits, what to decide, what to merge. To read across time instead, write the records as a folder of Markdown notes and open them in Obsidian:
+The control panel answers the question of the day: what is in progress, what is paused and what comes next. To read across time instead, write the records as a folder of Markdown notes and open them in Obsidian:
 
 ```sh
 project-memory export --obsidian ~/Documents/Vault

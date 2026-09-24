@@ -27,7 +27,7 @@ from .core import InvalidRecord, Conflict, dumps, _time
 # The application script joins these files in this order. Every listed file is
 # required in a published package (scripts/check_artifacts.py). While the panel is
 # being built, html_template skips a listed file that does not exist yet.
-UI_SCRIPTS = ('core.js', 'graphs.js', 'views_work.js', 'views_knowledge.js', 'forms.js')
+UI_SCRIPTS = ('core.js', 'blocks.js', 'graphs.js', 'views_work.js', 'views_knowledge.js', 'forms.js')
 UI_STYLES = ('panel.css',)
 VENDOR_SCRIPT = 'vendor/cytoscape.min.js'
 PLACEHOLDERS = re.compile(r'__(PANEL_CSS|VENDOR_JS|PANEL_JS)__')
@@ -48,9 +48,6 @@ def html_template():
     template = template.replace('<section id="template-notice"', '<section id="template-notice" hidden', 1)
     template = template.replace('<div id="app" class="shell" hidden>', '<div id="app" class="shell">', 1)
     css = '\n'.join((root / 'ui' / name).read_text(encoding='utf-8') for name in UI_STYLES)
-    for weight in (400, 700):
-        font = (root / 'assets' / f'manrope-latin-{weight}.woff2').read_bytes()
-        css = css.replace(f'__MANROPE_{weight}__', base64.b64encode(font).decode())
     script = '\n'.join((root / 'ui' / name).read_text(encoding='utf-8') for name in UI_SCRIPTS if (root / 'ui' / name).exists())
     parts = {'PANEL_CSS': css, 'VENDOR_JS': (root / VENDOR_SCRIPT).read_text(encoding='utf-8'), 'PANEL_JS': script}
     for name, text in parts.items():

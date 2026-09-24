@@ -60,13 +60,13 @@ You approve requirements, accept or reject proposed lessons, widen the allowed p
 
 ## The control panel
 
-Run `project-memory view` in the project, or ask the assistant to open Project Memory. The panel reads the same database and refreshes while it is open.
+Run `project-memory view` in the project, or ask the assistant to open Project Memory. The panel reads the same database and refreshes while it is open. It is laid out as a Notion workspace: a sidebar of views, database tables with views, filters, sorting and grouping, and each item opening as a page beside the list, in a light or a dark theme.
 
 | View | Content |
 | --- | --- |
-| Now | One sentence on the project position, the kickoff checklist, work in progress, blocked work, the attention list, running agents and recent decisions |
-| Plan | The hierarchy of phases, epics, stories, research items, deliverables and workflows, with progress roll ups and a phase timeline |
-| Work | A board and a list of work items, and a detail with the plan, the allowed paths, dependencies, agent runs, lineage and history |
+| Now | One sentence on the project position, the kickoff checklist, and the work in progress, paused, ready and done with the next step of each, and recent decisions |
+| Plan | The hierarchy of phases, epics, stories, research items, deliverables and workflows as an outline with nested sub-items and progress, and a gallery of the phases |
+| Work | A table and a board of work items, and a page for each with the plan, the allowed paths, dependencies, agent runs, lineage and history |
 | Architecture | Components from source code, exported n8n workflows and authored items such as systems, stakeholders and deliverables |
 | Dependencies | The work dependency graph with blocked chains, and the declared package table |
 | Decisions | Decisions with their outcomes, and the lineage from requirement to outcome |

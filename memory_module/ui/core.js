@@ -29,13 +29,14 @@
  * Views: Panel.registerView(name, {title, section, render(container, params, ctx)}). Hash #name/key=value&key=value.
  *   render may be async; the container is laid out but hidden until it resolves, and a rejected render shows
  *   Panel.errorState. ctx: live, canEdit, revision, onShown(fn), setSummary(text) (the sentence beside the title).
- *   The window never scrolls: the view scrolls inside #main. The rail groups are Work (now, plan, work), Decide
- *   (sessions, learning, decisions), Look up (records, requirements) and the folded More views (architecture,
- *   dependencies, agents, machine, hive, usage), which also takes any other view that names a section. A rail icon is
- *   the symbol i-<view name> of viewer.html. Panel.go(name, params), Panel.route(), Panel.setParams(params) (hash
+ *   The window never scrolls: the view scrolls inside #main, under the page head with its icon, title and sentence. The
+ *   sidebar holds Now without a heading, then Work (plan, work, decisions), Knowledge (records, requirements, learning,
+ *   sessions) and the folded System (architecture, dependencies, agents, machine, hive, usage), which also takes any
+ *   other view that names a section. The top bar names the project, the section and the view as breadcrumbs. A sidebar
+ *   icon and the page icon are the symbol i-<view name> of viewer.html. The shared database and page blocks are in blocks.js. Panel.go(name, params), Panel.route(), Panel.setParams(params) (hash
  *   only, no render), Panel.refresh().
  *
- * Detail pane (beside the view, never over it): Panel.registerPane(kind, {render(body, params, ctx)}); ctx adds
+ * Detail pane, the side peek (beside the view, never over it): Panel.registerPane(kind, {render(body, params, ctx)}); ctx adds
  *   setTitle(text), setKind(text) and foot, the pinned foot for the actions of the item, which stays in reach however
  *   long the body is. Panel.openPane(kind, params, trigger): a trigger inside the pane pushes the open entry on the
  *   back stack, and any other trigger starts again. The row that opened the pane is marked with data-selected and
@@ -82,17 +83,16 @@
 const Panel = (() => {
   "use strict";
   const $ = (id) => document.getElementById(id);
-  const MORE = "More views";
-  const NAV = [["now", "Now", "Work"], ["plan", "Plan", "Work"], ["work", "Work", "Work"],
-    ["sessions", "Sessions", "Decide"], ["learning", "Learning", "Decide"], ["decisions", "Decisions", "Decide"],
-    ["records", "Records", "Look up"], ["requirements", "Requirements", "Look up"],
+  const MORE = "System";
+  // The first group has no heading, as the home page of a Notion workspace sits above the named sections.
+  const NAV = [["now", "Now", ""], ["plan", "Plan", "Work"], ["work", "Work", "Work"], ["decisions", "Decisions", "Work"],
+    ["records", "Records", "Knowledge"], ["requirements", "Requirements", "Knowledge"],
+    ["learning", "Learning", "Knowledge"], ["sessions", "Sessions", "Knowledge"],
     ["architecture", "Architecture", MORE], ["dependencies", "Dependencies", MORE], ["agents", "Agents", MORE],
     ["machine", "Machine", MORE], ["hive", "Hive", MORE], ["usage", "Usage", MORE]];
-  // The kinds of Now that a view decides. A rail count adds them up from the response that Now itself shows.
-  const WAITS = { sessions: ["session_flags", "session_proposals"], learning: ["lessons_to_accept", "rules_over_cap", "rule_ineffective"],
-    agents: ["awaiting_merge", "agent_follow_up"], machine: ["machine_rules"] };
-  const COLORS = { blocked: "#b42318", review: "#b54708", in_progress: "#4457e6", ready: "#25715a",
-    done: "#6b7280", backlog: "#9ca3af", guarded: "#7a5af8", neutral: "#65625d" };
+  // The dot colours of the Notion status properties, for the graphs that cannot read the style tokens.
+  const COLORS = { blocked: "#e16f64", review: "#d9730d", in_progress: "#5b97bd", ready: "#6c9b7d",
+    done: "#91918e", backlog: "#c4c3c0", guarded: "#9d68d3", neutral: "#9b9a97" };
   const TONES = {};
   for (const [tone, names] of Object.entries({
     blocked: "blocked failed fail bad scope_violation error rejected file_missing file_unreadable execution_unconfirmed",
@@ -354,25 +354,25 @@ const Panel = (() => {
     const entries = NAV.map(([name, title, section]) => [name, (views.get(name) || {}).title || title, section]);
     for (const [name, view] of views) if (!NAV.some((entry) => entry[0] === name) && view.section) entries.push([name, view.title || words(name), MORE]);
     const groups = new Map();
-    const waiting = () => h("span", { class: "nav-count", hidden: true });
     for (const [name, title, section] of entries) {
       if (!groups.has(section)) groups.set(section, []);
       const missing = omitted(name);
       groups.get(section).push(h("li", null, h("a", { class: ["nav-link", missing && "nav-omitted"], href: "#" + name, dataset: { nav: name },
-        "aria-label": missing ? title + ", not included in this snapshot" : null }, icon(name), h("span", { class: "nav-title" }, title), waiting())));
+        "aria-label": missing ? title + ", not included in this snapshot" : null }, icon(name), h("span", { class: "nav-title" }, title))));
     }
-    // The views of occasional use stay folded, and the fold carries their count while it is closed.
+    // The views of occasional use stay folded until the reader opens them or works in one of them.
     $("nav").replaceChildren(...[...groups].map(([section, items]) => (section === MORE
-      ? h("details", { class: "nav-group nav-more", id: "nav-more" }, h("summary", null, icon("more"), h("span", null, section), waiting(), icon("chev")), h("ul", null, items))
-      : h("div", { class: "nav-group" }, h("h2", null, section), h("ul", null, items)))));
-  }
-  function setCount(node, n) {
-    node.hidden = !n;
-    node.replaceChildren(String(n), h("span", { class: "visually-hidden" }, n === 1 ? " item waits" : " items wait"));
+      ? h("details", { class: "nav-group nav-more", id: "nav-more" }, h("summary", null, icon("more"), h("span", null, section), icon("chev")), h("ul", null, items))
+      : h("div", { class: "nav-group" }, section ? h("h2", null, section) : null, h("ul", null, items)))));
   }
   function updateChrome() {
     const title = (views.get(state.route.name) || {}).title || words(state.route.name);
     $("view-title").textContent = title;
+    const entry = NAV.find(([name]) => name === state.route.name), section = entry ? entry[2] : MORE;
+    const project = (state.health && state.health.project) || snapshot.project || "Project Memory";
+    $("crumbs").replaceChildren(...[project, section !== title ? section : "", title].filter(Boolean).map((text, index, all) =>
+      h("li", { "aria-current": index === all.length - 1 ? "page" : null }, text)));
+    $("page-icon").replaceChildren(icon(state.route.name));
     document.title = title + " | " + ((state.health && state.health.project) || snapshot.project || "Project Memory");
     for (const node of document.querySelectorAll(".nav-link")) {
       if (node.dataset.nav !== state.route.name) { node.removeAttribute("aria-current"); continue; }
@@ -396,18 +396,12 @@ const Panel = (() => {
       : h("span", { class: "phase-button", title: explanation }, parts));
   }
   async function updateShell() {
-    $("project-name").textContent = (state.health && state.health.project) || snapshot.project || "Project Memory";
+    const project = (state.health && state.health.project) || snapshot.project || "Project Memory";
+    $("project-name").textContent = project;
+    $("project-mark").textContent = project.trim().charAt(0).toUpperCase() || "P";
     updatePhase();
     await loadTemplate();
     state.now = await get("now").catch(() => ({}));
-    const kinds = new Map((state.now.attention_kinds || []).map((kind) => [kind.type, kind.count]));
-    let folded = 0;
-    for (const node of document.querySelectorAll(".nav-link")) {
-      const n = (WAITS[node.dataset.nav] || []).reduce((sum, type) => sum + (kinds.get(type) || 0), 0);
-      setCount(node.querySelector(".nav-count"), n);
-      if (node.closest("details")) folded += n;
-    }
-    if ($("nav-more")) setCount($("nav-more").querySelector("summary .nav-count"), folded);
     if (!$("activity").hidden) drawActivity();
   }
   // Project activity: the work by state, the work in progress and the active agent runs, one click from every view.
@@ -595,8 +589,9 @@ const Panel = (() => {
   }
   // List pane: the head and the foot stay in place and only the rows scroll.
   const paneRow = (key, name, title, sub, handler) => button([icon(name), h("span", null, h("strong", { title }, title), sub ? h("span", { class: "muted" }, sub) : null), icon("chev")], key, handler, "pane-row");
+  // The tab above already names the list, so its title is for assistive technology and the note reads as a quiet line.
   const listPane = (options) => h("section", { class: "list-pane" },
-    h("div", { class: "pane-head" }, h("h2", null, options.title, typeof options.count === "number" ? chip(String(options.count), options.tone ? { dataset: { tone: options.tone } } : null) : null),
+    h("div", { class: "pane-head" }, h("h2", { class: "visually-hidden" }, options.title, typeof options.count === "number" ? ", " + options.count : ""),
       options.note ? h("p", { class: "muted" }, options.note) : null),
     options.rows.length ? h("ul", { class: "pane-rows", dataset: { scroll: "rows" } }, options.rows.map((row) => h("li", null, row))) : h("div", { class: "pane-rows" }, empty(options.empty)),
     options.foot ? h("div", { class: "pane-foot" }, options.foot) : null);

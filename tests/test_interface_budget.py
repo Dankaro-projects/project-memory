@@ -93,13 +93,26 @@ REDESIGN_SHELL_ALLOWANCE = 2_300
 # views_work.js grew by 208 with the Criteria to confirm kind of Now and its button, and forms.js by 1,388 with the
 # confirm_criteria form. Rounded up to the next 50, the allowance is 250 for the views and 1,400 for forms.js.
 BATCH_CONFIRM_ALLOWANCE = {'views': 250, 'forms.js': 1_400}
+# Allowance for the Notion style redesign, which the user asked for on 24 September 2026: a light sidebar, breadcrumbs, a
+# page head, database tables with a bar of views and tools, page blocks, a side peek, a dark theme, and Now as a digest.
+# Measured against main at 9541f8f after the unused Now and list code was removed: blocks.js is new with 15,720 code
+# characters, views_work.js grew by 837, views_knowledge.js by 2,613 and core.js by 19, so the joined scripts grew by 19,189.
+# panel.css grew by 17,105, from 35,161 to 52,266, with the tokens of both themes, the database and page blocks and the
+# table layout of a phone; viewer.html grew by 37, because the removed licence of the embedded font paid for 31 icons.
+# Rounded up to the next 50, the allowance is 15,750 for blocks.js, 3,500 for the views and 50 for core.js, 19,300 of a
+# cap of 20,000 that matches the cap of the earlier redesign, and 17,150 for the stylesheet. The user has not yet
+# confirmed these allowances; the stylesheet allowance exceeds the 8,000 of the earlier redesign.
+NOTION_ALLOWANCE = {'blocks.js': 15_750, 'views': 3_500, 'core.js': 50}
+NOTION_LIMIT = 20_000
+NOTION_STYLE_ALLOWANCE = 17_150
 ALLOWANCES = (FOCUS_ALLOWANCE, HIVE_ALLOWANCE, USAGE_ALLOWANCE, SESSIONS_ALLOWANCE, PANEL_ACTIONS_ALLOWANCE, USABILITY_ALLOWANCE,
-              REDESIGN_ALLOWANCE, BATCH_CONFIRM_ALLOWANCE)
+              REDESIGN_ALLOWANCE, BATCH_CONFIRM_ALLOWANCE, NOTION_ALLOWANCE)
 TOTAL_SCRIPT_CHARACTERS = 196_000 + sum(sum(allowance.values()) for allowance in ALLOWANCES)
 FILE_BUDGETS = {'core.js': 36_000 + sum(allowance.get('core.js', 0) for allowance in ALLOWANCES),
-                'forms.js': 37_000 + sum(allowance.get('forms.js', 0) for allowance in ALLOWANCES), 'graphs.js': 41_000}
+                'forms.js': 37_000 + sum(allowance.get('forms.js', 0) for allowance in ALLOWANCES), 'graphs.js': 41_000,
+                'blocks.js': sum(allowance.get('blocks.js', 0) for allowance in ALLOWANCES)}
 VIEW_CHARACTERS = 82_000 + sum(allowance.get('views', 0) for allowance in ALLOWANCES)
-STYLE_CHARACTERS = 27_000 + USABILITY_STYLE_ALLOWANCE + REDESIGN_STYLE_ALLOWANCE
+STYLE_CHARACTERS = 27_000 + USABILITY_STYLE_ALLOWANCE + REDESIGN_STYLE_ALLOWANCE + NOTION_STYLE_ALLOWANCE
 SHELL_CHARACTERS = 6_600 + REDESIGN_SHELL_ALLOWANCE
 
 
@@ -176,9 +189,9 @@ class InterfaceBudgetTests(unittest.TestCase):
             self.assertIn(f'P.registerForm("{name}"', forms)
         self.assertIn('P.registerView("sessions"', (UI / 'views_knowledge.js').read_text(encoding='utf-8'))
         work = (UI / 'views_work.js').read_text(encoding='utf-8')
-        # The tabs of Now replaced the list pane of the earlier Now view, and the decision pane serves its lessons, flags and proposals.
+        # Now is a digest that keeps the reconciliation card, and the decision pane serves the lessons, flags and proposals.
         self.assertIn('P.registerPane("decide"', work)
-        self.assertIn('const NOW_EXTRA = { unconfirmed: "Needs reconciliation", kickoff: "Kickoff"', work)
+        self.assertIn('const [unconfirmed, kickoff] = await Promise.all([unconfirmedCard({}), kickoffCard(now)]);', work)
         self.assertIn('async function unconfirmedCard(params)', work)
 
     def test_the_budget_is_measured_with_the_usability_changes_in_place(self):
@@ -187,22 +200,21 @@ class InterfaceBudgetTests(unittest.TestCase):
         self.assertLessEqual(USABILITY_STYLE_ALLOWANCE, 400)
         work = (UI / 'views_work.js').read_text(encoding='utf-8')
         knowledge = (UI / 'views_knowledge.js').read_text(encoding='utf-8')
-        for part in ('P.actButton = ', 'P.planPayload = ', 'function quickEdit(card, field, label, options)', 'dataset: { key: "work-folded" }',
-                     'session_flags: ["review", "Session flags"'):
+        for part in ('P.actButton = ', 'P.planPayload = ', 'function quickEdit(card, field, label, options)', 'dataset: { key: "work-folded" }'):
             self.assertIn(part, work)
         # The Proposed lessons tab replaced the section that the link of Now opened.
         for part in ('function titledButton(id, options = {})', '["proposed", "Proposed lessons", "review"]', '"Dismiss the " + flags.length + " shown flags"'):
             self.assertIn(part, knowledge)
         self.assertIn('context.needsPaths', (UI / 'forms.js').read_text(encoding='utf-8'))
         # The pane replaced the drawer that covered the page, so the stylesheet now hides the view behind a full width pane.
-        self.assertIn('.shell[data-pane="open"] .main { visibility: hidden; }', (UI / 'panel.css').read_text(encoding='utf-8'))
+        self.assertIn('.shell[data-pane="open"] .page { visibility: hidden; }', (UI / 'panel.css').read_text(encoding='utf-8'))
 
     def test_the_budget_is_measured_with_the_fixed_frame_shell_in_place(self):
         # The redesign allowance is temporary and capped, and it pays for these parts of the shell.
         self.assertLessEqual(sum(REDESIGN_ALLOWANCE.values()), REDESIGN_LIMIT)
         self.assertLessEqual(REDESIGN_STYLE_ALLOWANCE, REDESIGN_STYLE_LIMIT)
         core = (UI / 'core.js').read_text(encoding='utf-8')
-        for part in ('const WAITS = ', 'function icon(name)', 'function drawActivity()', 'const setSummary = ', 'function openPane(kind, params = {}, trigger)',
+        for part in ('function icon(name)', 'function drawActivity()', 'const setSummary = ', 'function openPane(kind, params = {}, trigger)',
                      'function markSelected()', 'function stepRow(by)', 'const listPane = (options)', 'const paneRow = (key, name, title, sub, handler)',
                      'function setWide(on)'):
             self.assertIn(part, core)
@@ -212,8 +224,7 @@ class InterfaceBudgetTests(unittest.TestCase):
             self.assertIn(part, shell)
         work = (UI / 'views_work.js').read_text(encoding='utf-8')
         # Work and Plan fill the frame with a shared filter box, the rows of Work and the foot of each view.
-        for part in ('ctx.setSummary(', 'const filterBox = (id, filtered, ...fields)', 'const paneBody = (name, ...children)', 'function listNode(cards, st)',
-                     'selectControl("work-sort", "Sort by", COLUMNS', 'P.viewTabs = (label, prefix, tabs, selected, open, ctx)', 'filterBox("decision-filters"'):
+        for part in ('ctx.setSummary(', 'const filterBox = (id, filtered, ...fields)', 'P.viewTabs = (label, prefix, tabs, selected, open, ctx)'):
             self.assertIn(part, work)
         # Sessions, Learning and Decisions are tabs or a filter head with rows, and a lesson, a flag and a proposal share the decide pane.
         knowledge = (UI / 'views_knowledge.js').read_text(encoding='utf-8')
@@ -221,7 +232,7 @@ class InterfaceBudgetTests(unittest.TestCase):
                      'P.openPane("decide", { kind: "lessons_to_accept"', 'decide("session_flags", flag.id)', 'decide("session_proposals", item.id)'):
             self.assertIn(part, knowledge)
         # Records is rows with a filter head and its fold, and Requirements reads in one region with its approval in the foot.
-        for part in ('const RECORD_ICONS = ', 'id: "records-more"', 'const recordRow = (record)', 'dataset: { scroll: "requirements" }', 'id: "review-requirements"'):
+        for part in ('const RECORD_ICONS = ', 'dataset: { scroll: "requirements" }', 'id: "review-requirements"'):
             self.assertIn(part, knowledge)
         # Agents and Machine are tabs of rows or regions, Hive is rows with the swarm in its pane, and Usage is one region.
         # The swarm pane names the route keys that close with it, so the address of Hive carries the swarm and its filters.
@@ -241,7 +252,24 @@ class InterfaceBudgetTests(unittest.TestCase):
         for part in ('class: "graph-main"', 'Panel.filterBox("arch-filters"', 'container.classList.add("list-view")'):
             self.assertIn(part, graphs)
         style = (UI / 'panel.css').read_text(encoding='utf-8')
-        for part in ('.list-head {', '.shell[data-wide] .main { visibility: hidden; }', '.kn-fold {', '.graph-main .graph { flex: 1; height: auto; }'):
+        for part in ('.list-head {', '.shell[data-wide] .page { visibility: hidden; }', '.graph-main .graph { flex: 1; height: auto; }'):
+            self.assertIn(part, style)
+
+    def test_the_budget_is_measured_with_the_notion_redesign_in_place(self):
+        # The Notion allowance pays for the database and page blocks and for the views that use them.
+        self.assertLessEqual(sum(NOTION_ALLOWANCE.values()), NOTION_LIMIT)
+        blocks = (UI / 'blocks.js').read_text(encoding='utf-8')
+        for part in ('function dbBar(options)', 'function dbTable(options)', 'function menu(trigger, label, build)', 'const props = (entries)',
+                     'const callout = (name, children, tone)', 'const toggle = (key, summary, children, open)'):
+            self.assertIn(part, blocks)
+        work = (UI / 'views_work.js').read_text(encoding='utf-8')
+        for part in ('P.dbTable({ id: "work"', 'P.dbBar({ id: "work"', 'P.dbBar({ id: "plan"', 'const DECISION_VIEWS = ', 'const digestTable = ', 'const filterRow = (...fields)'):
+            self.assertIn(part, work)
+        knowledge = (UI / 'views_knowledge.js').read_text(encoding='utf-8')
+        for part in ('const recordProperties = () =>', 'P.dbBar({ id: "records"', 'P.dbTable({ id: "runs"', 'P.dbTable({ id: "revisions"'):
+            self.assertIn(part, knowledge)
+        style = (UI / 'panel.css').read_text(encoding='utf-8')
+        for part in ('@media (prefers-color-scheme: dark)', 'table.db-table {', '.menu {', '.props {', '.callout {', 'details.toggle > summary {'):
             self.assertIn(part, style)
 
 

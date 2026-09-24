@@ -1,59 +1,65 @@
 """Accessibility checks on the stylesheet of the control panel: contrast, visible focus and reduced motion.
 
-The contrast of every text colour on the navy rail and on the teal buttons is computed with the formula of WCAG 2.1
-from the values in panel.css, so a changed colour is measured again here. Measured on 22 September 2026: the lowest
-text pair is white on the teal accent at 4.85 to 1, and no colour needed a change. The disabled primary button, white
-on #8fc4c0 at 1.94 to 1, is an inactive control, which the rule 1.4.3 exempts; it is listed so that a change to it is
-seen. The browser checks measure the focus stops and the key hints on the live panel.
+The contrast of every text colour on the light sidebar, on the page, on a callout and on the blue primary button is
+computed with the formula of WCAG 2.1 from the values in panel.css, so a changed colour is measured again here. The
+status pills are measured in the light and in the dark theme. Measured on 24 September 2026, after the move to the
+colours of Notion: the grey of muted text was darkened from #787774 (4.14 to 1 on a callout) to #6f6e69, the blue of
+the primary button from #2383e2 (3.88 to 1 under white) to #1f6fc5, and the red of a danger button took its own
+token #b3372c, because the red of a status dot reached 3.15 to 1. The lowest text pair is now muted text on a callout at
+4.73 to 1. The disabled primary button is an inactive control, which the rule 1.4.3 exempts; it is listed so that a
+change to it is seen. The browser checks measure the focus stops on the live panel.
 """
 from pathlib import Path
 import re
 import unittest
 
 CSS = re.sub(r'/\*.*?\*/', '', (Path(__file__).resolve().parents[1] / 'memory_module' / 'ui' / 'panel.css').read_text(encoding='utf-8'), flags=re.S)
-VARIABLES = dict(re.findall(r'(--dk-[a-z-]+):\s*(#[0-9a-fA-F]{6})', CSS))
+# The first :root block holds the light theme; the dark theme redefines the same names inside a media query.
+LIGHT = dict(re.findall(r'(--[a-z0-9-]+):\s*(#[0-9a-fA-F]{6})', re.search(r'^:root \{(.*?)^\}', CSS, re.S | re.M).group(1)))
+DARK = dict(re.findall(r'(--[a-z0-9-]+):\s*(#[0-9a-fA-F]{6})', re.search(r'@media \(prefers-color-scheme: dark\) \{\s*:root \{(.*?)\}', CSS, re.S).group(1)))
 TEXT_PAIRS = (
     # (selector of the text colour, selector of the background, label). A plain hex value stands for a fixed background.
-    ('.rail', '.rail', 'the link text of the rail'),
-    ('.nav-more > summary', '.rail', 'the More views summary of the rail'),
-    ('.nav-group h2', '.rail', 'the group headings of the rail'),
-    ('.nav-omitted', '.rail', 'an omitted view in the rail of a scoped snapshot'),
-    ('.nav-count', '.nav-count', 'the count badges of the rail'),
-    ('.rail-foot strong', '.rail', 'the project name at the foot of the rail'),
-    ('.phase-button', '.rail', 'the lifecycle stage at the foot of the rail'),
-    ('.status[data-state="failed"]', '.rail', 'the failed status at the foot of the rail'),
-    ('.nav-link[aria-current="page"]', '.nav-link[aria-current="page"]', 'the current view in the rail'),
-    ('button.primary, .button.primary', 'button.primary, .button.primary', 'white on a teal button'),
-    ('button.primary, .button.primary', 'button.primary:hover', 'white on a teal button under the pointer'),
-    ('button.quiet, .button.quiet', '#ffffff', 'the accent text of a quiet button on white'),
-    ('button.quiet, .button.quiet', 'button.quiet:hover', 'the accent text of a quiet button on the soft accent'),
-    ('.detail-kind', '#ffffff', 'the kind label of the pane'),
-    ('.tabs.view-tabs [aria-pressed="true"], .tabs.view-tabs [aria-selected="true"]',
-     '.tabs.view-tabs [aria-pressed="true"], .tabs.view-tabs [aria-selected="true"]', 'the selected tab of a list view'),
+    ('.rail', '.rail', 'the link text of the sidebar'),
+    ('.nav-group h2', '.rail', 'the section headings of the sidebar'),
+    ('.nav-omitted', '.rail', 'an omitted view in the sidebar of a scoped snapshot'),
+    ('.workspace strong', '.rail', 'the project name of the sidebar'),
+    ('.status', '.rail', 'the live state at the foot of the sidebar'),
+    ('.status[data-state="failed"]', '.rail', 'the failed status at the foot of the sidebar'),
+    ('button.primary, .button.primary', 'button.primary, .button.primary', 'white on a blue button'),
+    ('button.primary, .button.primary', 'button.primary:hover', 'white on a blue button under the pointer'),
+    ('button.quiet, .button.quiet', '#ffffff', 'the text of a quiet button'),
+    ('button.danger', '#ffffff', 'the text of a danger button'),
+    ('.crumbs', '#ffffff', 'the breadcrumbs'),
+    ('.detail-kind', '#ffffff', 'the kind label of the side peek'),
     ('.tabs button', '#ffffff', 'a tab that is not selected'),
+    ('.db-view', '#ffffff', 'a view of a database that is not selected'),
+    ('.db-tool.active', '#ffffff', 'a database tool in use'),
     ('.muted', '#ffffff', 'muted text on white'),
-    ('.muted', '.notice', 'muted text on the surface of a notice'),
+    ('.muted', '.notice', 'muted text on a callout'),
     ('input::placeholder, textarea::placeholder', '#ffffff', 'the placeholder of a field'),
 )
+TONES = ('red', 'orange', 'yellow', 'green', 'blue', 'purple', 'gray', 'plain')
 FOCUS_PAIRS = (
     (':focus-visible', 'outline', '#ffffff', 'the focus outline on white'),
-    ('.rail :focus-visible', 'outline-color', '.rail', 'the focus outline on the rail'),
+    (':focus-visible', 'outline', '.rail', 'the focus outline on the sidebar'),
 )
-# The only rules that remove the outline: two headings that take focus by script, the view pane, and the search input,
-# whose wrapper shows the outline through .search:focus-within.
-OUTLINE_REMOVED = {'#view-title', '#detail-title', '.main', '.search input'}
+# The rules that remove the outline: two headings that take focus by script and the view pane, and the fields, which
+# show their focus as a ring of 2 pixels in the accent instead: every field, the search of the sidebar through its
+# wrapper, and the search of a database.
+OUTLINE_REMOVED = {'#view-title', '#detail-title', '.main', 'input:focus, select:focus, textarea:focus', '.search input'}
+RINGS = ('input:focus, select:focus, textarea:focus', '.search:focus-within', '.db-search input:focus', ':is(.kn-filter-box, .list-head) .field:focus-within')
 
 
-def declaration(selector, prop):
+def declaration(selector, prop, variables=LIGHT):
     """The value of a property in the rule whose selector list is exactly this text, with a variable resolved."""
     block = re.search(r'^' + re.escape(selector) + r'\s*\{([^}]*)\}', CSS, re.M)
     assert block, f'panel.css has no rule for {selector}'
     found = re.search(r'(?:^|;|\s)' + re.escape(prop) + r':\s*([^;]+)', block.group(1))
     assert found, f'the rule {selector} sets no {prop}'
     value = found.group(1).strip()
-    var = re.search(r'var\((--dk-[a-z-]+)\)', value)
+    var = re.search(r'var\((--[a-z0-9-]+)\)', value)
     if var:
-        return VARIABLES[var.group(1)]
+        return variables[var.group(1)]
     colour = re.search(r'#[0-9a-fA-F]{6}', value)
     assert colour, f'{selector} {prop} is not a hex colour: {value}'
     return colour.group(0)
@@ -78,18 +84,24 @@ def contrast(front, back):
 
 
 class ContrastTests(unittest.TestCase):
-    """Text on the navy rail and on the teal buttons reaches a contrast of 4.5 to 1."""
+    """Text on the sidebar, the page, a callout and the blue button, and every status pill, reach 4.5 to 1."""
 
-    def test_the_text_colours_of_the_rail_and_the_buttons_reach_4_5_to_1(self):
+    def test_the_text_colours_reach_4_5_to_1(self):
         for text, back, label in TEXT_PAIRS:
             with self.subTest(label=label):
                 front, behind = declaration(text, 'color'), background(back)
                 self.assertGreaterEqual(contrast(front, behind), 4.5, f'{label}: {front} on {behind}')
 
-    def test_the_lowest_text_pair_is_white_on_the_accent(self):
+    def test_the_lowest_text_pair_is_muted_text_on_a_callout(self):
         ratios = {label: contrast(declaration(text, 'color'), background(back)) for text, back, label in TEXT_PAIRS}
-        self.assertEqual(min(ratios, key=ratios.get), 'white on a teal button')
-        self.assertAlmostEqual(min(ratios.values()), 4.85, places=2)
+        self.assertEqual(min(ratios, key=ratios.get), 'muted text on a callout')
+        self.assertAlmostEqual(min(ratios.values()), 4.73, places=2)
+
+    def test_every_status_pill_reaches_4_5_to_1_in_both_themes(self):
+        for theme, variables in (('light', LIGHT), ('dark', DARK)):
+            for tone in TONES:
+                with self.subTest(theme=theme, tone=tone):
+                    self.assertGreaterEqual(contrast(variables[f'--{tone}-text'], variables[f'--{tone}-bg']), 4.5)
 
     def test_the_focus_outlines_reach_3_to_1_against_their_surface(self):
         for selector, prop, back, label in FOCUS_PAIRS:
@@ -102,14 +114,16 @@ class ContrastTests(unittest.TestCase):
 
 
 class FocusAndMotionTests(unittest.TestCase):
-    """Every interactive element keeps the visible focus style, and reduced motion turns every transition off."""
+    """Every interactive element keeps a visible focus style, and reduced motion turns every transition off."""
 
     def test_the_focus_style_covers_every_interactive_element(self):
-        self.assertIn(':focus-visible { outline: 2px solid var(--dk-color-accent); outline-offset: 2px; }', CSS)
+        self.assertIn(':focus-visible { outline: 2px solid var(--accent);', CSS)
         removed = {selector.strip() for selector, body in re.findall(r'([^{}]+)\{([^}]*)\}', CSS) if re.search(r'outline:\s*(none|0)\b', body)}
         self.assertEqual(removed, OUTLINE_REMOVED)
-        self.assertIn('.search:focus-within { outline: 2px solid var(--dk-color-accent); outline-offset: 2px; }', CSS)
-        for selector in ('.nav-link', '.nav-more > summary', '.pane-row', '.tabs button', '.detail-bar button'):
+        for selector in RINGS:
+            with self.subTest(selector=selector):
+                self.assertRegex(CSS, re.escape(selector) + r'\s*\{[^}]*box-shadow: inset 0 0 0 2px var\(--accent\)')
+        for selector in ('.nav-link', '.nav-more > summary', '.pane-row', '.tabs button', '.detail-bar button', '.db-open', '.db-view', '.db-tool', '.menu-item'):
             for removed_selector in removed:
                 self.assertNotIn(selector, removed_selector)
 
