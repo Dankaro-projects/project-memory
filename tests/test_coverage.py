@@ -123,6 +123,26 @@ class CoverageTests(unittest.TestCase):
             write(self.m,'reconcile',resolution,{'receipt_id':rid,'resolution':resolution,'reason':'The marker file was inspected; the host completion status is separate.','evidence':self.evidence})
             self.assertEqual('execution_unconfirmed' in self.issues(),resolution=='unknown')
         self.assertEqual(self.m.db.execute("SELECT count(*) FROM host_receipts WHERE event_name='PreToolUse'").fetchone()[0],1)
+    def test_a_background_agent_in_flight_does_not_block_the_main_conversation(self):
+        p=self.prompt('Research this in the background.');self.checkpoint(p)
+        self.tool('search',complete=False,agent_id='a1',agent_type='general-purpose')
+        self.tool('write',agent_id='a1',agent_type='general-purpose')
+        self.assertFalse(self.issues());self.assertEqual(hook(self.m,self.event('Stop')),{})
+        self.assertEqual(codex_host.status(self.m)['unconfirmed_total'],1)
+        self.tool('main',complete=False)
+        self.assertEqual(self.issues(),{'execution_unconfirmed','activity_unassigned'})
+    def test_a_background_notification_is_not_a_request_to_assess(self):
+        p=self.prompt('Run the suite in the background.');self.checkpoint(p)
+        for turn,text in enumerate(['<task-notification>\n<task-id>b1</task-id>\n<status>completed</status>\n</task-notification>',
+                     'Another Claude session sent a message:\n<agent-message from="a1">\nThe report.\n</agent-message>'],2):
+            self.prompt(text,turn_id=str(turn));self.tool(text[:8],turn_id=str(turn))
+            self.assertEqual(self.issues(),{'activity_unassigned'})
+        self.checkpoint(p)
+        self.assertFalse(self.issues());self.assertEqual(hook(self.m,self.event('Stop',turn_id='3')),{})
+        q=self.prompt('Now change the parser.',turn_id='4');self.tool('change',turn_id='4')
+        self.assertIn('intent_unassessed',self.issues())
+        with self.assertRaises(Conflict):self.checkpoint(p)
+        self.checkpoint(q);self.assertFalse(self.issues())
     def test_explicit_unknown_execution_remains_visible_without_another_stop(self):
         p=self.prompt();rid=self.tool(complete=False);self.checkpoint(p)
         write(self.m,'reconcile','unknown-done',{'receipt_id':rid,'resolution':'unknown','reason':'The marker exists; final process completion is not established.','evidence':self.evidence})

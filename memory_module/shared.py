@@ -109,6 +109,9 @@ _PENDING = "p.event_name='PreToolUse' AND NOT " + _REPORTED + " AND NOT " + _REC
 UNCONFIRMED = _PENDING.format(resolution=" AND json_extract(r.payload,'$.resolution')!='unknown'")
 # Not assessed at all: no result and no reconciliation, not even an explicit unknown.
 UNASSESSED = _PENDING.format(resolution='')
+# A call of the main conversation. Claude Code names the subagent that made a call; a background agent may still be
+# running when the main conversation stops, so its calls are not activity the main conversation must account for.
+MAIN_THREAD = "json_extract(p.payload,'$.agent_id') IS NULL"
 
 
 def unconfirmed_total(memory, *, episode_id=None, session_id=None, clause=UNCONFIRMED):

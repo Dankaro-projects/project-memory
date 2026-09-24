@@ -8,7 +8,7 @@ import sqlite3
 import sys
 from pathlib import Path
 from .core import Memory, InvalidRecord, Conflict, BudgetTooSmall, dumps, _text, _digest
-from . import guards
+from . import guards, shared
 
 HOST_SCHEMA = '''
 CREATE TABLE IF NOT EXISTS host_receipts (
@@ -371,9 +371,17 @@ def active_binding(memory, session):
     return row
 
 
+NOTIFICATION = re.compile(r'\s*(<task-notification>|Another Claude session sent a message:\s*<agent-message\b)')
+
+
+def notification(prompt):
+    """Whether Claude Code injected the prompt for a background task or a subagent rather than the user typing it."""
+    return isinstance(prompt, str) and bool(NOTIFICATION.match(prompt))
+
+
 def session_context(memory, session, compacted=False):
     """Short factual state for a host that starts or restores a session. It reports counts and IDs, never instructions from records."""
-    state = status(memory, session_id=session, limit=3)
+    state = status(memory, session_id=session, limit=3, main_only=True)
     parts = [f'Memory session: {session}.']
     if compacted:
         parts.append('The conversation was compacted; retrieve earlier evidence with memory_context or memory_get before relying on it.')
@@ -449,7 +457,11 @@ def capture(memory, event, host='codex'):
             pre = memory.db.execute("SELECT episode_id,decision_id FROM host_receipts WHERE session_id=? AND tool_use_id=? AND event_name='PreToolUse' AND coalesce(json_extract(payload,'$.host'),'codex')=?", (session, tool_id, host)).fetchone()
             ep, decision = (pre['episode_id'], pre['decision_id']) if pre else (None, None)
         payload = {}
-        if name == 'UserPromptSubmit':
+        if name == 'UserPromptSubmit' and notification(event.get('prompt')):
+            # The host reports a finished background task or a subagent's report. Nobody asked for anything,
+            # so the prompt is recorded without entering the intent assessment.
+            payload['notification'] = True
+        elif name == 'UserPromptSubmit':
             from .planning import latest
             plan = latest(memory, ep, 'work_plan') if ep else None
             payload.update(coverage_version=1, plan_id=plan['id'] if plan else None)
@@ -536,7 +548,7 @@ def capture(memory, event, host='codex'):
         base = assistant_base(memory, available=HOOK_CHARACTERS - len(started) - 1)
         return {'hookSpecificOutput':{'hookEventName':host_event,'additionalContext':started + (' ' + base if base else '')}}
     if name == 'UserPromptSubmit':
-        state = status(memory, session_id=session, limit=3)
+        state = status(memory, session_id=session, limit=3, main_only=True)
         text = (f'Memory session: {session}. Prompt receipt: {rid}. Use memory_context before repeating research. '
                 f'{state["unconfirmed_total"]} tool calls need reconciliation. '
                 'Record a decision when choosing or revising an approach with consequences, using this session_id, evidence, uncertainty and alternatives. Routine acknowledgement needs no decision record. '
@@ -586,10 +598,10 @@ def capture(memory, event, host='codex'):
     return {}
 
 
-def status(memory, session_id=None, limit=10, offset=0):
+def status(memory, session_id=None, limit=10, offset=0, main_only=False):
     if type(limit) is not int or not 1 <= limit <= 100 or type(offset) is not int or offset < 0:
         raise InvalidRecord('Use limit 1–100 and a nonnegative offset.')
-    clause = ' AND p.session_id=?' if session_id else ''
+    clause = (' AND p.session_id=?' if session_id else '') + (' AND ' + shared.MAIN_THREAD if main_only else '')
     args = [session_id] if session_id else []
     base = '''FROM host_receipts p WHERE p.event_name='PreToolUse'
       AND NOT EXISTS (SELECT 1 FROM host_receipts r WHERE r.session_id=p.session_id AND r.tool_use_id=p.tool_use_id AND r.event_name='PostToolUse' AND coalesce(json_extract(r.payload,'$.host'),'codex')=coalesce(json_extract(p.payload,'$.host'),'codex'))

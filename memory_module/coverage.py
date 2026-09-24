@@ -3,7 +3,8 @@ from . import codex_host, shared
 from .core import InvalidRecord, Conflict, _text, _digest
 
 # A tool call that may change something. A call marked read only when it was captured needs no assessment.
-MATERIAL = "coalesce(json_extract(t.payload,'$.read_only'),0)=0"
+# Activity that may change something, made by the main conversation rather than by a subagent.
+MATERIAL = "coalesce(json_extract(t.payload,'$.read_only'),0)=0 AND " + shared.MAIN_THREAD.replace('p.', 't.')
 
 
 def sessions(memory, limit=10, offset=0):
@@ -49,7 +50,7 @@ def inspect(memory, session_id, limit=10, offset=0):
     assessment = memory.db.execute("SELECT rowid,id,episode_id,payload FROM host_receipts WHERE session_id=? AND event_name='IntentAssessed' ORDER BY rowid DESC LIMIT 1", (session_id,)).fetchone()
     since = assessment['rowid'] if assessment else 0
     unbound = memory.db.execute("SELECT count(*) FROM host_receipts t WHERE session_id=? AND event_name='PreToolUse' AND decision_id IS NULL AND json_extract(payload,'$.work_item') IS NULL AND rowid>? AND "+MATERIAL, (session_id, since)).fetchone()[0]
-    state = codex_host.status(memory, session_id, limit=limit, offset=offset)
+    state = codex_host.status(memory, session_id, limit=limit, offset=offset, main_only=True)
     active = state['active']
     open_sql = '''FROM host_receipts b WHERE b.session_id=? AND b.event_name='DecisionBound'
       AND NOT EXISTS (SELECT 1 FROM events e WHERE e.kind='outcome' AND e.decision_id=b.decision_id)
@@ -68,7 +69,7 @@ def inspect(memory, session_id, limit=10, offset=0):
     if open_total:
         issues.append({'type':'outcome_missing', 'count':open_total, 'reason':'Executed or selected decisions have no assessed outcome. Record partial or blocked work accurately.'})
     if state['unconfirmed_total']:
-        unassessed=shared.unconfirmed_total(memory,session_id=session_id,clause=shared.UNASSESSED)
+        unassessed=shared.unconfirmed_total(memory,session_id=session_id,clause=shared.UNASSESSED+' AND '+shared.MAIN_THREAD)
         issues.append({'type':'execution_unconfirmed', 'count':state['unconfirmed_total'], 'requires_assessment':bool(unassessed),
                        'reason':'Inspect actual effects before retrying; an absent receipt does not prove failure. Explicitly assessed unknown execution remains unresolved.'})
     gaps = [r[0] for r in memory.db.execute("SELECT id FROM host_receipts WHERE session_id=? AND event_name='CaptureRecovered' AND rowid>? ORDER BY rowid", (session_id, since))]
@@ -93,7 +94,7 @@ def assess(memory, *, session_id, request_key, prompt_ids, effect, reason, episo
     prompts = [codex_host.read_receipt(memory, rid) for rid in prompt_ids]
     if any(p['session_id'] != session_id or p['event_name'] != 'UserPromptSubmit' for p in prompts):
         raise InvalidRecord('Intent assessments must reference this session’s user prompt receipts.')
-    newest = memory.db.execute("SELECT id FROM host_receipts WHERE session_id=? AND event_name='UserPromptSubmit' ORDER BY rowid DESC LIMIT 1", (session_id,)).fetchone()
+    newest = memory.db.execute("SELECT id FROM host_receipts WHERE session_id=? AND event_name='UserPromptSubmit' AND json_extract(payload,'$.notification') IS NULL ORDER BY rowid DESC LIMIT 1", (session_id,)).fetchone()
     if newest and newest[0] not in prompt_ids:
         raise Conflict('A newer request arrived. Read session coverage and assess it before continuing.')
     requirements = [] if requirements is None else requirements
