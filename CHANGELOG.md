@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.6.0b12 (24 September 2026)
 
 An injected turn records without a conflict. Claude Code delivers Stop hook feedback and the report of an agent as a prompt under the identifier of the turn they follow, with a different text. The capture keyed a prompt by that identifier alone, so it refused the second text with Conflict, and each refusal became a capture gap that the next Stop hook asked the agent to assess. On 24 September 2026 one session collected five such gaps. A Claude Code prompt is now keyed by its identifier and the hash of its text, so an injected turn is its own receipt and an identical redelivery still meets its earlier receipt; Codex gives every turn its own identifier, so a changed prompt under one identifier stays a conflict there. A prompt that opens with `Stop hook feedback:` is recorded as a notification, like a task notification or an agent report, and needs no assessment.
 

@@ -11,7 +11,7 @@ It works for a software product, a consulting engagement and a workflow automati
 Install [uv](https://docs.astral.sh/uv/getting-started/installation/), then run this inside the project you want to remember:
 
 ```sh
-uvx project-memory-mcp@0.6.0b11 setup --client codex --trust
+uvx project-memory-mcp@0.6.0b12 setup --client codex --trust
 ```
 
 For Claude Code, replace `--client codex` with `--client claude`. Setup preserves existing records and settings, connects the MCP server and the lifecycle hooks, and opens the control panel. `--trust` approves the project integration in that client; omit it to approve the connection yourself. Start a new assistant session afterwards. Add `--no-view` for a headless installation.
@@ -19,7 +19,7 @@ For Claude Code, replace `--client codex` with `--client claude`. Setup preserve
 For a permanent command:
 
 ```sh
-uv tool install project-memory-mcp==0.6.0b11
+uv tool install project-memory-mcp==0.6.0b12
 project-memory doctor
 project-memory view
 ```
@@ -27,7 +27,7 @@ project-memory view
 To install the published wheel directly from GitHub instead of PyPI:
 
 ```sh
-uvx --from https://github.com/Dankaro-projects/project-memory/releases/download/v0.6.0b11/project_memory_mcp-0.6.0b11-py3-none-any.whl project-memory setup --client claude --trust
+uvx --from https://github.com/Dankaro-projects/project-memory/releases/download/v0.6.0b12/project_memory_mcp-0.6.0b12-py3-none-any.whl project-memory setup --client claude --trust
 ```
 
 Other local MCP clients use `setup --client mcp` and the stdio server. [Setup and lifecycle](docs/setup.md) covers client configuration, the plugins, upgrades, backups and removal.
