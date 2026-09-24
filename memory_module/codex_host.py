@@ -420,11 +420,11 @@ def active_binding(memory, session):
     return row
 
 
-NOTIFICATION = re.compile(r'\s*(<task-notification>|Another Claude session sent a message:\s*<agent-message\b)')
+NOTIFICATION = re.compile(r'\s*(<task-notification>|Another Claude session sent a message:\s*<agent-message\b|Stop hook feedback:)')
 
 
 def notification(prompt):
-    """Whether Claude Code injected the prompt for a background task or a subagent rather than the user typing it."""
+    """Whether Claude Code injected the prompt for a background task, a subagent or a hook rather than the user typing it."""
     return isinstance(prompt, str) and bool(NOTIFICATION.match(prompt))
 
 
@@ -547,6 +547,10 @@ def capture(memory, event, host='codex'):
             key.extend([payload.get('last_assistant_message',{}).get('sha256'),payload['stop_hook_active']])
         if host != 'codex': key.append(host)
         if 'documents' in payload: key.append(payload['documents'])
+        # Claude Code delivers an injected turn, such as Stop hook feedback or an agent report, under the prompt identifier
+        # of the turn it follows. The text keeps them apart; an identical redelivery still meets its earlier receipt.
+        # Codex gives every turn its own identifier, so a changed prompt under one identifier stays a conflict there.
+        if host == 'claude' and name == 'UserPromptSubmit' and 'prompt' in payload: key.append(payload['prompt'].get('sha256'))
         # Without a turn or prompt identifier, repeated lifecycle events in one session must not collide.
         if host == 'claude' and not turn and name not in {'PreToolUse', 'PostToolUse'}: key.append(memory.now())
         prior_id='host_'+_digest(dumps(key))[:32]

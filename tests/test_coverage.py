@@ -144,6 +144,21 @@ class CoverageTests(unittest.TestCase):
         self.assertIn('intent_unassessed',self.issues())
         with self.assertRaises(Conflict):self.checkpoint(p)
         self.checkpoint(q);self.assertFalse(self.issues())
+    def test_an_injected_turn_under_the_same_prompt_id_records_without_a_conflict(self):
+        # Claude Code delivers Stop hook feedback and agent reports under the prompt identifier of the turn they follow.
+        def prompt(text):
+            codex_host.capture(self.m,self.event('UserPromptSubmit',prompt=text,prompt_id='p1',turn_id=''),host='claude')
+            return self.m.db.execute("SELECT id FROM host_receipts WHERE event_name='UserPromptSubmit' ORDER BY rowid DESC LIMIT 1").fetchone()[0]
+        p=prompt('Research this in the background.')
+        prompt('Another Claude session sent a message:\n<agent-message from="a1">\nThe report.\n</agent-message>')
+        prompt('Stop hook feedback:\nProject Memory needs assessment: intent unassessed.')
+        prompt('Research this in the background.')  # an identical redelivery adds no receipt
+        prompts=self.m.db.execute("SELECT json_extract(payload,'$.notification') FROM host_receipts WHERE event_name='UserPromptSubmit' ORDER BY rowid").fetchall()
+        self.assertEqual([row[0] for row in prompts],[None,1,1])
+        self.assertFalse((self.root/'memory.capture-errors').exists() and list((self.root/'memory.capture-errors').iterdir()))
+        self.tool('work')
+        self.checkpoint(p)
+        self.assertFalse(self.issues())
     def test_explicit_unknown_execution_remains_visible_without_another_stop(self):
         p=self.prompt();rid=self.tool(complete=False,command='git push origin main');self.checkpoint(p)
         write(self.m,'reconcile','unknown-done',{'receipt_id':rid,'resolution':'unknown','reason':'The marker exists; final process completion is not established.','evidence':self.evidence})
