@@ -530,8 +530,9 @@
           h("span", { class: "row" }, toneBadge(issue.type === "dependency" ? "backlog" : "review", P.words(issue.type))), h("span", null, issue.reason),
           issue.source_id || issue.record_id ? button("Open the evidence", "work-issue-" + index, (t) => P.openRecord(issue.source_id || issue.record_id, t), "link-button") : null,
           issue.run_id ? button("Open the check", "work-issue-run-" + index, (t) => openRun({ id: issue.run_id, episode_id: card.id }, t), "link-button") : null)))) : null,
-        (reviews.awaiting_user || []).length ? block("Needs your confirmation", reviews.awaiting_user.length,
-          h("p", { class: "muted" }, "The latest check found no evidence that a machine can use to confirm these criteria. Confirm them in the chat, and your statement is recorded as your confirmation."),
+        // The block carries no count, so it reads as information and not as a list of tasks for the reader.
+        (reviews.awaiting_user || []).length ? block("Criteria no machine can confirm", null,
+          h("p", { class: "muted" }, "The latest check found that no machine can confirm these criteria. The assistant names them in the chat when it reports the work, and a statement you make there is recorded as your confirmation."),
           listOf(reviews.awaiting_user, (item) => h("div", { class: "stack", dataset: { key: "confirm-" + item.criterion } },
             h("span", { class: "row" }, chip(item.criterion)), h("strong", null, item.condition), h("span", { class: "muted" }, item.evidence)))) : null,
         callsHost,

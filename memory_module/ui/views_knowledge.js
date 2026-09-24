@@ -153,10 +153,11 @@
       const weak = (data.effectiveness || []).filter((rule) => rule.state === "ineffective").length;
       const total = data.guards_total || 0;
       ctx.setSummary([P.count(total, "guard") + " " + isAre(total) + " active", ineffective ? P.count(ineffective, "guard") + " recorded a recurrence" : "",
-        weak ? P.count(weak, "rule") + " " + isAre(weak) + " ineffective" : "", P.count(proposed.total, "lesson") + " wait" + (proposed.total === 1 ? "s" : "")].filter(Boolean).join(", ").replace(/, ([^,]+)$/, " and $1") + ".");
+        weak ? P.count(weak, "rule") + " " + isAre(weak) + " ineffective" : ""].filter(Boolean).join(", ").replace(/, ([^,]+)$/, " and $1") + ".");
       const guards = [...(data.guards || [])].sort((a, b) => (b.recurrences || 0) - (a.recurrences || 0));
       const value = data.instructions || {}, roles = Object.keys(value.roles || {}), changes = data.scope_changes || [], signals = (data.signals || {}).signals || [];
-      const counts = { proposed: proposed.total, guards: data.guards_total || 0, failures: failures.length, instructions: roles.length, scope: changes.length, signals: signals.length };
+      // A proposed lesson is not counted: it is not a task that waits for the reader.
+      const counts = { proposed: null, guards: data.guards_total || 0, failures: failures.length, instructions: roles.length, scope: changes.length, signals: signals.length };
       const tabs = LEARNING_TABS.map(([id, label, tone]) => ({ id, label, count: counts[id], tone: counts[id] ? tone : null }));
       // A link from Now names its tab as section, which the tabs replaced.
       const tab = tabs.find((entry) => entry.id === (params.tab || params.section)) || tabs[0];
@@ -167,8 +168,8 @@
       if (tab.id === "proposed") put(container, list(proposed.lessons.map((lesson) => P.paneRow("lesson-row-" + lesson.id, "learning", lesson.do || "No action is recorded.",
         P.words(lesson.pattern_type || "lesson") + ", proposed by " + (lesson.actor || "an agent") + " on " + P.date(lesson.created_at) + ". From: " + (lesson.episode_title || lesson.episode_id),
         (trigger) => P.openPane("decide", { kind: "lessons_to_accept", id: lesson.id, from: lesson.episode_title }, trigger))),
-      "A lesson is a rule learned from a failure. A row decides the lesson in the pane, and an accepted lesson with triggers is a guard, which reminds agents when their work matches it.",
-      "No proposed lesson awaits a decision.", [h("span", null, proposed.lessons.length ? "Showing " + (offset + 1) + " to " + (offset + proposed.lessons.length) + " of " + proposed.total + "." : ""),
+      "A lesson is a rule learned from a failure. A row opens the lesson, which is decided in the chat, and an accepted lesson with triggers is a guard, which reminds agents when their work matches it.",
+      "No lesson is proposed.", [h("span", null, proposed.lessons.length ? "Showing " + (offset + 1) + " to " + (offset + proposed.lessons.length) + " of " + proposed.total + "." : ""),
         P.live && (offset || proposed.more) ? h("span", { class: "row" }, offset ? button("Previous " + PAGE, "lessons-previous", turn(Math.max(0, offset - PAGE)), "small") : null,
           proposed.more ? button("Next " + PAGE, "lessons-next", turn(offset + PAGE), "small") : null) : null]));
       else if (tab.id === "guards") put(container, list(guards.map((guard) => P.paneRow("guard-row-" + guard.lesson_id, "learning", guard.do || "No action is recorded.",
@@ -219,8 +220,9 @@
       const awaiting = runs.filter((run) => run.role === "work" && run.state === "completed" && run.changed_files && !run.merge).length;
       ctx.setSummary((data.configured ? number(ready) + " of " + P.count(hosts.length, "configured host") + " can run work now. " : "No agent host is configured for this project. ") +
         (active.length ? P.count(active.length, "agent run") + " " + isAre(active.length) + " active. " : "No agent run is active. ") +
-        (awaiting ? P.count(awaiting, "delegated run") + " " + (awaiting === 1 ? "awaits" : "await") + " a merge decision." : ""));
-      const counts = { runs: null, hosts: hosts.length, attention: attention.length };
+        (awaiting ? P.count(awaiting, "delegated run") + " " + (awaiting === 1 ? "has" : "have") + " changes that are not merged." : ""));
+      // Follow ups are not counted: they are not tasks that wait for the reader.
+      const counts = { runs: null, hosts: hosts.length, attention: null };
       const tabs = AGENT_TABS.map(([id, label, tone]) => ({ id, label, count: counts[id], tone: counts[id] ? tone : null }));
       const tab = tabs.find((entry) => entry.id === params.tab) || tabs[0];
       container.classList.add("list-view");
@@ -562,8 +564,9 @@
       const waiting = promotions.filter((item) => item.state === "proposed"), decided = promotions.filter((item) => item.state !== "proposed");
       ctx.setSummary((data.exists ? P.count(data.rules_total || 0, "rule") + " " + isAre(data.rules_total || 0) + " in force on " + data.machine + ", promoted from "
         + P.count(data.projects_total || 0, "project") + ". " : "No machine memory exists on this computer yet. ")
-        + P.count(waiting.length, "proposal") + " from this project " + (waiting.length === 1 ? "awaits" : "await") + " your decision.");
-      const counts = { proposals: waiting.length, rules: rules.length, retired: retired.length, projects: data.projects_total || 0 };
+        + (waiting.length ? "Proposals of this project are listed under Proposals and are decided in the chat." : "No rule of this project is proposed."));
+      // A proposal is not counted: it is not a task that waits for the reader.
+      const counts = { proposals: null, rules: rules.length, retired: retired.length, projects: data.projects_total || 0 };
       const tabs = MACHINE_TABS.map(([id, label, tone]) => ({ id, label, count: counts[id], tone: counts[id] ? tone : null }));
       const tab = tabs.find((entry) => entry.id === params.tab) || tabs[0];
       container.classList.add("list-view");
@@ -571,8 +574,8 @@
       const notice = h("div", { class: "notice", dataset: { key: "machine-isolation" } },
         h("p", null, "The machine memory holds the rules that you promoted from single projects, so that they reach every project on this computer. " + data.note),
         data.error ? h("p", null, "The machine memory could not be read: " + data.error) : null, h("p", { class: "muted" }, "Database: " + data.database));
-      if (tab.id === "proposals") put(container, region(notice, purpose("A proposal stays in this project until you accept it. Correct its text in the acceptance form when a word belongs to this project alone."),
-        grid(waiting, (item) => promotionCard(item, ctx), "No proposal awaits your decision. An agent proposes a rule with the promote_rule action."),
+      if (tab.id === "proposals") put(container, region(notice, purpose("A proposal stays in this project until you accept it in the chat. Ask for a corrected text when a word belongs to this project alone."),
+        grid(waiting, (item) => promotionCard(item, ctx), "No rule of this project is proposed. An agent proposes a rule with the promote_rule action."),
         decided.length ? section("Decided proposals", counted(decided.length, "proposal"), grid(decided, (item) => promotionCard(item, ctx))) : null));
       else if (tab.id === "rules") put(container, region(notice, purpose("A rule in force is not rewritten. Retire it and promote the corrected text when it needs a change."),
         grid(rules, (rule) => machineRule(rule, ctx), "No rule is promoted to this machine yet.")));
@@ -788,7 +791,7 @@
   // Sessions: tabs for the flagged directions that no record followed, the distilled proposals and the digests of
   // finished sessions. A flag and a proposal are decided in the shared "decide" pane of views_work.js, and a digest opens
   // its record. The shown flags are dismissed together with session_flag {flag_ids, status}.
-  const SESSION_TABS = [["flags", "Flags", "review"], ["proposals", "Proposals", "review"], ["digests", "Digests", null]];
+  const SESSION_TABS = [["flags", "Flags"], ["proposals", "Proposals"], ["digests", "Digests"]];
   P.registerView("sessions", { title: "Sessions", async render(container, params, ctx) {
       let data;
       try {
@@ -799,11 +802,10 @@
       }
       const counts = data.counts || {}, digests = data.digests || [], flags = data.flags || [], proposals = data.proposals || [];
       const decided = (counts.confirmed || 0) + (counts.dismissed || 0), open = Math.max(counts.open || 0, flags.length);
-      ctx.setSummary(data.reading ? P.count(digests.length, "session digest") + " " + isAre(digests.length) + " shown, with "
-        + P.count(open, "open flag") + " and " + P.count(proposals.length, "pending proposal") + "."
+      ctx.setSummary(data.reading ? P.count(digests.length, "session digest") + " " + isAre(digests.length) + " shown. A flag or a proposal is decided in the chat when you choose to."
         : "Session reading is switched off for this project. Run project-memory sessions on to switch it on.");
-      const items = { flags, proposals, digests };
-      const tabs = SESSION_TABS.map(([id, label, tone]) => ({ id, label, count: id === "flags" ? open : items[id].length, tone: items[id].length ? tone : null }));
+            // The tabs carry no count: a flag or a proposal is not a task that waits for the reader.
+      const tabs = SESSION_TABS.map(([id, label]) => ({ id, label }));
       const tab = tabs.find((entry) => entry.id === params.tab) || tabs[0];
       container.classList.add("list-view");
       put(container, P.viewTabs("The parts of Sessions", "sessions-tab-", tabs, tab, (id) => P.go("sessions", { tab: id }), ctx));
@@ -813,12 +815,12 @@
         : tab.id === "proposals" ? proposals.map((item) => P.paneRow("session-row-" + item.id, "sessions", item.text,
           P.words(item.slot) + ", " + P.lower(P.words(item.confidence)) + " confidence, " + item.pointers.file, decide("session_proposals", item.id)))
           : digests.map((item) => P.paneRow("session-digest-" + item.session_key, "records", item.session_key, "Last activity " + P.date(item.last_at) + ". " + P.count(item.messages, "message") + ", "
-            + P.count(item.files, "file") + ", " + P.count(item.failures, "failed command") + ", " + P.count(item.open_flags, "open flag") + ".", (trigger) => P.openRecord(item.source_id, trigger)));
+            + P.count(item.files, "file") + ", " + P.count(item.failures, "failed command") + ".", (trigger) => P.openRecord(item.source_id, trigger)));
       const notes = { flags: data.note, proposals: "A proposal from an earlier session becomes a record only when you accept it. Run project-memory sessions distill to ask a host for proposals.",
         digests: "A row opens the digest record of the session. Run project-memory handoff before a fresh session." };
-      const empties = { flags: "No flag waits for a decision.", proposals: "No proposal is pending.", digests: "No session of this project is collected yet." };
-      put(container, P.listPane({ title: tab.label, count: tab.count, tone: tab.tone, note: notes[tab.id], rows, empty: empties[tab.id],
-        foot: tab.id !== "flags" ? null : [h("span", { dataset: { key: "sessions-note" } }, (open > flags.length ? "The newest " + flags.length + " of " + open + " open flags are shown. " : "")
+      const empties = { flags: "No flagged direction is listed.", proposals: "No proposal is pending.", digests: "No session of this project is collected yet." };
+      put(container, P.listPane({ title: tab.label, note: notes[tab.id], rows, empty: empties[tab.id],
+        foot: tab.id !== "flags" ? null : [h("span", { dataset: { key: "sessions-note" } }, (open > flags.length ? "The newest " + flags.length + " of " + open + " flags are shown. " : "")
           + (decided ? "Of " + decided + " decided flags, " + counts.confirmed + " were confirmed." : "No flag is decided yet."))] }));
   } });
 })();

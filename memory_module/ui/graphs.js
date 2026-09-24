@@ -249,7 +249,7 @@
     // A file takes the state of the work item whose paths cover its folder, so the file level states no work state.
     const blocked = focus ? 0 : nodes.filter((node) => node.status === "blocked").length, proposed = nodes.filter(isProposed).length;
     if (blocked) sentence += blocked === 1 ? " 1 of them has blocked work." : ` ${blocked} of them have blocked work.`;
-    if (proposed) sentence += ` ${Panel.count(proposed, "item")} ${proposed === 1 ? "awaits" : "await"} your confirmation.`;
+    if (proposed) sentence += ` ${Panel.count(proposed, "item")} ${proposed === 1 ? "is" : "are"} proposed.`;
     // Packages have their own toggle, so an unticked package is not reported as hidden by a filter nobody set.
     const hidden = model.nodes.length - nodes.length - (showPackages ? 0 : model.nodes.filter((node) => node.kind === "package").length);
     if (hidden > 0) sentence += ` ${Panel.count(hidden, "item")} ${hidden === 1 ? "is" : "are"} hidden by the filters.`;

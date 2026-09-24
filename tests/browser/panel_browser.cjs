@@ -449,7 +449,7 @@ async function views(page, kind, expected) {
 
   // Learning in the frame: one tab per part, the guards as rows, and the guard with the recurrence in the pane, which says how to reassess it.
   await go(page, "#learning");
-  assert.match(await text(page, "#view-summary"), /^2 guards are active, 1 guard recorded a recurrence, 1 rule is ineffective and 1 lesson waits\.$/);
+  assert.match(await text(page, "#view-summary"), /^2 guards are active, 1 guard recorded a recurrence and 1 rule is ineffective\.$/);
   assert.deepEqual((await page.locator("#main .db-views button").allTextContents()).map((label) => label.replace(/\d+$/, "")),
     ["Proposed lessons", "Guards", "Failures without a lesson", "Instructions", "Scope changes", "Signals"]);
   assert.equal(await page.locator('#main [data-key="learning-tab-proposed"][aria-pressed="true"]').count(), 1);
@@ -517,7 +517,7 @@ async function views(page, kind, expected) {
   // run pane with Merge and Discard in its foot.
   await go(page, "#agents");
   assert.match(await text(page, "#view-summary"), /configured hosts can run work now/);
-  assert.match(await text(page, "#view-summary"), /1 delegated run awaits a merge decision/);
+  assert.match(await text(page, "#view-summary"), /1 delegated run has changes that are not merged/);
   assert.equal(await page.locator("#main button.db-open").count(), 2);
   assert.deepEqual((await page.locator("#main .db-views button").allTextContents()).map((label) => label.replace(/\d+$/, "")), ["Runs", "Hosts", "Follow ups"]);
   await page.locator('[data-key="agents-tab-hosts"]').click();
@@ -555,7 +555,7 @@ async function views(page, kind, expected) {
   // Machine in the frame: the proposals, the rules in force, the retired rules and the registry are regions under tabs,
   // each with the isolation notice, and the summary beside the title counts the rules and the proposals.
   await go(page, "#machine");
-  assert.match(await text(page, "#view-summary"), /1 rule is in force on .+, promoted from 1 project\. 1 proposal from this project awaits your decision\./);
+  assert.match(await text(page, "#view-summary"), /1 rule is in force on .+, promoted from 1 project\. Proposals of this project are listed under Proposals and are decided in the chat\./);
   assert.deepEqual((await page.locator("#main .db-views button").allTextContents()).map((label) => label.replace(/\d+$/, "")), ["Proposals", "Rules in force", "Retired rules", "Projects"]);
   assert.match(await text(page, '#main [data-key="machine-isolation"]'), /no outcome is combined across projects/);
   assert.equal(await page.locator('#main [data-key^="promotion-"]').count(), 2);
@@ -1065,7 +1065,7 @@ async function hived(browser, fixture) {
   // typed into the search move nothing.
   await go(page, "#sessions");
   await page.waitForSelector('#main .view:not(.pending) [data-key="session-row-flag_fixture_4"]');
-  assert.match(await text(page, "[data-key=sessions-tab-flags]"), /Flags\s*4/);
+  assert.equal(await text(page, "[data-key=sessions-tab-flags]"), "Flags", "a Sessions tab shows a count of things to do");
   assert.equal(await page.locator("#main .pane-row").count(), 4);
   await page.click('[data-key="session-row-flag_fixture_4"]');
   await page.waitForFunction(() => /Wait for the review before the release/.test(document.getElementById("detail-title").textContent));
@@ -1104,8 +1104,9 @@ async function hived(browser, fixture) {
 
   // J and K move along the flag rows while a flag is open.
   await go(page, "#sessions");
-  await page.waitForFunction(() => /4 open flags/.test(document.getElementById("view-summary").textContent));
-  assert.deepEqual((await page.locator("#main .db-views button").allTextContents()).map((label) => label.replace(/\d+$/, "")), ["Flags", "Proposals", "Digests"]);
+  await page.waitForFunction(() => /decided in the chat when you choose to/.test(document.getElementById("view-summary").textContent));
+  assert.doesNotMatch(await text(page, "#view-summary"), /\d+ (open flag|pending proposal)/);
+  assert.deepEqual(await page.locator("#main .db-views button").allTextContents(), ["Flags", "Proposals", "Digests"]);
   await page.click('[data-key="session-row-flag_fixture_3"]');
   await flagPane(/Use the second file instead/);
   assert.equal(await page.locator('#main [data-key="session-row-flag_fixture_3"]').getAttribute("aria-current"), "true");
