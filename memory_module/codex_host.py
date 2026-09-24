@@ -36,6 +36,8 @@ CLAUDE_ALIASES = {'PostToolUseFailure': 'PostToolUse'}
 MEMORY_TOOL = re.compile(r'^mcp__.+__memory_(context|get|write)$')
 # The hook context of a host stays within this many characters, as it did before rules were composed.
 HOOK_CHARACTERS = 2500
+# Deferred Stop notices take at most this part of the session start context.
+NOTICE_CHARACTERS = 1000
 # The rules keep room for the rest of the hook context, which is one short sentence.
 RULE_CHARACTERS = 2000
 # The prompt text read for the keywords of a rule.
@@ -602,6 +604,14 @@ def capture(memory, event, host='codex'):
             archived = ''
         if archived:
             started += ' ' + archived
+        from . import coverage
+        try:
+            # What a Stop hook would once have blocked the turn for reaches the agent here, once.
+            notices = coverage.deliver(memory, session, room=min(NOTICE_CHARACTERS, HOOK_CHARACTERS - len(started) - 1))
+        except (OSError, ValueError, InvalidRecord, Conflict, sqlite3.Error):
+            notices = ''
+        if notices:
+            started += ' ' + notices
         from . import sessions
         try:
             work = sessions.work_to_continue(memory, room=HOOK_CHARACTERS - len(started) - 1)

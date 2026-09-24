@@ -1276,17 +1276,14 @@ def hook(memory, event, host):
                            'Name them to the user in the chat when you report the work. ')
         reason += (f'Read memory_get next with id {ep} for current completion blockers. '
                    'A missing, failed or stale check cannot establish completion. Do not repeat completed implementation work.')
-        prompt = memory.db.execute("SELECT id FROM host_receipts WHERE session_id=? AND event_name='UserPromptSubmit' ORDER BY rowid DESC LIMIT 1", (session,)).fetchone()
-        coverage_blocked = prompt and memory.db.execute("SELECT 1 FROM host_receipts WHERE session_id=? AND event_name='CoverageBlockIssued' AND json_extract(payload,'$.prompt_id')=?", (session,prompt[0])).fetchone()
-        if name=='Stop' and run['state']!='pass' and not event.get('stop_hook_active') and not coverage_blocked:
-            # One notice per result: a new turn does not repeat it, and a changed state of the run reports it again.
-            key='review-block:'+session+':'+run['id']+':'+run['state']
-            if not memory.db.execute("SELECT 1 FROM host_receipts WHERE id=?",('host_'+hashlib.sha256(key.encode()).hexdigest()[:32],)).fetchone():
-                with memory._write():
-                    codex_host.receipt(memory,session_id=session,event_name='ReviewBlockIssued',episode_id=ep,payload={'run_id':run['id']},key=key)
-                return {'decision':'block','reason':reason}
-        # Stop additionalContext also continues Claude's turn. Report progress through the workspace after one intervention.
-        if name=='Stop':return {}
+        if name=='Stop':
+            # A Stop hook never blocks the turn, and its additionalContext would also continue the turn. One notice per
+            # result waits for the next session start: a new turn does not repeat it, and a changed state reports it again.
+            if run['state']!='pass':
+                from .coverage import defer
+                defer(memory, session, 'check', 'review-block:'+session+':'+run['id']+':'+run['state'], reason,
+                      {'run_id':run['id'], 'episode_id':ep})
+            return {}
         return {'hookSpecificOutput':{'hookEventName':name,'additionalContext':reason}}
     except (InvalidRecord, Conflict, OSError, subprocess.SubprocessError) as exc:
         return {'hookSpecificOutput':{'hookEventName':name,'additionalContext':'Agent check remains unresolved: '+str(exc)}}

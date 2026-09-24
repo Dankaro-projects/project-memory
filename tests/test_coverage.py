@@ -56,9 +56,26 @@ class CoverageTests(unittest.TestCase):
         stop=self.event('Stop',last_assistant_message='Finished. All tests pass.')
         self.capture('Stop',last_assistant_message='Finished. All tests pass.')
         self.assertEqual(self.issues(),{'intent_unassessed','activity_unassigned'})
-        self.assertEqual(hook(self.m,stop)['decision'],'block')
-        for _ in range(5):self.assertEqual(hook(self.m,stop),{})
+        # A Stop hook never blocks; the notice waits for the next session start, once per user prompt.
+        for _ in range(6):self.assertEqual(hook(self.m,stop),{})
+        self.assertEqual(self.m.db.execute("SELECT count(*) FROM host_receipts WHERE event_name='NoticeDeferred'").fetchone()[0],1)
         self.assertTrue(self.issues());self.assertEqual(self.m.db.execute('SELECT count(*) FROM events').fetchone()[0],0)
+    def test_a_missing_record_is_reported_once_at_the_next_session_start(self):
+        self.prompt();self.tool()
+        self.assertEqual(hook(self.m,self.event('Stop')),{})
+        start=codex_host.capture(self.m,{'hook_event_name':'SessionStart','session_id':'s2','source':'startup'})
+        context=start['hookSpecificOutput']['additionalContext']
+        self.assertIn('Notices from earlier turns:',context);self.assertIn('session s,',context)
+        self.assertIn('memory_get coverage with session_id s.',context)
+        self.assertLessEqual(len(context),codex_host.HOOK_CHARACTERS)
+        again=codex_host.capture(self.m,{'hook_event_name':'SessionStart','session_id':'s3','source':'startup'})
+        self.assertNotIn('Notices from earlier turns:',again['hookSpecificOutput']['additionalContext'])
+    def test_a_resumed_session_receives_its_notice_once(self):
+        self.prompt();self.tool();hook(self.m,self.event('Stop'))
+        resume=self.event('SessionStart',source='resume')
+        context=codex_host.capture(self.m,resume)['hookSpecificOutput']['additionalContext']
+        self.assertEqual(context.count('needs assessment'),1)
+        self.assertEqual(hook(self.m,resume),{})
     def test_informational_lookup_closes_without_creating_work(self):
         p=self.prompt('What does this file say?');self.tool();self.checkpoint(p)
         self.assertFalse(self.issues());self.assertEqual(hook(self.m,self.event('Stop')),{})

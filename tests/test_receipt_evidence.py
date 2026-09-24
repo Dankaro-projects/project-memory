@@ -130,6 +130,11 @@ class CheckTests(ReceiptEvidenceFixture):
                                            'acceptance': ['The user approves the release notes wording.']}}, 'plan')
         self.ep = self.work['episode_id']
 
+    def notices(self):
+        """The reasons of the Stop notices deferred to the next session start, oldest first."""
+        return [json.loads(row[0])['reason'] for row in self.m.db.execute(
+            "SELECT payload FROM host_receipts WHERE event_name='NoticeDeferred' ORDER BY rowid")]
+
     def complete(self, evidence):
         d = self.m.record(self.ep, 'decision', {'decision': 'Publish.', 'why': 'Asked.', 'expected': 'A release.',
                                                 'reconsider_when': 'It fails.', 'alternatives': ['Wait.'], 'uncertainty': 'None.'},
@@ -209,17 +214,18 @@ class CheckTests(ReceiptEvidenceFixture):
         d = self.complete([{'source_id': self.m.source('r', 'Run', 'Run.', 'Run passed.', 'tool', subject='code')['id'], 'reason': 'Run.'}])
         codex_host.bind(self.m, SESSION, d['id'], 'bind')
         with patch.object(reviews, 'launch'):
-            first = reviews.hook(self.m, {'hook_event_name': 'Stop', 'session_id': SESSION, 'turn_id': 'turn-1'}, 'claude')
-            self.assertEqual(first['decision'], 'block')
+            self.assertEqual(reviews.hook(self.m, {'hook_event_name': 'Stop', 'session_id': SESSION, 'turn_id': 'turn-1'}, 'claude'), {})
+            self.assertEqual(len(self.notices()), 1)
             self.assertEqual(reviews.hook(self.m, {'hook_event_name': 'Stop', 'session_id': SESSION, 'turn_id': 'turn-2'}, 'claude'), {})
+            self.assertEqual(len(self.notices()), 1)
             run = self.m.db.execute('SELECT id FROM review_runs').fetchone()[0]
             report = {'verdict': 'uncertain', 'summary': 'Fixture.', 'findings': [], 'lesson_proposals': [],
                       'checks': [{'criterion': 'C001', 'evidence': 'Fixture.', 'result': 'unknown'}]}
             with self.m._write():
                 self.m.db.execute("UPDATE review_runs SET state='uncertain',report=? WHERE id=?", (json.dumps(report), run))
-            changed = reviews.hook(self.m, {'hook_event_name': 'Stop', 'session_id': SESSION, 'turn_id': 'turn-3'}, 'claude')
-            self.assertEqual(changed['decision'], 'block')
-            self.assertIn('uncertain', changed['reason'])
+            self.assertEqual(reviews.hook(self.m, {'hook_event_name': 'Stop', 'session_id': SESSION, 'turn_id': 'turn-3'}, 'claude'), {})
+            self.assertEqual(len(self.notices()), 2)
+            self.assertIn('uncertain', self.notices()[-1])
             self.assertEqual(reviews.hook(self.m, {'hook_event_name': 'Stop', 'session_id': SESSION, 'turn_id': 'turn-4'}, 'claude'), {})
             self.assertEqual(reviews.hook(self.m, {'hook_event_name': 'Stop', 'session_id': SESSION}, 'claude'), {})
 
@@ -228,20 +234,22 @@ class CheckTests(ReceiptEvidenceFixture):
         codex_host.bind(self.m, SESSION, d['id'], 'bind')
         with patch.object(reviews, 'launch'):
             self.finished({'C001': 'met', 'C002': 'needs_user'})
-            notice = reviews.hook(self.m, {'hook_event_name': 'Stop', 'session_id': SESSION, 'turn_id': 'turn-1'}, 'claude')
-        self.assertIn('C002', notice['reason'])
-        self.assertIn('in the chat', notice['reason'])
-        self.assertNotIn('control panel', notice['reason'])
+            reviews.hook(self.m, {'hook_event_name': 'Stop', 'session_id': SESSION, 'turn_id': 'turn-1'}, 'claude')
+        [notice] = self.notices()
+        self.assertIn('C002', notice)
+        self.assertIn('in the chat', notice)
+        self.assertNotIn('control panel', notice)
 
     def test_the_stop_notice_sends_unknown_criteria_back_to_the_agent(self):
         d = self.complete([{'source_id': self.m.source('r', 'Run', 'Run.', 'Run passed.', 'tool', subject='code')['id'], 'reason': 'Run.'}])
         codex_host.bind(self.m, SESSION, d['id'], 'bind')
         with patch.object(reviews, 'launch'):
             self.finished({'C001': 'met', 'C002': 'unknown'})
-            notice = reviews.hook(self.m, {'hook_event_name': 'Stop', 'session_id': SESSION, 'turn_id': 'turn-1'}, 'claude')
-        self.assertIn('C002', notice['reason'])
-        self.assertIn('memory_write evidence', notice['reason'])
-        self.assertNotIn('the user', notice['reason'])
+            reviews.hook(self.m, {'hook_event_name': 'Stop', 'session_id': SESSION, 'turn_id': 'turn-1'}, 'claude')
+        [notice] = self.notices()
+        self.assertIn('C002', notice)
+        self.assertIn('memory_write evidence', notice)
+        self.assertNotIn('the user', notice)
 
 
 class ResumeTests(Fixture):

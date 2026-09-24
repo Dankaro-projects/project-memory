@@ -185,16 +185,17 @@ class WorkspaceTests(unittest.TestCase):
             (self.root/'parser.py').write_text('The implementation changes without a memory write.')
             self.assertNotEqual(server.revision(),before)
             self.assertEqual(card(server.memory,self.work['episode_id'])['state'],'review')
-    def test_stop_blocks_once_even_when_the_host_omits_its_block_flag(self):
+    def test_stop_never_blocks_and_defers_one_notice_per_result(self):
         from unittest.mock import patch
         reviews.configure(self.m,self.root,'codex');decision,_=self.completed()
         codex_host.bind(self.m,'host',decision['id'],'bind-test')
         event={'hook_event_name':'Stop','session_id':'host','turn_id':'turn'}
         with patch.object(reviews,'launch'):
-            self.assertEqual(reviews.hook(self.m,event,'codex')['decision'],'block')
+            self.assertEqual(reviews.hook(self.m,event,'codex'),{})
             self.assertEqual(reviews.hook(self.m,event,'codex'),{})
             self.assertEqual(reviews.hook(self.m,{**event,'stop_hook_active':True},'claude'),{})
         self.assertEqual(self.m.db.execute("SELECT count(*) FROM review_runs").fetchone()[0],1)
+        self.assertEqual(self.m.db.execute("SELECT count(*) FROM host_receipts WHERE event_name='NoticeDeferred'").fetchone()[0],1)
     def lesson(self):
         source=self.m.source('lesson-evidence','Parser result','The tagged fixture failed.','The tagged path was omitted.','tool',subject='code')
         ep=self.work['episode_id']

@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+No hook interrupts the conversation. The Stop hook blocked the end of a turn for two reasons: the session coverage found a request without an assessment or activity without a decision, or an outcome check changed state. On 24 September 2026 it blocked one session three times only to announce a queued check. A Stop hook now returns nothing. Its notice is kept, once per user prompt for coverage and once per result for a check, and the next session start of any session in the project reports it in its context, newest first, at most three notices and 1,000 characters, and then marks every waiting notice as delivered. A resumed session receives its own notice once, not a second time from the coverage hook.
+
+The evidence operation can be called. Its argument check required `data.receipt_ids` while the operation refused any data, so every call failed. `receipt_ids` is now a field of the call itself for every operation, and the argument check refuses it inside data.
+
 ## 0.6.0b12 (24 September 2026)
 
 An injected turn records without a conflict. Claude Code delivers Stop hook feedback and the report of an agent as a prompt under the identifier of the turn they follow, with a different text. The capture keyed a prompt by that identifier alone, so it refused the second text with Conflict, and each refusal became a capture gap that the next Stop hook asked the agent to assess. On 24 September 2026 one session collected five such gaps. A Claude Code prompt is now keyed by its identifier and the hash of its text, so an injected turn is its own receipt and an identical redelivery still meets its earlier receipt; Codex gives every turn its own identifier, so a changed prompt under one identifier stays a conflict there. A prompt that opens with `Stop hook feedback:` is recorded as a notification, like a task notification or an agent report, and needs no assessment.

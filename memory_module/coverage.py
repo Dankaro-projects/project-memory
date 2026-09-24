@@ -1,4 +1,6 @@
 """Mechanical omissions and explicit intent assessments over immutable host receipts."""
+import json
+
 from . import codex_host, shared
 from .core import InvalidRecord, Conflict, _text, _digest
 
@@ -10,7 +12,7 @@ MATERIAL = "coalesce(json_extract(t.payload,'$.read_only'),0)=0 AND " + shared.M
 def sessions(memory, limit=10, offset=0):
     if type(limit) is not int or not 1 <= limit <= 100 or type(offset) is not int or offset < 0:
         raise InvalidRecord('Use limit 1–100 and a nonnegative offset.')
-    rows = memory.db.execute("SELECT session_id,max(rowid) AS last FROM host_receipts WHERE event_name IN ('CaptureRecovered','CoverageBlockIssued') OR (event_name='UserPromptSubmit' AND json_extract(payload,'$.coverage_version')=1) GROUP BY session_id ORDER BY last DESC LIMIT ? OFFSET ?", (limit+1,offset)).fetchall()
+    rows = memory.db.execute("SELECT session_id,max(rowid) AS last FROM host_receipts WHERE event_name IN ('CaptureRecovered','CoverageBlockIssued') OR (event_name='NoticeDeferred' AND json_extract(payload,'$.source')='coverage') OR (event_name='UserPromptSubmit' AND json_extract(payload,'$.coverage_version')=1) GROUP BY session_id ORDER BY last DESC LIMIT ? OFFSET ?", (limit+1,offset)).fetchall()
     values = []
     for row in rows[:limit]:
         state = inspect(memory,row['session_id'],limit=1)
@@ -168,14 +170,62 @@ def hook(memory, event):
         reason += 'Assess intent with memory_write checkpoint (or data.checkpoint on a plan/record write). Record actual outcomes, including partial or blocked work. '
     reason += 'Do not repeat effects to repair records. The checkpoint result reports remaining recording issues.'
     if name == 'Stop':
-        # One intervention per user prompt, shared with agent reviews. Later stops leave gaps visible.
+        # A Stop hook never blocks the turn. One notice per user prompt waits for the next session start.
         prompt = memory.db.execute("SELECT id FROM host_receipts WHERE session_id=? AND event_name='UserPromptSubmit' ORDER BY rowid DESC LIMIT 1", (session,)).fetchone()
-        key = 'coverage-block:'+session+':'+(prompt[0] if prompt else str(event.get('turn_id','')))
-        rid = 'host_'+_digest(key)[:32]
-        if event.get('stop_hook_active') or memory.db.execute('SELECT 1 FROM host_receipts WHERE id=?', (rid,)).fetchone():
-            return {}
-        with memory._write():
-            codex_host.receipt(memory, session_id=session, event_name='CoverageBlockIssued',
-                              payload={'prompt_id':prompt[0] if prompt else None,'issues':[i['type'] for i in state['issues']]}, key=key)
-        return {'decision':'block', 'reason':reason}
+        defer(memory, session, 'coverage', 'coverage-block:'+session+':'+(prompt[0] if prompt else str(event.get('turn_id',''))), reason,
+              {'prompt_id':prompt[0] if prompt else None, 'issues':[i['type'] for i in state['issues']]})
+        return {}
+    if deferred_for(memory, session):
+        # A deferred notice of this session reaches the agent through the session start context instead.
+        return {}
     return {'hookSpecificOutput':{'hookEventName':name, 'additionalContext':reason}}
+
+
+# Notices that a Stop hook once returned as a block. They wait here and reach the agent once, in the context of the
+# next session start of any session in this project, so that no hook interrupts the conversation.
+NOTICE_LIMIT = 3
+
+
+def defer(memory, session, source, key, reason, detail=None):
+    """Keep one notice for the next session start; a repeated key keeps the first notice."""
+    rid = 'host_'+_digest(key)[:32]
+    if memory.db.execute('SELECT 1 FROM host_receipts WHERE id=?', (rid,)).fetchone():
+        return rid
+    with memory._write():
+        return codex_host.receipt(memory, session_id=session, event_name='NoticeDeferred', key=key,
+                                  payload={**(detail or {}), 'source':source, 'reason':reason})
+
+
+def deferred_for(memory, session):
+    """True when a coverage notice already covers the latest user prompt of the session."""
+    prompt = memory.db.execute("SELECT id FROM host_receipts WHERE session_id=? AND event_name='UserPromptSubmit' ORDER BY rowid DESC LIMIT 1", (session,)).fetchone()
+    return memory.db.execute("SELECT 1 FROM host_receipts WHERE session_id=? AND event_name='NoticeDeferred' "
+                             "AND json_extract(payload,'$.source')='coverage' AND json_extract(payload,'$.prompt_id') IS ?",
+                             (session, prompt[0] if prompt else None)).fetchone() is not None
+
+
+def deliver(memory, session, room):
+    """Return the notices not yet delivered, newest first, within room characters, and mark all of them delivered."""
+    rows = memory.db.execute("SELECT n.id,n.session_id,n.created_at,n.payload FROM host_receipts n WHERE n.event_name='NoticeDeferred' "
+                             "AND NOT EXISTS (SELECT 1 FROM host_receipts d WHERE d.event_name='NoticeDelivered' "
+                             "AND json_extract(d.payload,'$.notice')=n.id) ORDER BY n.rowid DESC").fetchall()
+    head = 'Notices from earlier turns:'
+    if not rows or room < len(head) + 100:
+        return ''
+    parts, used = [], len(head)
+    for row in rows[:NOTICE_LIMIT]:
+        part = f' (session {row["session_id"]}, {row["created_at"][:16]}) ' + json.loads(row['payload'])['reason']
+        if used + len(part) > room - 80:
+            part = part[:room - 80 - used].rstrip()
+            if len(part) < 60:
+                break
+        parts.append(part)
+        used += len(part)
+    if not parts:
+        return ''
+    left = len(rows) - len(parts)
+    with memory._write():
+        for row in rows:
+            codex_host.receipt(memory, session_id=session, event_name='NoticeDelivered', key='notice-delivered:'+row['id'],
+                               payload={'notice':row['id']})
+    return head + ''.join(parts) + (f' {left} older notices are left out; read memory_get coverage.' if left else '')
