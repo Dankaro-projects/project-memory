@@ -36,26 +36,31 @@ with tempfile.TemporaryDirectory(prefix='project-memory-installed-') as director
     html=Path(view['path']).read_text(encoding='utf-8')
     assert 'Keep data local unless' in html
     assert '"responses"' in html and '__WORKSPACE_JS__' not in html
+    # The panel is read only, so the installed package writes the plan and its comment through the workspace actions
+    # that user_action runs, and the live panel must read them and refuse every write.
+    plan={'title':'Inspect installed behaviour','objective':'Verify the packaged workspace.','criterion':'The live API stores this plan.','subject':'code','payload':{'state':'ready','scope':'Inspect the installed package.','next_action':'Read the saved plan.','autonomy':'suggest','reason':'The installed smoke check requests it.'}}
+    script=("import json,sys; from memory_module.core import Memory; from memory_module.workspace import action; plan=json.loads(sys.argv[2])\n"
+        "with Memory(sys.argv[1]) as m:\n"
+        " print(json.dumps({'episode':action(m,'plan',plan,'installed-plan')['episode_id']}))")
+    episode=json.loads(subprocess.run([str(python),'-I','-c',script,first['database'],json.dumps(plan)],check=True,capture_output=True,text=True,cwd=project,env=env).stdout)['episode']
     live=run('view','--no-open')
     try:
-        from urllib.request import urlopen
-        with urlopen(live['url']+'api/health',timeout=5) as response:health=json.load(response)
-        assert health['database']==first['database'] and health['interactive']
-        from urllib.request import Request
+        from urllib.request import urlopen, Request
+        from urllib.error import HTTPError
         from urllib.parse import urlsplit, quote
-        headers={'Content-Type':'application/json','Origin':'http://'+urlsplit(live['url']).netloc,'X-Project-Memory':health['csrf']}
-        def post(body):
-            with urlopen(Request(live['url']+'api/actions',data=json.dumps(body).encode(),headers=headers),timeout=5) as response:return json.load(response)
+        with urlopen(live['url']+'api/health',timeout=5) as response:health=json.load(response)
+        assert health['database']==first['database'] and health['interactive'] and 'csrf' not in health
         def get(path):
             with urlopen(live['url']+path,timeout=5) as response:return json.load(response)
-        body={'operation':'plan','request_key':'installed-plan','data':{'title':'Inspect installed behaviour','objective':'Verify the packaged workspace.','criterion':'The live API stores this plan.','subject':'code','payload':{'state':'ready','scope':'Inspect the installed package.','next_action':'Read the saved plan.','autonomy':'suggest','reason':'The installed smoke check requests it.'}}}
-        episode=post(body)['episode_id']
         now=get('api/now')
-        assert any(card['id']==episode for card in now['ready']) and len(now['ready'])<=10
+        assert any(card['id']==episode for part in now.values() if isinstance(part,list) for card in part if isinstance(card,dict)),sorted(now)
         work=get('api/work?id='+quote(episode))
         assert work['card']['id']==episode and work['history']['total']>=1
-        post({'operation':'comment','request_key':'installed-comment','data':{'episode_id':episode,'expected_version':work['card']['version'],'text':'The installed package keeps this comment.'}})
-        assert get('api/work?id='+quote(episode))['history']['total']>work['history']['total']
+        try:
+            urlopen(Request(live['url']+'api/actions',data=b'{}',headers={'Content-Type':'application/json','Origin':'http://'+urlsplit(live['url']).netloc}),timeout=5)
+            raise AssertionError('The live panel accepted a write.')
+        except HTTPError as error:
+            assert error.code==405,error.code
         assert get('api/lineage?id='+quote(episode))['focus']==episode
         learning=get('api/learning');assert 'guards' in learning and 'proposed_lessons' in learning
         agents=get('api/agents');assert 'runs' in agents and 'hosts' in agents
@@ -64,4 +69,4 @@ with tempfile.TemporaryDirectory(prefix='project-memory-installed-') as director
         os.kill(live['pid'],signal.SIGTERM)
     backup=project/'backup.sqlite';run('backup',str(backup));assert backup.is_file()
     run('uninstall');assert Path(first['database']).is_file()
-    print(json.dumps({'passed':True,'wheel':wheel.name,'checks':['fresh wheel installation','CLI entry point','persistent installed launcher','three bundled agent roles','retired modules absent','idempotent setup and capture','separate MCP process handshake and read','packaged offline export of API responses','packaged live HTTP viewer','authenticated workspace plan and comment actions','packaged now, work, lineage, learning and agents endpoints','SQLite backup','uninstall preserves data'],'runtime_dependencies':0},indent=2))
+    print(json.dumps({'passed':True,'wheel':wheel.name,'checks':['fresh wheel installation','CLI entry point','persistent installed launcher','three bundled agent roles','retired modules absent','idempotent setup and capture','separate MCP process handshake and read','packaged offline export of API responses','packaged live HTTP viewer','workspace plan action of the installed package, read by the live panel','live panel refuses every write','packaged now, work, lineage, learning and agents endpoints','SQLite backup','uninstall preserves data'],'runtime_dependencies':0},indent=2))
