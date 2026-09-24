@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.6.0b13 (24 September 2026)
 
 No hook interrupts the conversation. The Stop hook blocked the end of a turn for two reasons: the session coverage found a request without an assessment or activity without a decision, or an outcome check changed state. On 24 September 2026 it blocked one session three times only to announce a queued check. A Stop hook now returns nothing. Its notice is kept, once per user prompt for coverage and once per result for a check, and the next session start of any session in the project reports it in its context, newest first, at most three notices and 1,000 characters, and then marks every waiting notice as delivered. A resumed session receives its own notice once, not a second time from the coverage hook.
 
