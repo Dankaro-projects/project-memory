@@ -83,7 +83,7 @@ class PlanningTests(unittest.TestCase):
         self.assertEqual(card(self.m,second['episode_id'])['state'],'blocked')
     def test_unconfirmed_action_survives_unknown_reconciliation(self):
         work=self.work();decision=self.decision(work);codex_host.bind(self.m,'session',decision['id'],'bind')
-        codex_host.capture(self.m,{'hook_event_name':'PreToolUse','session_id':'session','turn_id':'turn','tool_use_id':'once','tool_name':'Bash','tool_input':{'command':'non-idempotent'}})
+        codex_host.capture(self.m,{'hook_event_name':'PreToolUse','session_id':'session','turn_id':'turn','tool_use_id':'once','tool_name':'Bash','tool_input':{'command':'git push origin main'}})
         marker=self.root/'marker';marker.write_text('once\n')
         pending=codex_host.status(self.m,'session')['unconfirmed'][0]
         codex_host.reconcile(self.m,pending['id'],'unknown','The marker exists; process completion remains unknown.',self.evidence,'reconcile')

@@ -117,6 +117,55 @@ def read_only(tool, tool_input):
     return True
 
 
+# Commands that act outside the repository: they push, publish or talk to another service. A call of this kind that
+# reports no result needs reconciliation; a local call can be inspected in the repository instead.
+NETWORK_COMMANDS = {'curl', 'wget', 'ssh', 'scp', 'rsync', 'sftp', 'ftp', 'gh', 'glab', 'aws', 'gcloud', 'az', 'kubectl', 'helm',
+                    'heroku', 'vercel', 'netlify', 'fly', 'flyctl', 'supabase', 'twine', 'terraform', 'psql', 'mysql', 'redis-cli'}
+PUBLISH_COMMANDS = {'npm', 'pnpm', 'yarn', 'uv', 'poetry', 'cargo', 'docker', 'podman', 'gem', 'dotnet'}
+REMOTE_GIT = {'push', 'send-email'}
+# An MCP tool whose last name part starts with one of these only reads.
+READING_MCP = re.compile(r'(get|list|search|read|query_|find|describe|lookup|fetch|resolve|show|explore|view|browse|preview|status|stats)', re.I)
+
+
+def external_effect(tool, tool_input):
+    """True when a tool call may act outside the repository, so a missing result cannot be checked in the project."""
+    if tool.startswith('mcp__'):
+        if MEMORY_TOOL.match(tool):
+            return False
+        return not READING_MCP.match(tool.rsplit('__', 1)[-1])
+    if tool not in SHELL_TOOLS:
+        return False
+    command = shell_command(tool_input)
+    if not command:
+        return False
+    try:
+        lexer = shlex.shlex(command.replace('\n', ' ; '), posix=True, punctuation_chars=True)
+        lexer.whitespace_split = True
+        tokens = list(lexer)
+    except ValueError:
+        return True
+    segments, words = [], []
+    for token in tokens:
+        if token and set(token) <= set('();<>|&'):
+            segments.append(words)
+            words = []
+        else:
+            words.append(token)
+    segments.append(words)
+    for words in filter(None, segments):
+        name, options = words[0].rsplit('/', 1)[-1], words[1:]
+        if name in NETWORK_COMMANDS:
+            return True
+        if name == 'git':
+            if options[:1] == ['-C']:
+                options = options[2:]
+            if options[:1] and options[0] in REMOTE_GIT:
+                return True
+        if name in PUBLISH_COMMANDS and any(word in {'publish', 'push', 'upload', 'release', 'deploy'} for word in options):
+            return True
+    return False
+
+
 def initialize(memory):
     memory.db.executescript(HOST_SCHEMA)
 
@@ -487,6 +536,7 @@ def capture(memory, event, host='codex'):
         if name=='Stop':payload['stop_hook_active']=bool(event.get('stop_hook_active'))
         if name == 'PostToolUse' and host_event == 'PostToolUseFailure': payload['failed'] = True
         if name == 'PreToolUse' and read_only(tool, event.get('tool_input')): payload['read_only'] = True
+        if name == 'PreToolUse' and not external_effect(tool, event.get('tool_input')): payload['local'] = True
         if name == 'PreToolUse' and not decision:
             # Without a bound decision, for example after a partial outcome, the call belongs to the work the session
             # claimed. It is named in the payload only: the episode_id column selects the receipts of a check snapshot.
@@ -620,7 +670,7 @@ def status(memory, session_id=None, limit=10, offset=0, main_only=False):
         raise InvalidRecord('Use limit 1–100 and a nonnegative offset.')
     clause = (' AND p.session_id=?' if session_id else '') + (' AND ' + shared.MAIN_THREAD if main_only else '')
     args = [session_id] if session_id else []
-    base = '''FROM host_receipts p WHERE p.event_name='PreToolUse'
+    base = '''FROM host_receipts p WHERE p.event_name='PreToolUse' AND '''+shared.OUTSIDE+'''
       AND NOT EXISTS (SELECT 1 FROM host_receipts r WHERE r.session_id=p.session_id AND r.tool_use_id=p.tool_use_id AND r.event_name='PostToolUse' AND coalesce(json_extract(r.payload,'$.host'),'codex')=coalesce(json_extract(p.payload,'$.host'),'codex'))
       AND NOT EXISTS (SELECT 1 FROM host_receipts r WHERE r.event_name='Reconciled'
          AND json_extract(r.payload,'$.receipt_id')=p.id AND json_extract(r.payload,'$.resolution')!='unknown')''' + clause

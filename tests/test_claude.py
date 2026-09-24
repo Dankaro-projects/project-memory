@@ -43,7 +43,7 @@ class ClaudeCaptureTests(unittest.TestCase):
         with self.assertRaises(InvalidRecord):self.capture('Notification')
         with self.assertRaises(InvalidRecord):codex_host.capture(self.m,self.event('SessionStart'),host='cursor')
     def test_post_tool_use_failure_closes_the_unconfirmed_receipt_and_keeps_the_failure(self):
-        d=self.decision();self.capture('PreToolUse')
+        d=self.decision();self.capture('PreToolUse',tool_input={'command':'git push origin main'})
         self.assertEqual(codex_host.status(self.m)['unconfirmed_total'],1)
         self.capture('PostToolUseFailure',error='Command failed: secret token')
         state=codex_host.status(self.m)
@@ -53,7 +53,7 @@ class ClaudeCaptureTests(unittest.TestCase):
         self.assertEqual(recent['payload']['host_event'],'PostToolUseFailure');self.assertTrue(recent['payload']['failed'])
         self.assertEqual(recent['payload']['host'],'claude');self.assertNotIn('secret',dumps(recent))
     def test_session_start_after_compaction_restores_facts_without_record_text(self):
-        d=self.decision();self.capture('PreToolUse')
+        d=self.decision();self.capture('PreToolUse',tool_input={'command':'git push origin main'})
         result=self.capture('SessionStart',source='compact')
         context=result['hookSpecificOutput']['additionalContext']
         self.assertEqual(result['hookSpecificOutput']['hookEventName'],'SessionStart')
@@ -71,7 +71,7 @@ class ClaudeCaptureTests(unittest.TestCase):
         d=self.decision()
         context=self.capture('UserPromptSubmit',prompt='next step')['hookSpecificOutput']['additionalContext']
         self.assertIn(d['id'],context);self.assertNotIn('compacted',context)
-        self.capture('PreToolUse')
+        self.capture('PreToolUse',tool_input={'command':'git push origin main'})
         self.assertIn('1 tool calls need reconciliation',self.capture('UserPromptSubmit',prompt='again')['hookSpecificOutput']['additionalContext'])
         explicit=self.capture('UserPromptSubmit',prompt='[memory:code] parser encoding')['hookSpecificOutput']['additionalContext']
         self.assertIn('Explicit code context',explicit)

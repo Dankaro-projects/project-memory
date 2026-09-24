@@ -34,7 +34,7 @@ class CodexTests(unittest.TestCase):
         self.assertNotIn('secret',dumps(records));self.assertEqual(records[0]['payload']['tool_response']['exit_code'],1)
         self.assertEqual(codex_host.status(self.m)['unconfirmed_total'],0)
     def test_interrupted_action_is_not_repeated_and_reconciles_with_evidence(self):
-        d=self.decision();event=self.event('PreToolUse')
+        d=self.decision();event=self.event('PreToolUse',tool_input={'command':'git push origin main'})
         codex_host.capture(self.m,event);codex_host.capture(self.m,event)
         self.assertEqual(self.m.db.execute("SELECT count(*) FROM events WHERE kind='action'").fetchone()[0],1)
         codex_host.capture(self.m,self.event('Interrupt'))

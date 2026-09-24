@@ -380,35 +380,39 @@ class ReconcileTests(Fixture):
 
     SESSION = 'claude-session-17-11'
 
-    def pre(self, tool, identifier, session=None):
+    def pre(self, tool, identifier, session=None, tool_input=None):
         return codex_host.capture(self.m, {'hook_event_name': 'PreToolUse', 'session_id': session or self.SESSION, 'tool_name': tool,
-                                           'tool_use_id': identifier, 'tool_input': {'x': 1}, 'cwd': str(self.root)}, host='claude')
+                                           'tool_use_id': identifier, 'tool_input': tool_input or {'x': 1}, 'cwd': str(self.root)}, host='claude')
 
     def fixture(self):
+        # Only calls with an effect outside the repository need reconciliation. The read only calls are MCP tools that
+        # the name rule treats as external; the failed call pushes; the call without a transcript updates a remote page.
         at = '2026-09-13T10:00:0{}Z'
         self.transcript(self.SESSION, [
-            claude_line('assistant', [{'type': 'tool_use', 'id': 'toolu_read_ok', 'name': 'Read', 'input': {'file_path': 'a'}}], at.format(1), session=self.SESSION),
-            claude_line('user', [{'type': 'tool_result', 'tool_use_id': 'toolu_read_ok', 'content': 'file text ' + SECRET}], at.format(2), session=self.SESSION),
-            claude_line('assistant', [{'type': 'tool_use', 'id': 'toolu_bash_bad', 'name': 'Bash', 'input': {'command': 'make'}}], at.format(3), session=self.SESSION),
+            claude_line('assistant', [{'type': 'tool_use', 'id': 'toolu_fetch_ok', 'name': 'mcp__web__WebFetch', 'input': {'url': 'a'}}], at.format(1), session=self.SESSION),
+            claude_line('user', [{'type': 'tool_result', 'tool_use_id': 'toolu_fetch_ok', 'content': 'file text ' + SECRET}], at.format(2), session=self.SESSION),
+            claude_line('assistant', [{'type': 'tool_use', 'id': 'toolu_bash_bad', 'name': 'Bash', 'input': {'command': 'git push origin main'}}], at.format(3), session=self.SESSION),
             claude_line('user', [{'type': 'tool_result', 'tool_use_id': 'toolu_bash_bad', 'is_error': True, 'content': 'Exit code 2'}], at.format(4), session=self.SESSION),
-            claude_line('assistant', [{'type': 'tool_use', 'id': 'toolu_read_lost', 'name': 'Read', 'input': {'file_path': 'b'}}], at.format(5), session=self.SESSION)])
+            claude_line('assistant', [{'type': 'tool_use', 'id': 'toolu_fetch_lost', 'name': 'mcp__web__WebFetch', 'input': {'url': 'b'}}], at.format(5), session=self.SESSION)])
         folder = self.codex / '2026' / '09' / '13'
         self.transcript('rollout-2026-09-13-02a0bbbb-0000-7000-8000-000000000001', [
             json.dumps({'type': 'event_msg', 'payload': {'type': 'item_completed', 'item': {'type': 'McpToolCall', 'id': 'exec-codex-get-1', 'tool': 'memory_get',
                         'readOnlyHint': 'True', 'status': 'failed', 'result': {'content': [{'type': 'text', 'text': 'Event was not found.'}], 'isError': True}}}})], folder=folder)
-        for tool, identifier in (('Read', 'toolu_read_ok'), ('Bash', 'toolu_bash_bad'), ('Read', 'toolu_read_lost'), ('Edit', 'toolu_edit_gone')):
-            self.pre(tool, identifier)
+        push = {'command': 'git push origin main'}
+        for tool, identifier, tool_input in (('mcp__web__WebFetch', 'toolu_fetch_ok', None), ('Bash', 'toolu_bash_bad', push),
+                                             ('mcp__web__WebFetch', 'toolu_fetch_lost', None), ('mcp__notion__update_page', 'toolu_update_gone', None)):
+            self.pre(tool, identifier, tool_input=tool_input)
         self.pre('mcp__cua_repl__js', 'exec-codex-get-1', session='02a0bbbb-0000-7000-8000-000000000001')
 
     def test_each_call_carries_the_suggestion_of_its_transcript(self):
         self.fixture()
         listed = {item['tool_use_id'] if 'tool_use_id' in item else codex_host.read_receipt(self.m, item['id'])['tool_use_id']: item
                   for item in sessions.unconfirmed(self.m, found=self.found)['items']}
-        self.assertEqual(listed['toolu_read_ok']['transcript']['suggested'], 'completed')
-        self.assertNotIn(SECRET, listed['toolu_read_ok']['transcript']['excerpt'])
+        self.assertEqual(listed['toolu_fetch_ok']['transcript']['suggested'], 'completed')
+        self.assertNotIn(SECRET, listed['toolu_fetch_ok']['transcript']['excerpt'])
         self.assertEqual(listed['toolu_bash_bad']['transcript']['suggested'], 'failed')
-        self.assertEqual(listed['toolu_read_lost']['transcript']['result'], 'no_result')
-        self.assertFalse(listed['toolu_edit_gone']['transcript']['found'])
+        self.assertEqual(listed['toolu_fetch_lost']['transcript']['result'], 'no_result')
+        self.assertFalse(listed['toolu_update_gone']['transcript']['found'])
         codex = listed['exec-codex-get-1']
         self.assertEqual((codex['transcript']['suggested'], codex['read_only']), ('failed', True))
 
@@ -417,22 +421,22 @@ class ReconcileTests(Fixture):
         result = sessions.reconcile_read_only(self.m, 'Read-only calls change nothing.', 'bulk-1', found=self.found)
         self.assertEqual(result['reconciled'], 2)
         left = {codex_host.read_receipt(self.m, item['id'])['tool_use_id'] for item in sessions.unconfirmed(self.m, found=self.found)['items']}
-        self.assertEqual(left, {'toolu_bash_bad', 'toolu_read_lost', 'toolu_edit_gone'})
+        self.assertEqual(left, {'toolu_bash_bad', 'toolu_fetch_lost', 'toolu_update_gone'})
 
     def test_a_single_reconciliation_clears_the_block_of_its_work_item(self):
         self.fixture()
         from memory_module import planning
         episode = self.m.start('Build', 'Build it.', 'code', 'Built.', subject='code')
-        [item] = [i for i in sessions.unconfirmed(self.m, found=self.found)['items'] if codex_host.read_receipt(self.m, i['id'])['tool_use_id'] == 'toolu_edit_gone']
+        [item] = [i for i in sessions.unconfirmed(self.m, found=self.found)['items'] if codex_host.read_receipt(self.m, i['id'])['tool_use_id'] == 'toolu_update_gone']
         with patch.object(sessions, 'folders', lambda: self.found):
-            result = workspace.action(self.m, 'reconcile', {'receipt_id': item['id'], 'resolution': 'not_run', 'reason': 'The file shows no edit.'}, 'panel-reconcile-1')
+            result = workspace.action(self.m, 'reconcile', {'receipt_id': item['id'], 'resolution': 'not_run', 'reason': 'The page shows no update.'}, 'panel-reconcile-1')
         source = self.m.read(result['evidence'][0]['source_id'])
         self.assertEqual(source['origin'], 'user')
         remaining = {codex_host.read_receipt(self.m, i['id'])['tool_use_id'] for i in sessions.unconfirmed(self.m, found=self.found)['items']}
-        self.assertNotIn('toolu_edit_gone', remaining)
+        self.assertNotIn('toolu_update_gone', remaining)
         with patch.object(sessions, 'folders', lambda: self.found):
             bad = [i for i in sessions.unconfirmed(self.m, found=self.found)['items'] if codex_host.read_receipt(self.m, i['id'])['tool_use_id'] == 'toolu_bash_bad'][0]
-            done = workspace.action(self.m, 'reconcile', {'receipt_id': bad['id'], 'resolution': 'failed', 'reason': 'make failed.'}, 'panel-reconcile-2')
+            done = workspace.action(self.m, 'reconcile', {'receipt_id': bad['id'], 'resolution': 'failed', 'reason': 'The push failed.'}, 'panel-reconcile-2')
         self.assertEqual(self.m.read(done['evidence'][0]['source_id'])['origin'], 'tool')
 
     def test_project_memory_tools_are_not_captured(self):

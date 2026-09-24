@@ -128,6 +128,31 @@ def assess(memory, *, session_id, request_key, prompt_ids, effect, reason, episo
     return {'id':rid,'status':state['status'],'remaining_issues':[item['type'] for item in state['issues']]}
 
 
+def implicit(memory, session_id, episode_id, request_key):
+    """Assess every open prompt and capture gap of a session because a record was written in it.
+
+    An explicit checkpoint states conditions and exceptions; this one only notes that the turn left a record.
+    """
+    prompts = [row[0] for row in memory.db.execute("""SELECT p.id FROM host_receipts p WHERE p.session_id=? AND p.event_name='UserPromptSubmit'
+      AND json_extract(p.payload,'$.coverage_version')=1
+      AND NOT EXISTS (SELECT 1 FROM host_receipts a, json_each(a.payload,'$.prompt_ids') j
+        WHERE a.session_id=p.session_id AND a.event_name='IntentAssessed' AND j.value=p.id) ORDER BY p.rowid""", (session_id,))]
+    gaps = [row[0] for row in memory.db.execute("""SELECT id FROM host_receipts WHERE session_id=? AND event_name='CaptureRecovered'
+      AND rowid>coalesce((SELECT max(rowid) FROM host_receipts WHERE session_id=? AND event_name='IntentAssessed'),0) ORDER BY rowid""",
+                                                (session_id, session_id))]
+    unbound = memory.db.execute("SELECT count(*) FROM host_receipts t WHERE session_id=? AND event_name='PreToolUse' AND "+MATERIAL+
+                                " AND rowid>coalesce((SELECT max(rowid) FROM host_receipts WHERE session_id=? AND event_name='IntentAssessed'),0)",
+                                (session_id, session_id)).fetchone()[0]
+    if not prompts and not gaps and not unbound:
+        return None
+    from .planning import latest
+    plan = latest(memory, episode_id, 'work_plan') if episode_id else None
+    payload = {'prompt_ids': prompts, 'effect': 'implicit', 'reason': 'A record was written in this turn.', 'requirements': [],
+               'plan_id': plan['id'] if plan else None, 'gap_ids': gaps}
+    return codex_host.receipt(memory, session_id=session_id, event_name='IntentAssessed', episode_id=episode_id,
+                              payload=payload, key=request_key + ':implicit')
+
+
 def hook(memory, event):
     name = event['hook_event_name']; session = event['session_id']
     if name not in {'Stop','SessionStart','PostCompact'}:

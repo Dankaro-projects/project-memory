@@ -28,6 +28,10 @@ from .hive import BASIS_KINDS, CONFIDENCE, MOVES as HIVE_MOVES, QUERY_LIMIT, SWA
 S = {'type': 'string'}
 SUBJECTS = ['code', 'writing', 'research', 'general']
 STATES = ['backlog', 'ready', 'in_progress', 'blocked', 'review', 'done', 'cancelled']
+# A log entry records a decision, its action and its outcome at once. Omitted optional fields are recorded as not stated.
+LOG_REQUIRED = ('decision', 'why', 'action', 'observed', 'assessment', 'completion')
+LOG_DEFAULTS = {'expected': 'Not stated for this entry.', 'reconsider_when': 'The recorded result proves wrong.',
+                'uncertainty': 'None stated.', 'alternatives': [], 'assessment_reason': None, 'severity': None, 'attribution': None}
 PROTOCOL_VERSIONS = {'2024-11-05', '2025-03-26', '2025-06-18', '2025-11-25'}
 DEFAULT_BUDGET = 6000
 
@@ -267,6 +271,12 @@ OPERATION_SCHEMAS = {
     'progress': {'operation': 'progress', 'required': ['episode_id', 'expected_version', 'payload', 'actor'], 'payload': {'state': 'Optional work state.', 'next_action': 'Optional complete sentence.', 'reason': 'Required explanation.'}, 'rules': 'Provide state or next_action. This preserves scope, autonomy, dependencies and evidence. Pass session_id when claiming agent work. Use plan for intentional scope changes; progress cannot waive completion checks. When Done is rejected only because the required outcome check is missing, the rejection starts that check and reports it under agent_check.'},
     'reconcile': {'operation': 'reconcile', 'required': ['receipt_id', 'resolution', 'reason', 'evidence'], 'resolutions': ['completed', 'failed', 'not_run', 'unknown'], 'evidence': 'Every resolution needs [{source_id, reason}] from inspecting actual effects. Record a source first. Unknown preserves uncertainty; it does not establish success or permit a retry.'},
     'evidence': {'operation': 'evidence', 'required': ['receipt_ids'], 'rules': 'Pass 1 to 20 PostToolUse receipt IDs in the top level receipt_ids and an empty data object. Project Memory reads the output of each call from its session transcript and stores it only when its sha256 matches the receipt; a mismatch or a missing transcript entry refuses the whole request and stores nothing. Cite the returned [{source_id, reason}] as evidence on an outcome, so that a check can confirm a run, an artefact or an installed version. Calls without a PostToolUse receipt, such as calls the hooks did not observe, cannot be verified.'},
+    'log': {'operation': 'log', 'required': ['episode_id', 'expected_version', 'actor', 'evidence', 'payload'],
+            'payload_required': list(LOG_REQUIRED), 'payload_optional': sorted(LOG_DEFAULTS) + ['lessons_considered', 'failure_type'],
+            'rules': 'One entry for one piece of work: it records the decision, its action and its outcome in one step, as the '
+                     'decision, action and outcome kinds. assessment is good, bad, unknown or pending; completion is complete, partial, '
+                     'blocked or abandoned. A current decision of the work item is replaced by the new one. Omitted optional fields '
+                     'are recorded as not stated. Use record for a decision that is not yet carried out.'},
     'checkpoint': {'operation': 'checkpoint', 'required': ['prompt_ids', 'effect', 'reason'], 'optional': ['episode_id', 'plan_id', 'requirements', 'gap_ids'], 'effects': ['new_work', 'changed', 'unchanged', 'informational', 'deferred'], 'rules': 'Pass session_id. prompt_ids contains 1–20 observed user prompt receipt IDs including the newest prompt. Work assessments require episode_id and the current plan_id. New or changed work requires requirements: a list of complete conditions and exceptions. Changed intent requires a revised plan. Informational or deferred turns require a reason but no new episode. A checkpoint declares interpretation; it never establishes success, approves source instructions or reconciles uncertain effects.', 'bundling': 'Place these fields in data.checkpoint on a plan or record write; episode_id is inferred from that record. Both writes commit atomically.'},
     'agent_check': {'operation': 'review', 'required': ['episode_id'], 'optional': {'role': ['outcome', 'intent', 'recovery'], 'max_seconds': '30 to 900; default 300. A longer explicit review preserves the same criteria.', 'retry': 'Use true only to request a new check after inspecting the earlier result.'}, 'result': 'A read-only agent checks the current work. Read memory_get reviews and wait using project-memory review --wait CHECK_ID.'},
     'delegate': {'operation': 'delegate', 'required': ['episode_id'], 'optional': {'host': ['codex', 'claude'], 'max_seconds': '60 to 14400; default 1800.'}, 'rules': 'Pass session_id. The work item needs a current plan that is not done or cancelled, autonomy act granted by the user, and paths that limit which files may change. The project must be a git repository without uncommitted changes inside those paths. The worker runs in a separate worktree, and another host reviews its changes. Read memory_get agents with the work item id to follow the run.'},
@@ -708,20 +718,55 @@ def write_work_review(call, memory, request_key, data, session_id, receipt_ids):
     return queued_run(memory, call(memory, data.pop('run_id'), request_key=request_key, **data))
 
 
+def write_log(call, memory, request_key, data, session_id, receipt_ids):
+    """Record a decision, its action and its outcome from one entry."""
+    payload = data.get('payload')
+    if not isinstance(payload, dict):
+        raise InvalidRecord('payload must be an object.')
+    allowed = set(LOG_REQUIRED) | set(LOG_DEFAULTS) | {'lessons_considered', 'failure_type'}
+    missing = [key for key in LOG_REQUIRED if key not in payload]
+    if missing or set(payload) - allowed:
+        raise InvalidRecord(f'A log entry requires {list(LOG_REQUIRED)}; optional: {sorted(allowed - set(LOG_REQUIRED))}.')
+    for key in ('episode_id', 'expected_version', 'actor', 'evidence'):
+        if key not in data:
+            raise InvalidRecord('A log entry requires episode_id, expected_version, actor and evidence.')
+    evidence = list(data['evidence']) + (codex_host.evidence_for(memory, receipt_ids) if receipt_ids else [])
+    entry = {**{k: v for k, v in LOG_DEFAULTS.items() if v is not None}, **payload}
+    decision = {k: entry[k] for k in ('decision', 'why', 'expected', 'reconsider_when', 'uncertainty', 'alternatives', 'lessons_considered') if k in entry}
+    outcome = {'observed': entry['observed'], 'assessment': entry['assessment'], 'completion': entry['completion'],
+               'assessment_reason': entry.get('assessment_reason') or entry['observed'],
+               'severity': entry.get('severity') or ('none' if entry['assessment'] == 'good' else 'unknown'),
+               'attribution': entry.get('attribution') or entry['action']}
+    if 'failure_type' in entry:
+        outcome['failure_type'] = entry['failure_type']
+    episode_id, actor = data['episode_id'], data['actor']
+    current = memory.db.execute("SELECT d.id FROM events d WHERE d.episode_id=? AND d.kind='decision' "
+                                "AND NOT EXISTS (SELECT 1 FROM events n WHERE n.supersedes=d.id) ORDER BY d.seq DESC LIMIT 1",
+                                (episode_id,)).fetchone()
+    first = memory.record(episode_id, 'decision', decision, expected_version=data['expected_version'], actor=actor,
+                          evidence=evidence, request_key=request_key + ':decision', supersedes=current[0] if current else None)
+    second = memory.record(episode_id, 'action', {'action': entry['action']}, expected_version=first['version'], actor=actor,
+                           request_key=request_key + ':action', decision_id=first['id'])
+    third = memory.record(episode_id, 'outcome', outcome, expected_version=second['version'], actor=actor, evidence=evidence,
+                          request_key=request_key + ':outcome', decision_id=first['id'])
+    return {'id': third['id'], 'decision_id': first['id'], 'action_id': second['id'], 'version': third['version'], 'episode_id': episode_id}
+
+
 OPERATIONS = {
     'focus_propose': ('Propose a focused problem and distinct hypotheses.', Operation('focus:propose'), 'focus_propose'),
     'start': ('Open an episode (title, objective, task_type, criterion, subject).', Operation('core:Memory.start', key=False), 'start'),
     'source': ('Store evidence text (source_key, title, summary, body, origin, subject).', Operation('core:Memory.source', key=False), 'source'),
     'document': ('Capture a local Markdown file by absolute path.', Operation('core:Memory.document', special=write_document), 'document'),
     'sync': ('Refresh captured Markdown documents.', Operation('documents:sync', key=False), 'sync'),
-    'record': ('Append a record kind; decisions need evidence, uncertainty and alternatives.', Operation('core:Memory.record', special=write_record), 'record'),
+    'record': ('Append a record kind; decisions need evidence.', Operation('core:Memory.record', special=write_record), 'record'),
     'reconcile': ('Resolve an uncertain tool receipt with evidence.', Operation('codex_host:reconcile'), 'reconcile'),
     'evidence': ('Store tool output verified by receipt_ids.', Operation('sessions:receipt_evidence', special=write_evidence), 'evidence'),
     'approve_requirements': ('Append requirements the user explicitly approved.', Operation('direction:approve'), 'approve_requirements'),
     'plan': ('Create a work item and plan, or revise a plan at expected_version.', Operation('planning:save', session=True, first='work_plan'), 'plan'),
     'sprint': ('Create or revise a sprint.', Operation('planning:save', session=True, first='sprint'), 'sprint'),
     'progress': ('Change state or next_action with a reason, keeping scope.', Operation('planning:progress', session=True), 'progress'),
-    'checkpoint': ('Assess observed prompts; bundle as data.checkpoint on a write.', Operation('coverage:assess', session=True), 'checkpoint'),
+    'log': ('Decision, action and outcome of done work.', Operation('core:Memory.record', special=write_log), 'log'),
+    'checkpoint': ('Optional explicit assessment of prompts.', Operation('coverage:assess', session=True), 'checkpoint'),
     'review': ('Request a read only agent check of a work item.', Operation('reviews:request', special=write_review), 'agent_check'),
     'link': ('Add a typed link between two ids, with a reason.', Operation('graph:link'), 'link'),
     'component': ('Propose a component: a system, stakeholder or deliverable.', Operation('architecture:save_component'), 'component'),
@@ -735,6 +780,8 @@ OPERATIONS = {
 
 # Operations that keep their own request records instead of adapter_requests.
 SELF_RECORDED = {'review', 'delegate', 'merge', 'request_work_review'}
+# Writes that assess the open prompts of their session.
+IMPLICIT_ASSESSMENT = {'plan', 'record', 'log', 'progress'}
 # Plan writes whose rejected Done transition may start the missing outcome check.
 DONE_CHECKED = {'plan', 'progress'}
 
@@ -816,6 +863,9 @@ def write(memory, operation, request_key, data, session_id=None, receipt_ids=Non
             result = run(memory, request_key, data, session_id, receipt_ids)
             if checkpoint is not None:
                 result = {**result, 'checkpoint': bundled_checkpoint(memory, checkpoint, result, data, session_id, request_key)}
+            elif session_id and operation in IMPLICIT_ASSESSMENT:
+                # A record written in a turn states what the turn did, so it assesses the turn without a checkpoint.
+                module('coverage').implicit(memory, session_id, result.get('episode_id') or data.get('episode_id'), request_key)
             store_result(memory, request_key, signature, result)
     except InvalidRecord as error:
         if start_checks and operation in DONE_CHECKED and needs_done_check(error):

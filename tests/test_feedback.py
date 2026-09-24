@@ -57,7 +57,7 @@ class FeedbackTests(unittest.TestCase):
         self.assertEqual(json.loads((root/'.codex-plugin/plugin.json').read_text())['hooks'],[])
         self.assertEqual(json.loads((root/'.claude-plugin/plugin.json').read_text())['hooks'],'./claude-hooks.json')
     def test_two_hosts_keep_separate_receipts_and_results(self):
-        event={'hook_event_name':'PreToolUse','session_id':'same','turn_id':'same','tool_name':'Bash','tool_use_id':'same','tool_input':{'command':'echo checked'}}
+        event={'hook_event_name':'PreToolUse','session_id':'same','turn_id':'same','tool_name':'Bash','tool_use_id':'same','tool_input':{'command':'git push origin main'}}
         for host in ['codex','claude']:codex_host.capture(self.m,event,host)
         self.assertEqual(codex_host.status(self.m)['unconfirmed_total'],2)
         codex_host.capture(self.m,{**event,'hook_event_name':'PostToolUse','tool_response':'Done'},'claude')

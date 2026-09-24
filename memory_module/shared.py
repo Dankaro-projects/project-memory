@@ -104,7 +104,10 @@ _REPORTED = ("EXISTS (SELECT 1 FROM host_receipts r WHERE r.session_id=p.session
              " AND coalesce(json_extract(r.payload,'$.host'),'codex')=coalesce(json_extract(p.payload,'$.host'),'codex'))")
 _RECONCILED = ("EXISTS (SELECT 1 FROM host_receipts r WHERE r.event_name='Reconciled'"
                " AND json_extract(r.payload,'$.receipt_id')=p.id{resolution})")
-_PENDING = "p.event_name='PreToolUse' AND NOT " + _REPORTED + " AND NOT " + _RECONCILED
+# A call marked local when it was captured acts only inside the repository, where its effect can be inspected, so a
+# missing result needs no reconciliation. Calls captured before the mark existed keep the earlier treatment.
+OUTSIDE = "coalesce(json_extract(p.payload,'$.local'),0)=0"
+_PENDING = "p.event_name='PreToolUse' AND " + OUTSIDE + " AND NOT " + _REPORTED + " AND NOT " + _RECONCILED
 # Execution is not established: no result and no reconciliation that resolves it. Unknown preserves the uncertainty.
 UNCONFIRMED = _PENDING.format(resolution=" AND json_extract(r.payload,'$.resolution')!='unknown'")
 # Not assessed at all: no result and no reconciliation, not even an explicit unknown.

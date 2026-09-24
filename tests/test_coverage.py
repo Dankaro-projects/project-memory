@@ -31,8 +31,9 @@ class CoverageTests(unittest.TestCase):
         codex_host.capture(self.m,self.event(name,**kw))
         return self.m.db.execute('SELECT id FROM host_receipts WHERE event_name=? ORDER BY rowid DESC LIMIT 1',(name,)).fetchone()[0]
     def prompt(self,text='Preserve both encoding paths.',**kw):return self.capture('UserPromptSubmit',prompt=text,**kw)
-    def tool(self,key='tool',complete=True,**kw):
-        rid=self.capture('PreToolUse',tool_name='Bash',tool_use_id=key,tool_input={'command':'private token'},**kw)
+    def tool(self,key='tool',complete=True,command='private token',**kw):
+        # Only a call with an effect outside the repository needs reconciliation when it reports no result.
+        rid=self.capture('PreToolUse',tool_name='Bash',tool_use_id=key,tool_input={'command':command},**kw)
         if complete:self.capture('PostToolUse',tool_name='Bash',tool_use_id=key,tool_response={'exit_code':0},**kw)
         return rid
     def plan(self,prompt=None):
@@ -117,7 +118,7 @@ class CoverageTests(unittest.TestCase):
         write(self.m,'plan','concurrent-scope',{'episode_id':ep,'expected_version':self.m.episode(ep)['version'],'payload':payload,'actor':'fixture','evidence':self.evidence},session_id='s')
         with self.assertRaises(Conflict):self.checkpoint(p,effect='unchanged',episode_id=ep,plan_id=old['id'])
     def test_unknown_side_effect_is_never_closed_by_intent(self):
-        p=self.prompt();rid=self.tool(complete=False);self.capture('Interrupt');self.checkpoint(p)
+        p=self.prompt();rid=self.tool(complete=False,command='git push origin main');self.capture('Interrupt');self.checkpoint(p)
         self.assertEqual(self.issues(),{'execution_unconfirmed'})
         for resolution in ['unknown','completed']:
             write(self.m,'reconcile',resolution,{'receipt_id':rid,'resolution':resolution,'reason':'The marker file was inspected; the host completion status is separate.','evidence':self.evidence})
@@ -125,11 +126,11 @@ class CoverageTests(unittest.TestCase):
         self.assertEqual(self.m.db.execute("SELECT count(*) FROM host_receipts WHERE event_name='PreToolUse'").fetchone()[0],1)
     def test_a_background_agent_in_flight_does_not_block_the_main_conversation(self):
         p=self.prompt('Research this in the background.');self.checkpoint(p)
-        self.tool('search',complete=False,agent_id='a1',agent_type='general-purpose')
+        self.tool('search',complete=False,command='git push origin main',agent_id='a1',agent_type='general-purpose')
         self.tool('write',agent_id='a1',agent_type='general-purpose')
         self.assertFalse(self.issues());self.assertEqual(hook(self.m,self.event('Stop')),{})
         self.assertEqual(codex_host.status(self.m)['unconfirmed_total'],1)
-        self.tool('main',complete=False)
+        self.tool('main',complete=False,command='git push origin main')
         self.assertEqual(self.issues(),{'execution_unconfirmed','activity_unassigned'})
     def test_a_background_notification_is_not_a_request_to_assess(self):
         p=self.prompt('Run the suite in the background.');self.checkpoint(p)
@@ -144,7 +145,7 @@ class CoverageTests(unittest.TestCase):
         with self.assertRaises(Conflict):self.checkpoint(p)
         self.checkpoint(q);self.assertFalse(self.issues())
     def test_explicit_unknown_execution_remains_visible_without_another_stop(self):
-        p=self.prompt();rid=self.tool(complete=False);self.checkpoint(p)
+        p=self.prompt();rid=self.tool(complete=False,command='git push origin main');self.checkpoint(p)
         write(self.m,'reconcile','unknown-done',{'receipt_id':rid,'resolution':'unknown','reason':'The marker exists; final process completion is not established.','evidence':self.evidence})
         self.assertIn('execution_unconfirmed',self.issues())
         self.assertEqual(hook(self.m,self.event('Stop')),{})
