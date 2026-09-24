@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+Proof reaches the check by the route the notice names. The notice for criteria without machine evidence said that the next check reads output stored with the evidence operation. It does not: a check reads only the sources that the current outcome cites. On 24 September 2026 this cost two checks that returned the same uncertain result. The notice now asks the agent to store the output with the evidence operation, record an outcome that supersedes the named current outcome and cites the returned sources, and request the check with `retry` true. The rules of the evidence operation say the same.
+
+A reused check says so. A request for a check of unchanged evidence returns the earlier check, as before, and now marks it with `reused` and a note that the result stands until an outcome cites new evidence or the request passes `retry` true.
+
 ## 0.6.0b13 (24 September 2026)
 
 No hook interrupts the conversation. The Stop hook blocked the end of a turn for two reasons: the session coverage found a request without an assessment or activity without a decision, or an outcome check changed state. On 24 September 2026 it blocked one session three times only to announce a queued check. A Stop hook now returns nothing. Its notice is kept, once per user prompt for coverage and once per result for a check, and the next session start of any session in the project reports it in its context, newest first, at most three notices and 1,000 characters, and then marks every waiting notice as delivered. A resumed session receives its own notice once, not a second time from the coverage hook.

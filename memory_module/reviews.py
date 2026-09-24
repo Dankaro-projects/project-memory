@@ -750,8 +750,12 @@ def request(memory, episode_id, role='outcome', *, request_key, session_id='', r
                                  (episode_id, role, signature)).fetchall()
         if rows:
             old = read(memory, rows[0][0])
-            if old['state'] in ACTIVE or not retry:
-                return old
+            if old['state'] in ACTIVE:
+                return {**old, 'reused': True, 'note': 'A check of this evidence is still running; wait for it.'}
+            if not retry:
+                return {**old, 'reused': True,
+                        'note': 'The evidence is unchanged since this check, so its result stands. Cite new evidence on an outcome '
+                                'that supersedes the current one, or pass retry true to run the same evidence again.'}
         implementer = implementer_host(memory, episode_id)
         decisions = []
         host = review_host(memory, config, implementer, decisions)
@@ -1268,8 +1272,12 @@ def hook(memory, event, host):
             reason += 'This check is no longer running. Inspect its result before requesting another check. '
             unproven = [item['criterion'] for item in confirmable(memory, ep, ('unknown',))]
             if unproven:
-                reason += (f'{len(unproven)} criteria ({", ".join(unproven)}) have no machine evidence. Run what proves each of them and '
-                           'store its output with memory_write evidence and the receipt_ids; the next check reads it. ')
+                # A check reads only the sources that the current outcome cites, so stored output alone does not reach it.
+                outcome = latest(memory, ep, 'outcome')
+                reason += (f'{len(unproven)} criteria ({", ".join(unproven)}) have no machine evidence. Run what proves each of them, '
+                           'store its output with memory_write evidence and the receipt_ids, then record an outcome that '
+                           + (f'supersedes {outcome["id"]} and ' if outcome else '')
+                           + 'cites the returned source ids, and request the check with retry true. ')
             waiting = awaiting_user(memory, ep)
             if waiting:
                 reason += (f'{len(waiting)} criteria ({", ".join(item["criterion"] for item in waiting)}) need the judgement of the user. '

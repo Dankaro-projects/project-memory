@@ -250,6 +250,25 @@ class CheckTests(ReceiptEvidenceFixture):
         self.assertIn('C002', notice)
         self.assertIn('memory_write evidence', notice)
         self.assertNotIn('the user', notice)
+        # On 24 September 2026 stored evidence did not reach the next check: a check reads only the sources that the
+        # current outcome cites, so the notice names the outcome to supersede.
+        outcome = self.m.db.execute("SELECT id FROM events WHERE episode_id=? AND kind='outcome'", (self.ep,)).fetchone()[0]
+        self.assertIn('supersedes ' + outcome, notice)
+        self.assertNotIn('the next check reads it', notice)
+
+    def test_a_request_for_unchanged_evidence_says_that_it_returns_the_earlier_check(self):
+        # On 24 September 2026 a second request returned the earlier uncertain check without saying so.
+        self.complete([{'source_id': self.m.source('r', 'Run', 'Run.', 'Run passed.', 'tool', subject='code')['id'], 'reason': 'Run.'}])
+        with patch.object(reviews, 'launch'):
+            first = write(self.m, 'review', 'check-first', {'episode_id': self.ep, 'role': 'outcome'}, SESSION)
+            self.assertNotIn('reused', first)
+            with self.m._write():
+                self.m.db.execute("UPDATE review_runs SET state='uncertain' WHERE id=?", (first['id'],))
+            second =write(self.m, 'review', 'check-second', {'episode_id': self.ep, 'role': 'outcome'}, SESSION)
+        self.assertEqual(second['id'], first['id'])
+        self.assertTrue(second['reused'])
+        self.assertIn('unchanged', second['note'])
+        self.assertIn('outcome', second['note'])
 
 
 class ResumeTests(Fixture):
