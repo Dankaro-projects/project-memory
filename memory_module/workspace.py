@@ -10,6 +10,8 @@ request_work_review, focus_check and focus_start) run outside the action transac
 processes or run git. Their own request keys make them idempotent. The hive actions (hive_post,
 hive_close and hive_purge) also run outside it, because the hive is a second database beside the project.
 """
+import contextvars
+
 from . import codex_host
 from .core import InvalidRecord, Conflict, USER_ACTOR as USER, dumps, _text, _digest
 from .mcp import needs_done_check, with_done_check, write
@@ -103,6 +105,32 @@ GOVERNED = {'plan': ('scope', 'autonomy', 'depends_on', 'paths', 'acceptance'), 
 LIST_FIELDS = ('depends_on', 'paths', 'acceptance')
 
 
+# The prompt of the user while an action runs on the words of the user in the chat, so the user source cites them.
+_CHAT = contextvars.ContextVar('chat', default=None)
+
+
+def chat_action(memory, *, action, fields, prompt_receipt_id, prompt, request_key, session_id=None):
+    """Take a user action that the user asked for in the chat, on the exact words of the prompt.
+
+    The control panel is read only, so every decision that it took is taken here. The prompt is verified against its
+    receipt as for closing work, its text is stored as user evidence that an agent cannot write itself, and the action
+    runs as the same workspace action with the actor workspace-user. The request key keeps a retry idempotent.
+    """
+    from .planning import verify_prompt
+    if action not in OPERATIONS:
+        raise InvalidRecord('Unknown user action. Use one of: ' + ', '.join(OPERATIONS) + '.')
+    verify_prompt(memory, prompt_receipt_id, prompt, session_id)
+    token = _CHAT.set({'receipt': prompt_receipt_id, 'prompt': prompt})
+    try:
+        # The tool keeps the result under the request key, so the action keeps its own under a derived key.
+        result = globals()['action'](memory, action, fields, request_key + ':action')
+    finally:
+        _CHAT.reset(token)
+    source = memory.source('user-chat:' + prompt_receipt_id + ':' + request_key, 'The user asked in the chat: ' + action,
+                           'The user asked for the action ' + action + ' in the chat.', 'The user wrote:\n\n' + prompt, 'user', internal=True)
+    return {**result, 'user_source_id': source['id']} if isinstance(result, dict) else result
+
+
 def action(memory, operation, data, request_key):
     """Apply one human action and return its result."""
     if operation not in OPERATIONS:
@@ -135,8 +163,13 @@ def action(memory, operation, data, request_key):
 
 
 def _user_source(memory, request_key, title, sentences, subject='general'):
+    chat = _CHAT.get()
+    if chat:
+        sentences = [*sentences, 'The user asked for this in the chat, in these words: ' + chat['prompt']]
     source = memory.source('workspace:' + request_key, title, sentences[0], '\n'.join(sentences), 'user', subject=subject)
-    return [{'source_id': source['id'], 'reason': 'The user submits this change through the local control panel.'}]
+    reason = ('The user asked for this change in the chat, and the words match the receipt of the prompt.' if chat
+              else 'The user submits this change through the local control panel.')
+    return [{'source_id': source['id'], 'reason': reason}]
 
 
 def _version(memory, episode_id, expected):

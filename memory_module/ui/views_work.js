@@ -1,12 +1,10 @@
 /*
- * Project Memory control panel: views_work.js registers the Now, Plan, Work and Decisions views and the "work" and
- * "decision" panes. Buttons open the forms of forms.js: plan {episode_id} or {parent_id, item_type}, comment,
- * allow_paths {episode_id, paths}, delegate, review {episode_id, role} and answer_kickoff {question_ids}. The panes
- * draw the lineage with Panel.lineageGraph of graphs.js, and runs open the "run" pane of views_knowledge.js. A work item
- * with a focused problem shows its check, its attempts side by side and its report, with the focus_check and
- * focus_start forms {episode_id}. Now opens the "decide" pane {kind, id} for a lesson, a flag or a proposal, which Learning
- * and Sessions of views_knowledge.js open too, and the reconcile {receipt_id, resolution} and reconcile_read_only forms;
- * a blocked work item lists its unconfirmed calls with the same forms. Panel.viewTabs draws the tabs of a list view.
+ * Project Memory control panel: views_work.js registers the Now, Plan, Work and Decisions views and the "work",
+ * "decision" and "decide" panes. The panel is read only: a page says in a chat hint what to ask the assistant, which
+ * records the decision of the user with the user_action operation. The panes draw the lineage with Panel.lineageGraph
+ * of graphs.js, and runs open the "run" pane of views_knowledge.js. A work item with a focused problem shows its check,
+ * its attempts side by side and its report. Learning and Sessions open the "decide" pane {kind, id} for a lesson, a flag
+ * or a proposal. Now lists the calls that need reconciliation above its digest. Panel.viewTabs draws the tabs of a list view.
  */
 (() => {
   "use strict";
@@ -39,7 +37,6 @@
     if (id.startsWith("check_")) return openRun({ id, episode_id: node.episode_id }, trigger);
     return P.openRecord(id, trigger);
   }
-  const workContext = (card, extra) => ({ episode_id: card.id, expected_version: card.version, card, plan: card.plan, title: card.title, ...extra });
 
   // An unfinished prerequisite is the ordinary state of a planned item, so it is named rather than marked as a fault.
   function issueInfo(raw) {
@@ -76,11 +73,6 @@
     const target = key && (region.querySelector("#" + CSS.escape(key)) || region.querySelector('[data-key="' + CSS.escape(key) + '"]'));
     if (target) target.focus({ preventScroll: true });
   }
-  // A low risk decision is recorded by its button at once, and a refusal leaves the button in place.
-  P.actButton = (label, key, operation, data, done, className) => (P.canEdit() ? button(label, key, async (trigger) => {
-    trigger.disabled = true;
-    try { P.toast(done(await P.action(operation, data, P.requestKey(operation)))); } catch (error) { trigger.disabled = false; P.toast(error.message, "blocked"); }
-  }, className) : null);
   const selectControl = (id, label, options, value, onChange) => P.filterField("select", id, label, value, onChange, options);
   const checkControl = (id, label, checked, onChange) => P.filterField("check", id, label, checked, onChange);
   // graphs.js draws the lineage and keeps its own toggle between the graph and a readable vertical list.
@@ -96,7 +88,6 @@
   const DOCUMENTS = { unchanged: ["review", "Not yet filled"], missing: ["blocked", "Missing"], changed: ["ready", "Filled"], unreadable: ["blocked", "Unreadable"] };
   function kickoffStep(step, kickoff) {
     const primary = (label, handler) => button(label, "kickoff-next", handler, "primary");
-    if (step.action === "answer_kickoff" && P.canEdit()) return primary("Answer the open questions", (t) => P.openForm("answer_kickoff", { question_ids: step.question_ids, questions: kickoff.questions }, t));
     if (step.action === "fill_documents") return primary("Open the documents", () => P.go("records", { view: "documents" }));
     if (step.action === "approve_requirements") return primary("Review the requirements", () => P.go("requirements"));
     if (step.action === "research" && (step.episode_ids || []).length) return primary("Open the first research item", (t) => P.openWork(step.episode_ids[0], t));
@@ -123,7 +114,7 @@
         section("Questions", h("p", { class: "muted" }, `${answered} of ${P.count(questions.length, "kickoff question")} ${verb(answered, "is", "are")} answered.`),
           listOf(questions, (question) => checkItem(question.answered, question.answered ? "Answered" : "Open", h("span", null, question.text),
             question.answered ? (question.answered_by ? button("Read the answer", "kickoff-answer-" + question.id, (t) => P.openRecord(question.answered_by, t), "small") : null)
-              : P.canEdit() ? button("Answer", "kickoff-question-" + question.id, (t) => P.openForm("answer_kickoff", { question_ids: [question.id], questions, question }, t), "small") : null),
+              : null),
           "The template has no kickoff questions.")),
         section("Research still needed", listOf(kickoff.research, (item) => workButton({ ...item, id: item.episode_id, item_type: "research" }, "kickoff-research-"),
           "No open research item is recorded.")),
@@ -152,11 +143,7 @@
     return h("div", { class: "stack", dataset: { key: "unconfirmed-" + item.id } },
       h("span", { class: "row" }, chip(item.tool_name), item.read_only ? chip("Read only") : null, h("span", { class: "muted" }, P.date(item.created_at))),
       item.work_title ? h("span", null, item.work_title) : null, h("p", { class: "muted" }, text),
-      P.canEdit() ? h("div", { class: "row" },
-        suggested && found.result !== "no_result" ? P.actButton("Record as " + lower(P.words(suggested)), "reconcile-now-" + item.id, "reconcile",
-          { receipt_id: item.id, resolution: suggested, reason: "The user accepts the result that the transcript reports." },
-          (result) => "The call is recorded as " + lower(P.words(result.resolution)) + ".", "small primary") : null,
-        P.formButton(suggested ? "Choose another result" : "Reconcile", "reconcile", { receipt_id: item.id, resolution: suggested, suggested, tool: item.tool_name }, { class: "small" })) : null);
+      suggested && found.result !== "no_result" ? h("p", { class: "muted" }, "The transcript suggests the result " + lower(P.words(suggested)) + ".") : null);
   }
   async function unconfirmedCard(params) {
     const data = await P.get("unconfirmed", params).catch(() => null);
@@ -165,7 +152,8 @@
     const bulk = items.filter((item) => item.read_only && (item.transcript || {}).found && item.transcript.result !== "no_result").length;
     return h("section", { class: "card", dataset: { key: "now-unconfirmed", total: String(data.total || items.length) } }, heading("Needs reconciliation", data.total),
       h("p", { class: "muted" }, "These tool calls started without a recorded result, so their work items stay blocked. The suggestion comes from the transcript of the session."),
-      bulk && P.canEdit() ? P.formButton(`Resolve ${bulk} read-only ${bulk === 1 ? "call" : "calls"}`, "reconcile_read_only", { count: bulk }, { class: "small" }) : null,
+      P.chatHint(bulk ? `Ask the assistant in the chat to record these results. ${bulk} read-only ${bulk === 1 ? "call" : "calls"} can be resolved together.`
+        : "Ask the assistant in the chat to record the result of each call."),
       listOf(items, unconfirmedItem));
   }
   // The tabs of a list view read as the views of a Notion database: an icon, the name and a quiet count, with the
@@ -216,16 +204,12 @@
           allLink("#decisions", "Open all decisions")] : P.empty("No decision is recorded.")))));
   } });
 
-  // The decision pane of a lesson, a session flag or a session proposal. A lesson needs a reason; a flag does not.
-  const DECIDE = { lessons_to_accept: ["Decide a lesson", "Accept", "Reject", "accepted", "rejected"], session_flags: ["Decide a flag", "Confirm", "Dismiss", "confirmed", "dismissed"],
-    session_proposals: ["Decide a proposal", "Accept", "Reject", "accepted", "rejected"] };
-  // After a decision the next row of the list opens, so a run of decisions needs no return to the list.
-  function advance() {
-    const rows = [...document.querySelectorAll("#main .pane-row")], index = rows.findIndex((row) => "selected" in row.dataset), next = rows[index + 1] || rows[index - 1];
-    if (next) next.click(); else P.closePane();
-  }
+  // The page of a lesson, a session flag or a session proposal. The panel is read only, so the page says how to decide it in the chat.
+  const DECIDE = { lessons_to_accept: ["Decide a lesson", "Accept, reject or retire this lesson in the chat: tell the assistant your decision and its reason."],
+    session_flags: ["Decide a flag", "Confirm or dismiss this flag in the chat: confirm it when a record is missing, and dismiss it when nothing is missing."],
+    session_proposals: ["Decide a proposal", "Accept or reject this proposal in the chat, and name the work item that should hold it."] };
   P.registerPane("decide", { async render(body, params, ctx) {
-      const [kindName, yes, no, yesStatus, noStatus] = DECIDE[params.kind], lessons = params.kind === "lessons_to_accept", flags = params.kind === "session_flags";
+      const [kindName, hint] = DECIDE[params.kind], lessons = params.kind === "lessons_to_accept", flags = params.kind === "session_flags";
       ctx.setKind(kindName);
       const data = lessons ? await P.get("record", { id: params.id }) : await P.get("sessions");
       const item = lessons ? data.record : ((flags ? data.flags : data.proposals) || []).find((entry) => entry.id === params.id);
@@ -242,37 +226,8 @@
         button("Open Sessions", "decide-open", () => P.go("sessions"), "small quiet"));
       else put(body, h("div", { class: "row" }, chip(P.words(item.slot)), chip(P.words(item.confidence) + " confidence"), h("span", { class: "muted" }, item.pointers.file + ", lines " + item.pointers.lines.join(", "))),
         button("Open Sessions", "decide-open", () => P.go("sessions"), "small quiet"));
-      if (!ctx.canEdit) return;
-      const form = (name, context) => (t) => P.openForm(name, context, t).then((result) => result && advance());
-      if (!lessons && !flags) { put(ctx.foot, h("div", { class: "actions" }, [[yes, yesStatus, "primary"], [no, noStatus, ""]].map(([text, status, tone]) =>
-        button(text, "decide-" + status, form("session_proposal", { proposal_id: item.id, status }), tone)))); return; }
-      const reason = P.textarea("reason", "", { id: "decide-reason", rows: "1", "aria-label": "Reason", placeholder: lessons ? "Write the reason for your decision" : "Add a reason (optional)" });
-      const decide = (status) => async (trigger) => {
-        const text = reason.value.trim();
-        if (lessons && !text) { P.toast("Write the reason for your decision first.", "blocked"); reason.focus(); return; }
-        trigger.disabled = true;
-        try {
-          const triggers = lessons && status === "accepted" && ((lesson.paths || []).length || (lesson.keywords || []).length || lesson.failure_type || (lesson.roles || []).length)
-            ? { paths: lesson.paths || [], keywords: lesson.keywords || [], ...(lesson.failure_type ? { failure_type: lesson.failure_type } : {}), ...((lesson.roles || []).length ? { roles: lesson.roles } : {}) } : {};
-          await P.action(lessons ? "lesson_review" : "session_flag", lessons ? { lesson_id: item.id, expected_version: (await P.get("record", { id: item.episode_id })).record.detail.version, status, reason: text, ...triggers }
-            : { flag_id: item.id, status, ...(text ? { reason: text } : {}) }, P.requestKey("decide"));
-          P.toast(`The ${lessons ? "lesson" : "flag"} is ${status}.`);
-          advance();
-        } catch (error) { trigger.disabled = false; P.toast(error.message, "blocked"); }
-      };
-      put(ctx.foot, reason, h("div", { class: "actions" }, button(yes, "decide-" + yesStatus, decide(yesStatus), "primary", { "data-hotkey": yes[0].toLowerCase() }),
-        button(no, "decide-" + noStatus, decide(noStatus), null, { "data-hotkey": no[0].toLowerCase() })),
-      h("p", { class: "hint" }, `The next item opens after each decision. Keys: ${yes[0]} ${yes.toLowerCase()}, ${no[0]} ${no.toLowerCase()}, J and K move.`),
-      // A proposed lesson can also be retired in its form.
-      lessons ? button("Retire", "decide-retired", form("lesson_review", { lesson_id: item.id, status: "retired" }), "small quiet") : null,
-      flags && data.flags.length > 1 ? P.formButton("Dismiss the " + data.flags.length + " shown flags", "session_flag", { flag_ids: data.flags.map((flag) => flag.id), status: "dismissed" }, { class: "small quiet" }) : null);
+      put(body, P.chatHint(hint));
   } });
-  // The decision letters never fire while the reader types in a field.
-  document.addEventListener("keydown", (event) => {
-    if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey || event.target.closest("input, textarea, select, [contenteditable], dialog")) return;
-    const target = document.querySelector('#detail .detail-foot [data-hotkey="' + CSS.escape(event.key.toLowerCase()) + '"]');
-    if (target && !target.disabled) { event.preventDefault(); target.click(); }
-  });
 
   // Plan.
   const matches = (node, filter) => (!filter.type || node.item_type === filter.type) && (!filter.state || node.state === filter.state)
@@ -453,15 +408,9 @@
   } });
 
   // Work item pane.
-  const NEXT_BUTTONS = {
-    plan: ["Edit plan", "plan"], review_plan: ["Edit plan", "plan"], propose: ["Edit plan", "plan"], review: ["Edit plan", "plan"],
-    finalize: ["Mark as done", "plan", { state: "done" }], request_review: ["Request check", "review", { role: "outcome" }],
-  };
   function nextAction(work, card) {
     const step = work.next || {};
     const detail = step.next_step || {}, blocker = (detail.blockers || [])[0] || {}, read = detail.read_with || {};
-    const known = NEXT_BUTTONS[step.action];
-    if (known && P.canEdit() && (known[1] !== "plan" || card.plan || step.action === "plan")) return button(known[0], "work-next", (t) => P.openForm(known[1], workContext(card, known[2]), t), "primary");
     if (blocker.episode_id) return button("Open the prerequisite", "work-next", (t) => P.openWork(blocker.episode_id, t), "primary");
     if (read.view === "record" && read.id) return button("Open the record to review", "work-next", (t) => P.openRecord(read.id, t), "primary");
     if (detail.check_id) return button("Open the check", "work-next", (t) => openRun({ id: detail.check_id, episode_id: card.id }, t), "primary");
@@ -514,13 +463,11 @@
     const focus = await P.get("focus", { id: card.id }).catch((error) => ({ error }));
     if (focus.error) return focus.error.notIncluded ? null : put(host, section("Focused problem", P.errorState(focus.error)));
     if (!focus.focus) return null;
-    const block = focus.focus, check = block.check, context = { episode_id: card.id };
+    const block = focus.focus, check = block.check;
     const hypotheses = new Map(focus.hypotheses.map((item) => [item.id, item]));
-    // The server refuses both actions in a panel that an assistant started, so the panel says so instead of offering them.
-    const actions = !ctx.canEdit || FOCUS_BUSY.includes(focus.state) ? null : (P.health() || {}).assistant_started
-      ? h("p", { class: "notice" }, "This control panel was started from inside an assistant session, so it does not set the check or start the attempts. Start the control panel from your own terminal to record them.")
-      : h("div", { class: "row" }, P.formButton("Set the check", "focus_check", context, { class: "small" }),
-        focus.eligible && check ? P.formButton("Start the attempts", "focus_start", context, { class: "small primary" }) : null);
+    // The check runs a command on this computer, so the user sets it and starts the attempts in the chat.
+    const actions = FOCUS_BUSY.includes(focus.state) ? null : P.chatHint(check ? "Ask the assistant in the chat to start the attempts, or to set another check."
+      : "Tell the assistant in the chat which command checks this problem, and it records the check as yours.");
     put(host, section("Focused problem",
       h("div", { class: "row" }, P.badge(focus.state), chip(P.words(block.mode) + " mode"), chip(P.count(block.max_attempts, "attempt") + " allowed")),
       h("p", null, block.problem),
@@ -537,28 +484,6 @@
         (item) => h("div", { class: "stack" }, h("strong", null, item.statement), h("span", { class: "muted" }, item.evidence_summary)), "No hypothesis is ruled out yet.")),
       focusReport(focus.report)));
   }
-  // A quick edit and the delegation form send the complete saved plan with the changed fields.
-  const PLAN_FIELDS = ["state", "next_action", "scope", "autonomy", "owner", "priority", "item_type", "parent_id", "sprint_id", "acceptance", "paths", "worktree"];
-  P.planPayload = (plan, change, reason) => {
-    const payload = { ...Object.fromEntries(PLAN_FIELDS.filter((name) => plan[name] && plan[name].length !== 0).map((name) => [name, plan[name]])), ...change, reason };
-    if ((plan.depends_on || []).length) payload.depends_on = plan.depends_on.map((ref) => ({ episode_id: ref.episode_id, reason: ref.reason }));
-    if (payload.state === "in_progress" && plan.state === "in_progress" && plan.session_id) payload.session_id = plan.session_id;
-    return payload;
-  };
-  // Done and cancelled stay in the plan form, because they close the work.
-  const QUICK_STATES = ["backlog", "ready", "blocked", "review"];
-  function quickEdit(card, field, label, options) {
-    const plan = card.plan, before = plan[field] || (field === "priority" ? "normal" : "backlog");
-    return selectControl("work-quick-" + field, label, options.includes(before) ? options : [before, ...options], before, async (value) => {
-      const reason = `The user changed the ${field} from ${lower(P.words(before))} to ${lower(P.words(value))} in the pane of the ${noun(1)}.`;
-      try {
-        await P.action("plan", { episode_id: card.id, expected_version: card.version, payload: P.planPayload(plan, { [field]: value }, reason) }, P.requestKey("plan"));
-        P.toast(`The ${field} is now ${lower(P.words(value))}.`);
-      } catch (error) { P.toast(error.message, "blocked"); P.refresh(); }
-    });
-  }
-  const delegationBlock = (card, reviews) => (["done", "cancelled"].includes(card.plan.state) ? `This ${noun(1)} is finished, so it cannot be delegated.`
-    : reviews.configured === false ? "No agent host is configured, so the work cannot be delegated." : "");
   // The shown state follows the evidence, so the first open issue explains a difference from the recorded state.
   const stateReason = (card) => { const issue = (card.issues || [])[0]; return issue ? "an issue is open: " + lower(issue.reason) : "its evidence requires it."; };
   P.registerPane("work", { async render(body, params, ctx) {
@@ -573,7 +498,7 @@
       const titles = new Map(((work.lineage || {}).nodes || []).map((node) => [node.id, node.title]));
       const lineageHost = h("div", { class: "stack" }), focusHost = h("div", { class: "stack", dataset: { key: "work-focus" } }), callsHost = h("div");
       const sprintTitles = new Map(plan && plan.sprint_id ? await P.get("sprints", { limit: "100" }).then((value) => (value.sprints || []).map((sprint) => [sprint.id, sprint.title]), () => []) : []);
-      const reports = checkReports(reviews), noDelegation = plan ? delegationBlock(card, reviews) : "";
+      const reports = checkReports(reviews);
       const hasIssues = (card.issues || []).length > 0, hasDependencies = Boolean(plan && (plan.depends_on || []).length);
       const hasRuns = runs.length > 0 || reports.length > 0 || Boolean(reviews.current) || reviews.configured === false;
       const hasHistory = Boolean(history.error || history.total);
@@ -581,12 +506,7 @@
         [hasRuns, "Agent checks and delegated runs"], [hasHistory, "History"]].filter(([present]) => !present).map(([, name]) => name);
       // The next step and the actions of the item stay pinned under the scrolling body.
       const next = nextAction(work, card), pinned = next && next.tagName === "BUTTON";
-      put(ctx.foot, pinned ? next : null, ctx.canEdit ? h("div", { class: "row" },
-        pinned && next.textContent === "Edit plan" ? null : button("Edit plan", "work-edit", (t) => P.openForm("plan", workContext(card), t), "small"),
-        plan ? button("Allow paths", "work-allow", (t) => P.openForm("allow_paths", workContext(card), t), "small") : null,
-        plan ? button("Delegate", "work-delegate", (t) => P.openForm("delegate", workContext(card), t), "small", { disabled: Boolean(noDelegation) }) : null,
-        button("Request check", "work-check", (t) => P.openForm("review", workContext(card, { role: "outcome" }), t), "small"),
-        button("Comment", "work-comment", (t) => P.openForm("comment", workContext(card), t), "small")) : null);
+      put(ctx.foot, pinned ? next : null);
       const ownerText = plan && plan.owner ? (plan.owner === "human" ? "Person" : "Agent") : null;
       const block = (title, count, ...children) => h("section", { class: "stack" }, P.heading(2, title, count), ...children);
       put(body,
@@ -597,10 +517,6 @@
           ["person", "Owner", ownerText], ["relation", "Part of", plan && plan.parent_id ? button([P.icon("page"), titles.get(plan.parent_id) || "Open the parent item"], "work-parent", (t) => P.openWork(plan.parent_id, t), "link-button") : null],
           ["timeline", "Sprint", plan && plan.sprint_id ? sprintTitles.get(plan.sprint_id) || h("span", { class: "mono" }, plan.sprint_id) : null],
           ["date", "Created", card.date ? P.date(card.date) : null], ["number", "Version", String(card.version)]]),
-        ctx.canEdit && noDelegation ? h("p", { class: "muted", dataset: { key: "work-delegate-blocked" } }, noDelegation) : null,
-        ctx.canEdit && plan && !["done", "cancelled"].includes(plan.state) ? h("div", { class: "toolbar", dataset: { key: "work-quick" } },
-          quickEdit(card, "state", "Recorded state", plan.owner === "human" ? [...QUICK_STATES.slice(0, 2), "in_progress", ...QUICK_STATES.slice(2)] : QUICK_STATES),
-          quickEdit(card, "priority", "Priority", ["high", "normal", "low"])) : null,
         P.divider(),
         P.callout(card.state === "blocked" ? "alert" : "flag", [h("strong", null, "Next step"), h("p", null, step.reason || "No next step is recorded."),
           step.next_step && step.next_step.reason && step.next_step.reason !== step.reason ? h("p", { class: "muted" }, step.next_step.reason) : null, pinned ? null : next],
@@ -617,8 +533,7 @@
         (reviews.awaiting_user || []).length ? block("Needs your confirmation", reviews.awaiting_user.length,
           h("p", { class: "muted" }, "The latest check found no evidence that a machine can use to confirm these criteria. Confirm them in the chat, and your statement is recorded as your confirmation."),
           listOf(reviews.awaiting_user, (item) => h("div", { class: "stack", dataset: { key: "confirm-" + item.criterion } },
-            h("span", { class: "row" }, chip(item.criterion)), h("strong", null, item.condition), h("span", { class: "muted" }, item.evidence),
-            P.canEdit() ? P.formButton("Confirm", "confirm_criterion", { episode_id: card.id, criterion: item.criterion, condition: item.condition }, { class: "small primary" }) : null))) : null,
+            h("span", { class: "row" }, chip(item.criterion)), h("strong", null, item.condition), h("span", { class: "muted" }, item.evidence)))) : null,
         callsHost,
         plan ? block("Scope", null, h("p", null, plan.scope || "No scope is recorded."), P.props([["select", "Autonomy", chip(P.words(plan.autonomy))], ["flag", "Next action", plan.next_action],
           ["text", "Reason", plan.reason], ["page", "Allowed paths", (plan.paths || []).length ? h("div", { class: "row" }, plan.paths.map((path) => chip(path, { class: "chip mono" })))

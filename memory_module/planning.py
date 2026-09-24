@@ -294,6 +294,28 @@ def progress(memory, *, episode_id, expected_version, payload, actor, request_ke
                 request_key=request_key,session_id=session_id,links=record['links'])
 
 
+def verify_prompt(memory, prompt_receipt_id, prompt, session_id):
+    """The receipt of a prompt that the user typed in this session, with the exact text of that prompt, or a refusal.
+
+    The capture keeps only the hash of a prompt, so the text is verified against that hash. A notification, a prompt of
+    another session or a changed text is refused, so an agent can cite only words that the user sent.
+    """
+    from .core import InvalidRecord, _text
+    from .codex_host import read_receipt, summary
+    _text(prompt, 'prompt', 100_000)
+    if not session_id:
+        raise InvalidRecord('Pass the session_id of the session that received the prompt of the user.')
+    receipt = read_receipt(memory, prompt_receipt_id)
+    observed = receipt['payload']
+    if receipt['event_name'] != 'UserPromptSubmit' or observed.get('notification'):
+        raise InvalidRecord('Name the receipt of a prompt that the user typed. A notification cannot decide for the user.')
+    if receipt['session_id'] != session_id:
+        raise InvalidRecord('The prompt receipt belongs to another session. Name a prompt that this session received.')
+    if (observed.get('prompt') or {}).get('sha256') != summary(prompt)['sha256']:
+        raise InvalidRecord('The prompt text does not match its receipt. Pass the exact text that the user sent.')
+    return receipt
+
+
 def close(memory, *, episode_id, expected_version, prompt_receipt_id, prompt, reason, actor, request_key, session_id=None):
     """Record that the user closed a work item in the chat, on the exact words of the user's prompt.
 
@@ -301,19 +323,8 @@ def close(memory, *, episode_id, expected_version, prompt_receipt_id, prompt, re
     user's evidence under a reserved key. A notification, or a prompt of another session, cannot close work.
     """
     from .core import InvalidRecord, _text
-    from .codex_host import read_receipt, summary
-    _text(prompt, 'prompt', 100_000)
     _text(reason, 'reason', 2000)
-    if not session_id:
-        raise InvalidRecord('Pass the session_id of the session that received the prompt of the user.')
-    receipt = read_receipt(memory, prompt_receipt_id)
-    observed = receipt['payload']
-    if receipt['event_name'] != 'UserPromptSubmit' or observed.get('notification'):
-        raise InvalidRecord('Name the receipt of a prompt that the user typed. A notification cannot close work.')
-    if receipt['session_id'] != session_id:
-        raise InvalidRecord('The prompt receipt belongs to another session. Name a prompt that this session received.')
-    if (observed.get('prompt') or {}).get('sha256') != summary(prompt)['sha256']:
-        raise InvalidRecord('The prompt text does not match its receipt. Pass the exact text that the user sent.')
+    verify_prompt(memory, prompt_receipt_id, prompt, session_id)
     previous = latest(memory, episode_id, 'work_plan')
     if not previous:
         raise InvalidRecord('Record a plan before closing the work item.')

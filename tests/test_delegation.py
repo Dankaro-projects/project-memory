@@ -718,8 +718,8 @@ class DelegationTests(unittest.TestCase):
             delegation.merge(self.m, run['id'], request_key='merge', actor='assistant')
         details = refused.exception.details
         self.assertEqual((details['phase'], details['merge_actor']), ('production', 'workspace-user'))
-        self.assertEqual(details['next_step']['action'], 'merge_in_control_panel')
-        self.assertIn('control panel', str(refused.exception))
+        self.assertEqual(details['next_step']['action'], 'ask_user')
+        self.assertIn('asks for the merge in the chat', str(refused.exception))
         with self.assertRaises(InvalidRecord) as over_mcp:
             mcp.write(self.m, 'merge', 'merge-over-mcp', {'run_id': run['id'], 'actor': 'assistant'})
         self.assertEqual(str(over_mcp.exception), delegation.PRODUCTION_MERGE_REFUSED)

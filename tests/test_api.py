@@ -664,9 +664,6 @@ class HiveTests(unittest.TestCase):
         self.assertEqual(api.hive(self.m, {})['total'], 0)
         receipt = codex_host.read_receipt(self.m, purged['receipt_id'])
         self.assertEqual((receipt['event_name'], receipt['payload']['entries']), ('HivePurged', 9))
-        self.assertEqual(live.user_authority_refusal(self.m, 'hive_purge', {'closed_before_days': 0}), live.HIVE_PURGE_STARTED_BY_ASSISTANT)
-        for operation in ('hive_post', 'hive_close'):
-            self.assertIsNone(live.user_authority_refusal(self.m, operation, {}))
 
     def test_the_live_revision_follows_new_entries_joins_and_closes_of_the_hive(self):
         with Viewer(self.m.path, 'hive-revision-token') as server:
@@ -757,45 +754,33 @@ class LiveApiTests(unittest.TestCase):
                 self.assertIn('revision', value)
                 self.assertEqual(self.status(Request(self.base + 'api/' + name + params.get(name, ''), headers={'If-None-Match': etag})), 304)
         _, _, health = self.get('api/health')
-        self.assertTrue(health['csrf'])
-        _, _, invalid = None, None, None
+        # The panel is read only, so the health response hands out no token for writes.
+        self.assertNotIn('csrf', health)
         self.assertEqual(self.status(Request(self.base + 'api/work?id=episode_missing')), 400)
 
     def test_token_unknown_endpoints_and_removed_review_route_are_refused(self):
         self.assertEqual(self.status(Request(self.origin + '/live-api-test-tokex/api/health')), 403)
         self.assertEqual(self.status(Request(self.origin + '/api/health')), 403)
         self.assertEqual(self.status(Request(self.base + 'api/skills')), 404)
-        _, _, health = self.get('api/health')
-        headers = {'Content-Type': 'application/json', 'Origin': self.origin, 'X-Project-Memory': health['csrf']}
-        self.assertEqual(self.status(Request(self.base + 'api/reviews', data=b'{}', headers=headers)), 404)
-        self.assertEqual(self.status(Request(self.base + 'api/actions', data=b'{}', headers={**headers, 'X-Project-Memory': 'wrong'})), 403)
-        self.assertEqual(self.status(Request(self.base + 'api/actions', data=b'{}', headers={**headers, 'Content-Type': 'text/plain'})), 403)
-        self.assertEqual(self.status(Request(self.base + 'api/actions', data=b'[]', headers=headers)), 400)
+        # The panel is read only: every write is refused, whatever its route, headers or body.
+        headers = {'Content-Type': 'application/json', 'Origin': self.origin}
+        for route, body in (('api/actions', b'{}'), ('api/reviews', b'{}'), ('api/actions', b'[' * 2000 + b']' * 2000)):
+            with self.assertRaises(HTTPError) as caught:
+                urlopen(Request(self.base + route, data=body, headers=headers), timeout=20)
+            self.assertEqual(caught.exception.code, 405)
+            self.assertEqual(json.load(caught.exception)['error'], 'ReadOnly')
+            caught.exception.close()
 
     def test_expensive_results_are_cached_per_revision(self):
         with patch('memory_module.architecture.model', wraps=architecture.model) as model:
             self.get('api/architecture')
             self.get('api/architecture')
             self.assertEqual(model.call_count, 1)
-            _, _, health = self.get('api/health')
-            headers = {'Content-Type': 'application/json', 'Origin': self.origin, 'X-Project-Memory': health['csrf']}
-            body = {'operation': 'comment', 'request_key': 'live-comment',
-                    'data': {'episode_id': self.ids['design'], 'expected_version': self.m.episode(self.ids['design'])['version'],
-                             'text': 'The design needs one more example.'}}
-            self.assertEqual(self.status(Request(self.base + 'api/actions', data=json.dumps(body).encode(), headers=headers)), 200)
+            # A write from the chat changes the revision, so the next read computes the model again.
+            action(self.m, 'comment', {'episode_id': self.ids['design'], 'expected_version': self.m.episode(self.ids['design'])['version'],
+                                       'text': 'The design needs one more example.'}, 'live-comment')
             self.get('api/architecture')
             self.assertEqual(model.call_count, 2)
-
-    def test_deeply_nested_action_json_returns_an_error_response(self):
-        _, _, health = self.get('api/health')
-        headers = {'Content-Type': 'application/json', 'Origin': self.origin, 'X-Project-Memory': health['csrf']}
-        body = b'[' * 200000 + b']' * 200000
-        with self.assertRaises(HTTPError) as caught:
-            urlopen(Request(self.base + 'api/actions', data=body, headers=headers), timeout=20)
-        self.assertEqual(caught.exception.code, 400)
-        self.assertEqual(json.load(caught.exception)['error'], 'RecursionError')
-        caught.exception.close()
-        self.assertEqual(self.get('api/health')[0], 200)
 
     def test_a_partial_request_from_another_client_does_not_stall_the_panel(self):
         import socket

@@ -27,7 +27,7 @@ from .core import InvalidRecord, Conflict, dumps, _time
 # The application script joins these files in this order. Every listed file is
 # required in a published package (scripts/check_artifacts.py). While the panel is
 # being built, html_template skips a listed file that does not exist yet.
-UI_SCRIPTS = ('core.js', 'blocks.js', 'graphs.js', 'views_work.js', 'views_knowledge.js', 'forms.js')
+UI_SCRIPTS = ('core.js', 'blocks.js', 'graphs.js', 'views_work.js', 'views_knowledge.js')
 UI_STYLES = ('panel.css',)
 VENDOR_SCRIPT = 'vendor/cytoscape.min.js'
 PLACEHOLDERS = re.compile(r'__(PANEL_CSS|VENDOR_JS|PANEL_JS)__')

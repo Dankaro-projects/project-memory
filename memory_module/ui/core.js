@@ -1,9 +1,10 @@
 /*
- * Project Memory control panel: core.js, the foundation for graphs.js, views_work.js, views_knowledge.js and forms.js.
+ * Project Memory control panel: core.js, the foundation for blocks.js, graphs.js, views_work.js and views_knowledge.js.
  *
  * viewer.py joins the application files in that order into one script element. vendor/cytoscape.min.js is a separate
  * script element that runs first and defines the global `cytoscape`. Every file uses the global `Panel`. Boot runs
- * after all files are evaluated, so the other files register their views, panes and forms at load time.
+ * after all files are evaluated, so the other files register their views and panes at load time. The panel is read only:
+ * it sends no write, and a decision of the user is taken in the chat.
  *
  * Rules: build elements with Panel.h. Never use innerHTML, outerHTML, insertAdjacentHTML, eval or new Function. Set
  * computed sizes and colours through element.style, because the content security policy blocks style attributes in
@@ -11,24 +12,21 @@
  * punctuation.
  *
  * Data access
- *   Panel.live; Panel.canEdit() is false in a snapshot and before the first health response. Hide edit controls then.
+ *   Panel.live is true for the live panel and false for a snapshot.
  *   Panel.get(name, params): promise of GET api/<name> with string values (empty values are dropped). Live mode sends
  *     the stored ETag, reuses the cached value on 304 and shares identical requests in flight. Export mode reads
  *     snapshot.responses[Panel.key(name, params)] and rejects with error.notIncluded.
- *   Panel.action(op, data, key): POST api/actions {operation, data, request_key} with the X-Project-Memory CSRF
- *     header. Rejects with a Panel.Error with status, conflict (409) and details. Success triggers a poll.
- *     Panel.requestKey(prefix) is created when a form opens and reused for every submit of that draft.
  *   Panel.key(name, params), Panel.health(), Panel.snapshot, Panel.onRevision(fn(revision)).
  * Polling: live mode reads api/health one second after the previous read ends, while visible, so a change shows
  *   within two seconds. A new revision clears the response cache and
  *   renders the current view and the open detail pane again, keeping the scroll position of #main, of the pane and of
  *   every element with data-scroll, the focus, and the text that the reader typed into a text control (give
- *   interactive elements a stable id or data-key; keep filters in route params). Nothing renders while a form dialog
- *   is open. A failed update shows "Update failed" and an alert, and both clear on the next successful poll.
+ *   interactive elements a stable id or data-key; keep filters in route params).
+ *   A failed update shows "Update failed" and an alert, and both clear on the next successful poll.
  *
  * Views: Panel.registerView(name, {title, section, render(container, params, ctx)}). Hash #name/key=value&key=value.
  *   render may be async; the container is laid out but hidden until it resolves, and a rejected render shows
- *   Panel.errorState. ctx: live, canEdit, revision, onShown(fn), setSummary(text) (the sentence beside the title).
+ *   Panel.errorState. ctx: live, revision, onShown(fn), setSummary(text) (the sentence beside the title).
  *   The window never scrolls: the view scrolls inside #main, under the page head with its icon, title and sentence. The
  *   sidebar holds Now without a heading, then Work (plan, work, decisions), Knowledge (records, requirements, learning,
  *   sessions) and the folded System (architecture, dependencies, agents, machine, hive, usage), which also takes any
@@ -52,15 +50,8 @@
  *   A list-head above the list pane holds the switch and the filters of a view, and a pane-body is a scrolling region
  *   of the list pane that holds a tree, a board or cards in place of rows (Work and Plan in views_work.js).
  *
- * Forms (modal dialog): Panel.registerForm(name, {title, submitLabel, render(fields, context, form),
- *   submit(values, context, form) -> {operation, data}, done(result, context) -> toast text, reload}).
- *   Panel.openForm(name, context, trigger) resolves with the action result, or null when closed. A 409 keeps the
- *   draft and shows "Reload saved version", which draws the form again with a new key from the context the form
- *   opened with. reload(context) returns another context instead, and reload: false offers no reload. Throw
- *   new Panel.FormError(message) in submit to stop before sending.
- *   Panel.formValues(form): checkboxes as booleans, data-list controls as arrays of non empty lines, data-number
- *   controls as numbers or null, multiple selects as arrays, other controls as trimmed text.
- *   Panel.field(label, control, hint), Panel.input, Panel.textarea, Panel.select(name, options, value, attrs).
+ * Fields of the filters
+ *   Panel.field(label, control, hint), Panel.input, Panel.select(name, options, value, attrs).
  *   Panel.filterField(kind, id, label, value, onChange, options): a labelled select, check or search control with a
  *   stable id that reports its new value on change. options are the select options or the search placeholder.
  *
@@ -78,7 +69,7 @@
  *
  * panel.css classes: view, view-head, sentence, row, stack, toolbar, tabs (aria-pressed buttons, or role tab with a tab panel), grid, card,
  *   proposed, list, chip, kv, empty, notice, badge, table-wrap with table.data, progress, graph, graph.compact,
- *   graph-layout, graph-side, legend, document, source-text, field, form-grid, hint, muted, mono; buttons primary, quiet, danger, small, item.
+ *   graph-layout, graph-side, legend, document, source-text, field, hint, muted, mono; buttons primary, quiet, danger, small, item.
  */
 const Panel = (() => {
   "use strict";
@@ -117,14 +108,13 @@ const Panel = (() => {
   const STRIP = ["in_progress", "review", "blocked", "ready", "backlog", "done"];
   const snapshot = JSON.parse($("memory-data").textContent);
   const live = snapshot.live === true;
-  const views = new Map(), panes = new Map(), forms = new Map(), cache = new Map(), inflight = new Map();
+  const views = new Map(), panes = new Map(), cache = new Map(), inflight = new Map();
   const revisionListeners = [];
   const state = { route: { name: "now", params: {} }, health: live ? null : (snapshot.responses || {}).health || null,
-    revision: null, csrf: null, healthTag: null, polling: false, stale: false, template: null, renderToken: 0,
-    paneToken: 0, pane: null, paneStack: [], paneTrigger: null, form: null, pendingRender: false, now: {} };
+    revision: null, healthTag: null, polling: false, stale: false, template: null, renderToken: 0,
+    paneToken: 0, pane: null, paneStack: [], paneTrigger: null, now: {} };
 
   class PanelError extends Error { constructor(message, extra = {}) { super(message); this.name = "PanelError"; Object.assign(this, extra); } }
-  class FormError extends Error {}
 
   // Elements.
   function h(tag, attrs, ...children) {
@@ -320,27 +310,6 @@ const Panel = (() => {
     if (!inflight.has(requestKey)) inflight.set(requestKey, fetchResponse(requestKey).finally(() => inflight.delete(requestKey)));
     return inflight.get(requestKey);
   }
-  function requestKey(prefix = "panel") {
-    const random = crypto.randomUUID ? crypto.randomUUID().replace(/-/g, "")
-      : Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, "0")).join("");
-    return String(prefix).slice(0, 60) + ":" + random;
-  }
-  const canEdit = () => live && Boolean(state.csrf);
-  async function action(operation, data, requestKeyValue) {
-    if (!live) throw new PanelError("This snapshot is read only. Open the live control panel to make changes.", { readOnly: true });
-    if (!state.csrf) throw new PanelError("The control panel is still connecting to the local server. Try again in a moment.");
-    const response = await request("api/actions", { method: "POST", headers: { "Content-Type": "application/json", "X-Project-Memory": state.csrf },
-      body: JSON.stringify({ operation, data, request_key: requestKeyValue }) },
-    "The change was not confirmed because the local server could not be reached. Submit the same form again; its request key prevents a duplicate record.");
-    const value = await readJson(response);
-    if (!response.ok) {
-      throw new PanelError(value.message || "The local server rejected the change with status " + response.status + ".",
-        { status: response.status, conflict: response.status === 409, details: value });
-    }
-    setTimeout(poll, 50);
-    return value;
-  }
-
   // Template labels and shell.
   const template = () => state.template;
   const term = (name) => (TERMS[state.template] || {})[name] || TERMS.default[name] || words(name);
@@ -416,10 +385,7 @@ const Panel = (() => {
     const explanation = value.meaning + (value.reason ? " Reason: " + value.reason : "");
     const parts = [h("span", { class: "phase-label" }, "Lifecycle"),
       h("span", { class: "phase-value", dataset: { tone: value.phase === "production" ? "review" : "in_progress" } }, name)];
-    node.replaceChildren(canEdit()
-      ? h("button", { type: "button", class: "phase-button", title: explanation, dataset: { key: "phase-change" },
-        on: { click: (event) => openForm("phase", { phase: value.phase }, event.currentTarget) } }, parts)
-      : h("span", { class: "phase-button", title: explanation }, parts));
+    node.replaceChildren(h("span", { class: "phase-button", title: explanation }, parts));
   }
   async function updateShell() {
     const project = (state.health && state.health.project) || snapshot.project || "Project Memory";
@@ -473,7 +439,7 @@ const Panel = (() => {
   // as the quick find of Notion. Arrows move the selection, Enter opens it and Escape closes the dialog.
   const find = { items: [], index: 0, token: 0, timer: null };
   function openFind() {
-    if (state.form || $("find").open) return;
+    if ($("find").open) return;
     find.back = document.activeElement;
     $("search-input").value = "";
     $("find").showModal();
@@ -549,7 +515,7 @@ const Panel = (() => {
     target.focus({ preventScroll: true });
     try { if (identity.selection && target.setSelectionRange) target.setSelectionRange(identity.selection[0], identity.selection[1]); } catch (error) { /* Not a text control. */ }
   }
-  const context = (shown) => ({ live, canEdit: canEdit(), revision: state.revision, onShown: (handler) => shown.push(handler) });
+  const context = (shown) => ({ live, revision: state.revision, onShown: (handler) => shown.push(handler) });
   const TYPED = "textarea, input[type=text], input[type=search], input:not([type])";
   const identity = (node) => (node.id ? "#" + CSS.escape(node.id) : node.dataset && node.dataset.key ? '[data-key="' + CSS.escape(node.dataset.key) + '"]' : null);
   // Renders into a hidden container next to the current content, then swaps, so a refresh does not flash.
@@ -582,7 +548,6 @@ const Panel = (() => {
     return true;
   }
   async function renderView(options = {}) {
-    if (state.form) { state.pendingRender = true; return; }
     const token = ++state.renderToken;
     const { name, params } = state.route;
     updateChrome();
@@ -635,7 +600,6 @@ const Panel = (() => {
   }
   async function renderPane(options = {}) {
     if (!state.pane) return;
-    if (state.form && options.keep) { state.pendingRender = true; return; }
     const token = ++state.paneToken;
     const { kind, params } = state.pane;
     const mine = () => token === state.paneToken;
@@ -715,14 +679,13 @@ const Panel = (() => {
   const openRecord = (id, trigger) => openPane("record", { id }, trigger);
   const openWork = (id, trigger) => openPane("work", { id }, trigger);
 
-  // Forms.
+  // Fields of the filters.
   function field(label, control, hint) {
     const check = control && control.type === "checkbox";
     return h("label", { class: check ? "field check" : "field" }, check ? [control, h("span", null, label)] : [h("span", null, label), control], hint ? h("small", null, hint) : null);
   }
   const text = (value) => (value === undefined || value === null ? "" : String(value));
   const input = (name, value, attrs = {}) => h("input", { type: "text", ...attrs, name, value: text(value) });
-  const textarea = (name, value, attrs = {}) => h("textarea", { ...attrs, name }, Array.isArray(value) ? value.join("\n") : text(value));
   function select(name, options, value, attrs = {}) {
     const chosen = (Array.isArray(value) ? value : [value]).map(text);
     return h("select", { ...attrs, name }, options.map((option) => {
@@ -736,99 +699,6 @@ const Panel = (() => {
       : kind === "check" ? h("input", { type: "checkbox", id, name: id, checked: value, on: { change: report } })
         : input(id, value, { id, type: "search", autocomplete: "off", placeholder: options, on: { change: report } }));
   }
-  function formValues(form) {
-    const values = {};
-    for (const control of form.querySelectorAll("[name]")) {
-      if (control.disabled || !("value" in control)) continue;
-      const name = control.name;
-      if (control.type === "checkbox") values[name] = control.checked;
-      else if (control.type === "radio") { if (control.checked) values[name] = control.value; }
-      else if (control.multiple) values[name] = [...control.selectedOptions].map((option) => option.value);
-      else if ("list" in control.dataset) values[name] = control.value.split("\n").map((line) => line.trim()).filter(Boolean);
-      else if ("number" in control.dataset) values[name] = control.value.trim() === "" ? null : Number(control.value);
-      else values[name] = control.value.trim();
-    }
-    return values;
-  }
-  function setFormError(message) { $("form-error").textContent = message || ""; $("form-error").hidden = !message; }
-  async function drawForm() {
-    const current = state.form;
-    const { definition } = current;
-    $("form-title").textContent = typeof definition.title === "function" ? definition.title(current.context) : definition.title || "Save changes";
-    Object.assign($("form-save"), { textContent: definition.submitLabel || "Save", disabled: false });
-    $("form-reload").hidden = true;
-    setFormError("");
-    $("form-fields").replaceChildren();
-    try {
-      await definition.render($("form-fields"), current.context, $("form"));
-    } catch (error) {
-      setFormError(error.message || String(error));
-      $("form-save").disabled = true;
-    }
-    const first = state.form === current && $("form-fields").querySelector("input:not([type=hidden]):not([disabled]), select:not([disabled]), textarea:not([disabled])");
-    if (first) first.focus();
-  }
-  function openForm(name, formContext = {}, trigger) {
-    const definition = forms.get(name);
-    if (!definition) return Promise.reject(new Error("No form is registered for " + name + "."));
-    if (!canEdit()) {
-      toast(live ? "The control panel is still connecting. Try again in a moment." : "This snapshot is read only. Open the live control panel to make changes.");
-      return Promise.resolve(null);
-    }
-    if (state.form) return Promise.resolve(null);
-    return new Promise((resolve) => {
-      state.form = { name, definition, context: formContext, initial: { ...formContext }, key: requestKey(name), result: null, busy: false, resolve,
-        trigger: trigger || document.activeElement };
-      $("form-dialog").showModal();
-      drawForm();
-    });
-  }
-  async function submitForm(event) {
-    event.preventDefault();
-    const current = state.form;
-    if (!current || current.busy) return;
-    current.busy = true;
-    $("form-save").disabled = true;
-    $("form-reload").hidden = true;
-    setFormError("");
-    try {
-      const { operation, data } = await current.definition.submit(formValues($("form")), current.context, $("form"));
-      current.result = await action(operation, data, current.key);
-      const message = current.definition.done ? current.definition.done(current.result, current.context) : null;
-      $("form-dialog").close();
-      toast(message || "Saved.");
-    } catch (error) {
-      if (state.form !== current) return;
-      setFormError(error.message || String(error));
-      $("form-reload").hidden = !(error.conflict && current.definition.reload !== false);
-    } finally {
-      current.busy = false;
-      if (state.form === current) $("form-save").disabled = false;
-    }
-  }
-  async function reloadForm() {
-    const current = state.form;
-    if (!current || current.definition.reload === false) return;
-    try {
-      const reload = current.definition.reload;
-      current.context = typeof reload === "function" ? await reload(current.context) : { ...current.initial };
-      current.key = requestKey(current.name);
-      await drawForm();
-    } catch (error) {
-      setFormError(error.message || String(error));
-    }
-  }
-  function formClosed() {
-    const current = state.form;
-    if (!current) return;
-    state.form = null;
-    $("form-fields").replaceChildren();
-    if (current.trigger && current.trigger.isConnected) current.trigger.focus({ preventScroll: true });
-    current.resolve(current.result);
-    if (state.pendingRender) { state.pendingRender = false; refresh(); }
-  }
-
-  // Polling.
   async function poll() {
     if (!live || state.polling || document.hidden) return;
     state.polling = true;
@@ -840,7 +710,6 @@ const Panel = (() => {
         if (!response.ok) throw new PanelError(value.message || "The local server answered with status " + response.status + ".");
         state.healthTag = response.headers.get("ETag");
         state.health = value;
-        state.csrf = value.csrf || null;
         if (value.revision !== state.revision || state.stale) {
           state.revision = value.revision;
           state.stale = false;
@@ -883,12 +752,8 @@ const Panel = (() => {
     try { if (localStorage.getItem("project-memory-rail") === "hidden") $("app").dataset.rail = "hidden"; } catch (error) { /* The sidebar starts open. */ }
     $("rail-hide").addEventListener("click", () => { setRail(true); $("menu-toggle").focus(); });
     $("find-open").addEventListener("click", () => openFind());
-    $("form").addEventListener("submit", submitForm);
-    $("form-cancel").addEventListener("click", () => $("form-dialog").close());
-    $("form-reload").addEventListener("click", reloadForm);
-    $("form-dialog").addEventListener("close", formClosed);
     document.addEventListener("keydown", (event) => {
-      if (event.defaultPrevented || $("form-dialog").open) return;
+      if (event.defaultPrevented) return;
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") { event.preventDefault(); if ($("find").open) $("find").close(); else openFind(); return; }
       if ($("find").open) return;
       if (event.key === "Escape" && $("app").dataset.menu === "open") { setMenu(false); $("menu-toggle").focus(); }
@@ -918,12 +783,11 @@ const Panel = (() => {
   else queueMicrotask(boot);
 
   return {
-    live, snapshot, colors: COLORS, Error: PanelError, FormError,
-    canEdit, get, key, action, requestKey, health: () => state.health, onRevision: (handler) => revisionListeners.push(handler),
+    live, snapshot, colors: COLORS, Error: PanelError,
+    get, key, health: () => state.health, onRevision: (handler) => revisionListeners.push(handler),
     registerView: (name, definition) => views.set(name, definition), registerPane: (kind, definition) => panes.set(kind, definition),
-    registerForm: (name, definition) => forms.set(name, definition),
     go, route: () => ({ name: state.route.name, params: { ...state.route.params } }), setParams, refresh,
-    openPane, closePane, backPane, openRecord, openWork, listPane, paneRow, openForm, formValues, field, input, textarea, select, filterField,
+    openPane, closePane, backPane, openRecord, openWork, listPane, paneRow, field, input, select, filterField,
     h, icon, put, button, chip, kv, lower, badge, tone, link, markdown, words, term, template, date, count, progress, stateStrip, empty, errorState, toast, alert, clearAlert,
   };
 })();

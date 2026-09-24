@@ -1,9 +1,10 @@
 """Project scoped, authenticated loopback server for the control panel. SQLite remains authoritative.
 
-GET `api/<name>` serves the read functions in api.py with ETags. POST
-`api/actions` sends one human action to workspace.py. The server binds to
-127.0.0.1 only, requires the token in the path, checks Host and Origin, requires
-the CSRF header and JSON content for writes, and exits after ten idle minutes.
+GET `api/<name>` serves the read functions in api.py with ETags. The panel is
+read only: every POST is refused, and a decision of the user is recorded in the
+chat through the user_action operation of MCP. The server binds to 127.0.0.1
+only, requires the token in the path, checks Host and Origin, and exits after
+ten idle minutes.
 """
 import argparse
 import hashlib
@@ -24,12 +25,11 @@ import uuid
 
 from . import Memory
 from . import api
-from .core import MemoryError, InvalidRecord, Conflict, dumps
+from .core import MemoryError, InvalidRecord, dumps
 from .documents import document_path, PREFIX
 from .install import atomic
 
 IDLE_SECONDS = 600
-MAX_ACTION_BYTES = 2_000_000
 MAX_QUERY = 4096
 TREE_INTERVAL = 5.0
 EXPIRED_RUN_SECONDS = 30
@@ -38,16 +38,8 @@ ERRORS = (MemoryError, ValueError, TypeError, KeyError, RecursionError, sqlite3.
 # started with one of them present was started by an assistant, not by the user in a terminal.
 ASSISTANT_ENVIRONMENT = ('CLAUDECODE', 'CLAUDE_CODE_ENTRYPOINT', 'CODEX_SANDBOX', 'CODEX_SANDBOX_NETWORK_DISABLED',
                          'CODEX_THREAD_ID', 'CODEX_CI', 'AI_AGENT')
-STARTED_BY_ASSISTANT = ('This control panel was started from inside an assistant session, so it does not merge delegated '
-                        'work while the project is in production and does not move the project back to development. '
-                        'Start the control panel from your own terminal with project-memory view and record the action '
-                        'there.')
-FOCUS_STARTED_BY_ASSISTANT = ('This control panel was started from inside an assistant session, so it does not set the check of a '
-                              'focused problem or start its attempts, because the check runs a command on this computer. Start '
-                              'the control panel from your own terminal with project-memory view and record the action there.')
-HIVE_PURGE_STARTED_BY_ASSISTANT = ('This control panel was started from inside an assistant session, so it does not purge swarms '
-                                   'of the hive, because a purge removes their entries for good. Start the control panel from '
-                                   'your own terminal with project-memory view and purge the swarms there.')
+READ_ONLY = ('The control panel is read only. Ask the assistant in the chat: it records your decision with the user_action '
+             'operation, which verifies the words of your prompt.')
 URL_WITHHELD = ('The control panel address is not printed inside an assistant session, because the address carries the '
                 'access key of the panel. The browser was asked to open it. Run project-memory view in your own terminal '
                 'to print the address.')
@@ -57,26 +49,6 @@ def assistant_session(environ=None):
     """The names of the assistant environment variables that are set, or an empty list in a terminal of the user."""
     environ = os.environ if environ is None else environ
     return [name for name in ASSISTANT_ENVIRONMENT if str(environ.get(name) or '').strip()]
-
-
-def user_authority_refusal(memory, operation, data):
-    """The refusal for an action that a panel started by an assistant does not carry, or None.
-
-    The gate of the project phase makes the merge in production a user action.
-    A panel that an assistant started itself could otherwise carry that action
-    under the name of the user, so it refuses the merge in production and the
-    return of the project to development. Every other action is unchanged.
-    """
-    from .planning import phase
-    if operation == 'merge' and phase(memory)['phase'] == 'production':
-        return STARTED_BY_ASSISTANT
-    if operation == 'phase' and isinstance(data, dict) and data.get('phase') != 'production':
-        return STARTED_BY_ASSISTANT
-    if operation in ('focus_check', 'focus_start'):
-        return FOCUS_STARTED_BY_ASSISTANT
-    if operation == 'hive_purge':
-        return HIVE_PURGE_STARTED_BY_ASSISTANT
-    return None
 
 
 def html():
@@ -161,7 +133,6 @@ class Viewer(ThreadingHTTPServer):
         self.memory._architecture_cache = {}
         self.memory._api_cache = {}
         self.cache_revision = None
-        self.csrf = secrets.token_urlsafe(24)
         self.last_access = time.monotonic()
         self.version = None
         self.paths = []
@@ -250,7 +221,7 @@ class Viewer(ThreadingHTTPServer):
             self.memory.db.rollback()
         value = {'revision': revision, **value}
         if name == 'health':
-            value.update(csrf=self.csrf, interactive=True, assistant_started=self.assistant_started)
+            value.update(interactive=True, assistant_started=self.assistant_started)
         return value
 
     def server_close(self):
@@ -302,39 +273,8 @@ class Handler(BaseHTTPRequestHandler):
             pass
 
     def do_POST(self):
-        origin = self.origin()
-        endpoint = self.route(urlsplit(self.path).path)
-        csrf = self.headers.get('X-Project-Memory') or ''
-        if (self.headers.get('Host') != origin[7:] or self.headers.get('Origin') != origin
-                or not hmac.compare_digest(csrf.encode(), self.server.csrf.encode()) or endpoint is None
-                or self.headers.get('Content-Type') != 'application/json'):
-            self.send_error(403)
-            return
-        if endpoint != 'api/actions':
-            self.send_error(404)
-            return
-        try:
-            size = int(self.headers.get('Content-Length', '0'))
-            if not 0 < size <= MAX_ACTION_BYTES:
-                raise InvalidRecord('Workspace actions must be JSON smaller than 2 MB.')
-            data = json.loads(self.rfile.read(size))
-            if not isinstance(data, dict):
-                raise InvalidRecord('The action must be an object.')
-            self.server.last_access = time.monotonic()
-            from .workspace import action
-            with Memory(self.server.memory.path) as memory:
-                refusal = (user_authority_refusal(memory, data.get('operation'), data.get('data'))
-                           if self.server.assistant_started else None)
-                if refusal:
-                    raise InvalidRecord(refusal, execution='not_started',
-                                        next_step={'action': 'start_panel_in_terminal',
-                                                   'reason': 'Run project-memory view in your own terminal.'})
-                value = action(memory, **data)
-            status = 200
-        except ERRORS as exc:
-            status = 409 if isinstance(exc, Conflict) else 400
-            value = {'error': type(exc).__name__, 'message': str(exc), **getattr(exc, 'details', {})}
-        self.send_json(status, value)
+        """Refuse every write: the panel is read only, and the user decides in the chat."""
+        self.send_json(405, {'error': 'ReadOnly', 'message': READ_ONLY})
 
     def do_GET(self):
         origin = self.origin()

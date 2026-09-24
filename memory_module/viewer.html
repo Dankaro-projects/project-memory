@@ -69,6 +69,7 @@
 <symbol id="i-up" viewBox="0 0 24 24"><path d="m6 15 6-6 6 6"/></symbol>
 <symbol id="i-expand" viewBox="0 0 24 24"><path d="M14 4h6v6M10 20H4v-6M20 4l-7 7M4 20l7-7"/></symbol>
 <symbol id="i-collapse" viewBox="0 0 24 24"><path d="M20 4l-7 7M13 5v6h6M4 20l7-7M11 19v-6H5"/></symbol>
+<symbol id="i-chat" viewBox="0 0 24 24"><path d="M5 5.5h14a1.5 1.5 0 0 1 1.5 1.5v8.5A1.5 1.5 0 0 1 19 17h-8l-4.5 3.5V17H5a1.5 1.5 0 0 1-1.5-1.5V7A1.5 1.5 0 0 1 5 5.5z"/><path d="M8 10h8M8 13h5"/></symbol>
 <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="m20 20-4.5-4.5"/></symbol>
 </svg>
 <div id="app" class="shell" hidden>
@@ -99,14 +100,6 @@
 </div>
 </div>
 <dialog id="find" class="find" aria-label="Quick find"><div class="find-field"><svg class="icon" aria-hidden="true"><use href="#i-search"/></svg><input id="search-input" type="search" placeholder="Search pages, work items and records" autocomplete="off" aria-controls="find-results" aria-label="Search" /><kbd aria-hidden="true">Esc</kbd></div><div id="find-results" class="find-results" role="listbox" aria-label="Results"></div><div class="find-foot"><span><kbd>↑</kbd><kbd>↓</kbd> to move</span><span><kbd>Enter</kbd> to open</span><span><kbd>Esc</kbd> to close</span></div></dialog>
-<dialog id="form-dialog" class="form-dialog" aria-labelledby="form-title">
-<form id="form" novalidate>
-<h2 id="form-title"></h2>
-<div id="form-fields" class="form-fields"></div>
-<p id="form-error" class="form-error" role="alert" hidden></p>
-<div class="form-actions"><button type="button" id="form-reload" hidden>Reload saved version</button><button type="button" id="form-cancel">Cancel</button><button type="submit" id="form-save" class="primary">Save</button></div>
-</form>
-</dialog>
 <div id="toasts" class="toasts" role="status" aria-live="polite"></div>
 </div>
 <script id="memory-data" type="application/json">__MEMORY_DATA__</script>

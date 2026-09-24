@@ -188,6 +188,7 @@ def operation_rules(operation):
                      'kind': {'type': ['string', 'null'], 'enum': list(SWARM_KINDS) + [None]},
                      'move': {'type': ['string', 'null'], 'enum': list(HIVE_MOVES) + [None]},
                      'blind': {'type': ['boolean', 'null']}, 'fields': {'type': ['object', 'null']}}
+    rules['user_action'] = {'action': {'type': 'string', 'enum': list(module('workspace').OPERATIONS)}, 'fields': {'type': 'object'}}
     hidden = {'merge': {'override_reason'}, 'source': {'internal'}, 'delegate': {'focus_attempt'}, 'evidence': {'found'}}
     return rules.get(operation, {}), hidden.get(operation, set())
 
@@ -269,11 +270,19 @@ OPERATION_SCHEMAS = {
                       'optional': ['max_attempts', 'mode', 'hypotheses'],
                       'rules': 'Propose a focused problem with 1 to 3 distinct hypotheses, each with statement and approach. '
                                'max_attempts is 1 to 3, default 2; mode is relay or parallel, default relay. '
-                               'Parallel allows at most 2 attempts. Only the user sets the check and starts attempts in the control panel.'},
+                               'Parallel allows at most 2 attempts. Only the user sets the check and starts attempts, through user_action on the words of the user.'},
     'sync': {'operation': 'sync', 'fields': {'limit': 100, 'offset': 0, 'check': False}, 'rules': 'Refresh previously selected Markdown. Use limit 1–1000, a nonnegative offset and a boolean check. check inspects changes without capturing new versions.'},
     'approve_requirements': {'operation': 'approve_requirements', 'required': ['requirements', 'reason', 'actor', 'evidence', 'expected_version'], 'types': {'requirements': 'List of 1–100 complete requirements.', 'reason': 'Text.', 'actor': 'Text.', 'evidence': '[{source_id, reason}]', 'expected_version': 'Current nonnegative direction version.'}, 'rules': 'Read memory_get direction first. Append only explicitly approved requirements with current approval evidence; this schema does not grant approval.'},
     'progress': {'operation': 'progress', 'required': ['episode_id', 'expected_version', 'payload', 'actor'], 'payload': {'state': 'Optional work state.', 'next_action': 'Optional complete sentence.', 'reason': 'Required explanation.'}, 'rules': 'Provide state or next_action. This preserves scope, autonomy, dependencies and evidence. Pass session_id when claiming agent work. Use plan for intentional scope changes; progress cannot waive completion checks. When Done is rejected only because the required outcome check is missing, the rejection starts that check and reports it under agent_check.'},
     'close': {'operation': 'close', 'required': ['episode_id', 'expected_version', 'prompt_receipt_id', 'prompt', 'reason', 'actor'], 'rules': 'Use this only when the user said in the chat that a work item is finished or should be closed. Pass the session_id, the receipt ID of that user prompt (from the UserPromptSubmit hook context) and the exact text the user sent. Project Memory compares the text with the hash in the receipt, refuses a notification or a prompt of another session, stores the text as user evidence that an agent cannot write itself, and records the plan as done on that evidence. No check is needed.'},
+    'user_action': {'operation': 'user_action', 'required': ['action', 'fields', 'prompt_receipt_id', 'prompt'],
+                    'actions': 'The fields of each action are those of the control panel: read memory_get schema with the action name for a record kind, or pass the fields the refusal names.',
+                    'rules': 'The control panel is read only, so a decision of the user is taken here: a merge or a discard of delegated work, a lesson review, '
+                             'the requirements, the phase, the instructions of a role, a machine rule, a session flag or proposal, a confirmation of criteria, '
+                             'an allowed path and the other actions of the panel. Use it only when the user asked for exactly this action in the chat. '
+                             'Pass the session_id, the receipt ID of that prompt and the exact text the user sent. Project Memory verifies the text '
+                             'against the receipt, refuses a notification or a prompt of another session, stores the words as user evidence and runs '
+                             'the action as the user, with the same checks as the panel. A merge in production is allowed, because the user asked for it.'},
     'reconcile': {'operation': 'reconcile', 'required': ['receipt_id', 'resolution', 'reason', 'evidence'], 'resolutions': ['completed', 'failed', 'not_run', 'unknown'], 'evidence': 'Every resolution needs [{source_id, reason}] from inspecting actual effects. Record a source first. Unknown preserves uncertainty; it does not establish success or permit a retry.'},
     'evidence': {'operation': 'evidence', 'required': ['receipt_ids'], 'rules': 'Pass 1 to 20 PostToolUse receipt IDs in the top level receipt_ids and an empty data object. Project Memory reads the output of each call from its session transcript and stores it only when its sha256 matches the receipt; a mismatch or a missing transcript entry refuses the whole request and stores nothing. A check reads only the sources that the current outcome cites: record an outcome that supersedes the current one and cites the returned [{source_id, reason}] as evidence, so that a check can confirm a run, an artefact or an installed version, then request the check with retry true. Calls without a PostToolUse receipt, such as calls the hooks did not observe, cannot be verified.'},
     'log': {'operation': 'log', 'required': ['episode_id', 'expected_version', 'actor', 'evidence', 'payload'],
@@ -285,7 +294,7 @@ OPERATION_SCHEMAS = {
     'checkpoint': {'operation': 'checkpoint', 'required': ['prompt_ids', 'effect', 'reason'], 'optional': ['episode_id', 'plan_id', 'requirements', 'gap_ids'], 'effects': ['new_work', 'changed', 'unchanged', 'informational', 'deferred'], 'rules': 'Pass session_id. prompt_ids contains 1–20 observed user prompt receipt IDs including the newest prompt. Work assessments require episode_id and the current plan_id. New or changed work requires requirements: a list of complete conditions and exceptions. Changed intent requires a revised plan. Informational or deferred turns require a reason but no new episode. A checkpoint declares interpretation; it never establishes success, approves source instructions or reconciles uncertain effects.', 'bundling': 'Place these fields in data.checkpoint on a plan or record write; episode_id is inferred from that record. Both writes commit atomically.'},
     'agent_check': {'operation': 'review', 'required': ['episode_id'], 'optional': {'role': ['outcome', 'intent', 'recovery'], 'max_seconds': '30 to 900; default 300. A longer explicit review preserves the same criteria.', 'retry': 'Use true only to request a new check after inspecting the earlier result.'}, 'result': 'A read-only agent checks the current work. Read memory_get reviews and wait using project-memory review --wait CHECK_ID.'},
     'delegate': {'operation': 'delegate', 'required': ['episode_id'], 'optional': {'host': ['codex', 'claude'], 'max_seconds': '60 to 14400; default 1800.'}, 'rules': 'Pass session_id. The work item needs a current plan that is not done or cancelled, autonomy act granted by the user, and paths that limit which files may change. The project must be a git repository without uncommitted changes inside those paths. The worker runs in a separate worktree, and another host reviews its changes. Read memory_get agents with the work item id to follow the run.'},
-    'merge': {'operation': 'merge', 'required': ['run_id', 'actor'], 'rules': 'Merges a completed delegated run whose latest work review passed. Only the user can merge without a passing review, from the control panel, so override_reason is not accepted here. A missing or unfinished review is started again and reported instead of merging. While the project is in production, every merge over MCP is refused and the user merges in the control panel.'},
+    'merge': {'operation': 'merge', 'required': ['run_id', 'actor'], 'rules': 'Merges a completed delegated run whose latest work review passed. Only the user can merge without a passing review, through user_action on the words of the user, so override_reason is not accepted here. A missing or unfinished review is started again and reported instead of merging. While the project is in production, every merge over MCP is refused and the user merges in the control panel.'},
     'request_work_review': {'operation': 'request_work_review', 'required': ['run_id'], 'optional': {'max_seconds': '30 to 900; default 900.'}, 'rules': 'Requests a new work review of a completed delegated run when its review failed, timed out, was cancelled, found its host unavailable, or never started. A current or passing review is not replaced.'},
     'promote_rule': {'operation': 'promote_rule', 'required': ['when', 'do', 'because', 'exceptions', 'basis', 'roles', 'actor'], 'optional': ['lesson_id', 'keywords', 'failure_type', 'pattern_type'], 'rules': 'Proposes that a rule of this project becomes a rule of this machine, for every project on it. The proposal is recorded in this project, and nothing is written to the machine memory until the user accepts it in the control panel. Write the rule so that it holds for any project: the text is refused when it names the project, an absolute path, a record identifier, a document of this project, an electronic mail address or a host name, and the refusal reports which check matched without repeating the value. A promoted rule carries no path pattern, because a path belongs to one project. basis is the short reason, written at promotion, for which the rule holds beyond this project. Read memory_get machine for the rules that already apply.'},
     'answer_kickoff': {'operation': 'answer_kickoff', 'required': ['question_ids', 'text', 'actor'], 'optional': ['evidence', 'episode_id'], 'rules': 'Read memory_get kickoff first. text records the answer the user gave; question_ids lists the kickoff question ids it answers. Each kickoff question names the phase it belongs to, and the note is recorded on the earliest of those phases unless episode_id names another work item. Answer questions of different phases in separate calls to keep each answer on its own phase. An answer does not approve requirements.'},
@@ -658,8 +667,8 @@ def write_record(call, memory, request_key, data, session_id, receipt_ids):
     if not isinstance(payload, dict):
         raise InvalidRecord('payload must be an object.')
     if kind == 'lesson_review':
-        raise InvalidRecord('Only the user reviews lessons, in the control panel. A lesson stays proposed until the user accepts, rejects or retires it.',
-                            next_step={'action': 'ask_user', 'reason': 'Ask the user to review the proposed lesson in the control panel.'})
+        raise InvalidRecord('Only the user reviews lessons. A lesson stays proposed until the user accepts, rejects or retires it in the chat, recorded with user_action.',
+                            next_step={'action': 'ask_user', 'reason': 'Ask the user to review the proposed lesson, and record the answer with user_action.'})
     if receipt_ids:
         data['evidence'] = data.get('evidence', []) + codex_host.evidence_for(memory, receipt_ids)
     if kind == 'decision' and (not data.get('evidence') or not {'uncertainty', 'alternatives'} <= payload.keys()):
@@ -691,7 +700,7 @@ def write_delegate(call, memory, request_key, data, session_id, receipt_ids):
 
 def write_merge(call, memory, request_key, data, session_id, receipt_ids):
     if data.pop('override_reason', None) is not None:
-        raise InvalidRecord('Only the user can merge delegated work with an override reason, from the control panel.')
+        raise InvalidRecord('Only the user can merge delegated work with an override reason, through user_action on the words of the user.')
     refuse_production_merge(memory)
     return call(memory, data.pop('run_id'), request_key=request_key, **data)
 
@@ -758,7 +767,7 @@ def write_log(call, memory, request_key, data, session_id, receipt_ids):
 
 
 OPERATIONS = {
-    'focus_propose': ('Propose a focused problem and distinct hypotheses.', Operation('focus:propose'), 'focus_propose'),
+    'focus_propose': ('Propose a focused problem and hypotheses.', Operation('focus:propose'), 'focus_propose'),
     'start': ('Open an episode (title, objective, task_type, criterion, subject).', Operation('core:Memory.start', key=False), 'start'),
     'source': ('Store evidence text (source_key, title, summary, body, origin, subject).', Operation('core:Memory.source', key=False), 'source'),
     'document': ('Capture a local Markdown file by absolute path.', Operation('core:Memory.document', special=write_document), 'document'),
@@ -767,10 +776,11 @@ OPERATIONS = {
     'reconcile': ('Resolve an uncertain tool receipt with evidence.', Operation('codex_host:reconcile'), 'reconcile'),
     'evidence': ('Store tool output verified by receipt_ids.', Operation('sessions:receipt_evidence', special=write_evidence), 'evidence'),
     'approve_requirements': ('Append requirements the user explicitly approved.', Operation('direction:approve'), 'approve_requirements'),
-    'plan': ('Create a work item and plan, or revise a plan at expected_version.', Operation('planning:save', session=True, first='work_plan'), 'plan'),
+    'plan': ('Create a work item and plan, or revise a plan.', Operation('planning:save', session=True, first='work_plan'), 'plan'),
     'sprint': ('Create or revise a sprint.', Operation('planning:save', session=True, first='sprint'), 'sprint'),
-    'progress': ('Change state or next_action with a reason, keeping scope.', Operation('planning:progress', session=True), 'progress'),
+    'progress': ('Change state or next action, keeping scope.', Operation('planning:progress', session=True), 'progress'),
     'close': ('Done on the user\'s words.', Operation('planning:close', session=True), 'close'),
+    'user_action': ('A user decision on the user\'s words.', Operation('workspace:chat_action', session=True), 'user_action'),
     'log': ('Decision, action and outcome of done work.', Operation('core:Memory.record', special=write_log), 'log'),
     'checkpoint': ('Optional explicit assessment of prompts.', Operation('coverage:assess', session=True), 'checkpoint'),
     'review': ('Request a read only agent check of a work item.', Operation('reviews:request', special=write_review), 'agent_check'),
@@ -780,7 +790,7 @@ OPERATIONS = {
     'delegate': ('Run an act work item in a git worktree.', Operation('delegation:request_work', special=write_delegate), 'delegate'),
     'merge': ('Merge a delegated run after its work review passed.', Operation('delegation:merge', special=write_merge), 'merge'),
     'request_work_review': ('Review a delegated run again.', Operation('delegation:retry_review', special=write_work_review), 'request_work_review'),
-    'promote_rule': ('Propose a project rule as a machine rule, for the user to accept.', Operation('machine:propose'), 'promote_rule'),
+    'promote_rule': ('Propose a project rule for the machine.', Operation('machine:propose'), 'promote_rule'),
     'hive': ('Open, join, log to or close a swarm of agents.', Operation('hive:session_write', session=True), 'hive'),
 }
 

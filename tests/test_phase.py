@@ -83,7 +83,7 @@ class PhaseTests(PhaseFixture):
                                            (PHASE_SOURCE_KEY,)).fetchone()[0], 0)
 
     def test_the_phase_source_key_is_not_available_to_an_ordinary_source_write(self):
-        with self.assertRaisesRegex(InvalidRecord, 'control panel'):
+        with self.assertRaisesRegex(InvalidRecord, 'Only the user changes the phase, in the chat'):
             self.m.source(PHASE_SOURCE_KEY, 'Phase', 'The assistant writes the phase.',
                           json.dumps({'phase': 'development', 'reason': 'Merge without the user.', 'at': self.m.now()}),
                           'user')
@@ -114,7 +114,7 @@ class PhaseTests(PhaseFixture):
         self.production()
         text = codex_host.session_context(self.m, 'session-one')
         self.assertIn('This project is in production', text)
-        self.assertIn('control panel', text)
+        self.assertIn('asking for the merge in the chat', text)
 
     def test_a_read_only_connection_reports_the_phase(self):
         self.production()
@@ -208,8 +208,7 @@ class PanelAuthorityTests(PhaseFixture):
         def post(operation, data, key):
             body = json.dumps({'operation': operation, 'data': data, 'request_key': key}).encode()
             request = Request(base + 'api/actions', data=body, method='POST',
-                              headers={'Content-Type': 'application/json', 'Origin': origin,
-                                       'X-Project-Memory': health['csrf']})
+                              headers={'Content-Type': 'application/json', 'Origin': origin})
             try:
                 return 200, json.load(opener.open(request, timeout=10))
             except HTTPError as error:
@@ -217,24 +216,17 @@ class PanelAuthorityTests(PhaseFixture):
 
         return health, post
 
-    def test_a_panel_started_by_an_assistant_refuses_the_production_merge_and_the_return_to_development(self):
+    def test_no_panel_records_the_production_merge_or_the_return_to_development(self):
+        # The panel is read only, whoever started it: the user decides both in the chat through user_action.
         self.production()
-        health, post = self.serve(assistant_started=True)
-        self.assertTrue(health['assistant_started'])
-        status, value = post('merge', {'run_id': 'work_missing'}, 'panel-merge')
-        self.assertEqual((status, value['message'], value['execution']), (400, live.STARTED_BY_ASSISTANT, 'not_started'))
-        status, value = post('phase', {'phase': 'development', 'reason': 'The assistant reopens development.'}, 'panel-phase')
-        self.assertEqual((status, value['message']), (400, live.STARTED_BY_ASSISTANT))
+        for options in ({'assistant_started': True}, {}):
+            health, post = self.serve(**options)
+            self.assertNotIn('csrf', health)
+            status, value = post('merge', {'run_id': 'work_missing'}, 'panel-merge')
+            self.assertEqual((status, value['error'], value['message']), (405, 'ReadOnly', live.READ_ONLY))
+            status, value = post('phase', {'phase': 'development', 'reason': 'Reopen development.'}, 'panel-phase')
+            self.assertEqual(status, 405)
         self.assertEqual(planning.phase(self.m)['phase'], 'production')
-
-    def test_a_panel_started_by_the_user_records_the_same_actions(self):
-        self.production()
-        health, post = self.serve()
-        self.assertFalse(health['assistant_started'])
-        status, value = post('phase', {'phase': 'development', 'reason': 'The user reopens development.'}, 'panel-phase')
-        self.assertEqual((status, value['phase']), (200, 'development'))
-        status, value = post('merge', {'run_id': 'work_missing'}, 'panel-merge')
-        self.assertNotEqual(value.get('message'), live.STARTED_BY_ASSISTANT)
 
     def test_an_assistant_session_is_recognised_by_its_environment(self):
         self.assertEqual(live.assistant_session({'CLAUDECODE': '1', 'HOME': '/home/user'}), ['CLAUDECODE'])

@@ -114,14 +114,21 @@ NOTION_STYLE_ALLOWANCE = 17_150
 NOTEBOOK_ALLOWANCE = {'core.js': 8_550}
 NOTEBOOK_STYLE_ALLOWANCE = 5_150
 NOTEBOOK_SHELL_ALLOWANCE = 2_250
+# The read only panel, which the user confirmed on 24 September 2026 with "go on do it": decisions move to the chat
+# through the user_action operation, so forms.js and every edit control leave the panel. Measured against main at
+# 3b13d5d: forms.js went with 50,138 code characters, views_work.js fell by 7,701, core.js by 6,539, views_knowledge.js
+# by 3,492 and graphs.js by 243, while blocks.js grew by 309 with the chat hint; the joined scripts fell from 292,904 to
+# 225,100 and panel.css from 57,447 to 55,946. The reduction lowers the budgets: the total and the views by what they
+# lost, rounded down to the next 50, and the stylesheet by 1,500. blocks.js takes 350 for the chat hint.
+READ_ONLY_ALLOWANCE = {'blocks.js': 350}
+READ_ONLY_REDUCTION = {'total': 67_800, 'views': 11_150, 'core.js': 6_500, 'style': 1_500}
 ALLOWANCES = (FOCUS_ALLOWANCE, HIVE_ALLOWANCE, USAGE_ALLOWANCE, SESSIONS_ALLOWANCE, PANEL_ACTIONS_ALLOWANCE, USABILITY_ALLOWANCE,
-              REDESIGN_ALLOWANCE, BATCH_CONFIRM_ALLOWANCE, NOTION_ALLOWANCE, NOTEBOOK_ALLOWANCE)
-TOTAL_SCRIPT_CHARACTERS = 196_000 + sum(sum(allowance.values()) for allowance in ALLOWANCES)
-FILE_BUDGETS = {'core.js': 36_000 + sum(allowance.get('core.js', 0) for allowance in ALLOWANCES),
-                'forms.js': 37_000 + sum(allowance.get('forms.js', 0) for allowance in ALLOWANCES), 'graphs.js': 41_000,
+              REDESIGN_ALLOWANCE, BATCH_CONFIRM_ALLOWANCE, NOTION_ALLOWANCE, NOTEBOOK_ALLOWANCE, READ_ONLY_ALLOWANCE)
+TOTAL_SCRIPT_CHARACTERS = 196_000 + sum(sum(allowance.values()) for allowance in ALLOWANCES) - READ_ONLY_REDUCTION['total']
+FILE_BUDGETS = {'core.js': 36_000 + sum(allowance.get('core.js', 0) for allowance in ALLOWANCES) - READ_ONLY_REDUCTION['core.js'], 'graphs.js': 41_000,
                 'blocks.js': sum(allowance.get('blocks.js', 0) for allowance in ALLOWANCES)}
-VIEW_CHARACTERS = 82_000 + sum(allowance.get('views', 0) for allowance in ALLOWANCES)
-STYLE_CHARACTERS = 27_000 + USABILITY_STYLE_ALLOWANCE + REDESIGN_STYLE_ALLOWANCE + NOTION_STYLE_ALLOWANCE + NOTEBOOK_STYLE_ALLOWANCE
+VIEW_CHARACTERS = 82_000 + sum(allowance.get('views', 0) for allowance in ALLOWANCES) - READ_ONLY_REDUCTION['views']
+STYLE_CHARACTERS = 27_000 + USABILITY_STYLE_ALLOWANCE + REDESIGN_STYLE_ALLOWANCE + NOTION_STYLE_ALLOWANCE + NOTEBOOK_STYLE_ALLOWANCE - READ_ONLY_REDUCTION['style']
 SHELL_CHARACTERS = 6_600 + REDESIGN_SHELL_ALLOWANCE + NOTEBOOK_SHELL_ALLOWANCE
 
 
@@ -153,32 +160,25 @@ class InterfaceBudgetTests(unittest.TestCase):
         self.assertLessEqual(sum(size(UI / name) for name in viewer.UI_STYLES), STYLE_CHARACTERS)
         self.assertLessEqual(size(ROOT / 'viewer.html'), SHELL_CHARACTERS)
 
-    def test_the_budget_is_measured_with_the_reassess_action_in_place(self):
-        # A budget met by dropping an action would hide a lost feature, so the reassess form and its button must ship.
-        self.assertIn('P.registerForm("reassess"', (UI / 'forms.js').read_text(encoding='utf-8'))
-        self.assertIn('P.formButton("Reassess", "reassess"', (UI / 'views_knowledge.js').read_text(encoding='utf-8'))
-
-    def test_the_budget_is_measured_with_the_focus_section_in_place(self):
-        # The allowance above pays for these forms and buttons, so the budget may not be met by removing them.
-        self.assertLessEqual(sum(FOCUS_ALLOWANCE.values()), 8_000)
-        forms = (UI / 'forms.js').read_text(encoding='utf-8')
-        views = (UI / 'views_work.js').read_text(encoding='utf-8')
-        self.assertIn('P.registerForm("focus_check"', forms)
-        self.assertIn('P.registerForm("focus_start"', forms)
-        self.assertIn('P.formButton("Set the check", "focus_check"', views)
-        self.assertIn('P.formButton("Start the attempts", "focus_start"', views)
-
-
-    def test_the_budget_is_measured_with_the_hive_view_in_place(self):
-        # The hive allowance pays for the view and its three forms, so the budget may not be met by removing them.
-        self.assertLessEqual(sum(HIVE_ALLOWANCE.values()), HIVE_LIMIT)
-        forms = (UI / 'forms.js').read_text(encoding='utf-8')
-        views = (UI / 'views_knowledge.js').read_text(encoding='utf-8')
-        for name in ('hive_post', 'hive_close', 'hive_purge'):
-            self.assertIn(f'P.registerForm("{name}"', forms)
-        self.assertIn('P.registerView("hive"', views)
-        self.assertIn('P.formButton("Purge closed swarms", "hive_purge"', views)
-        self.assertIn('P.formButton("Close the swarm", "hive_close"', views)
+    def test_every_action_of_the_earlier_forms_reaches_the_user_through_the_chat(self):
+        # The allowances paid for these forms. The panel is read only now, so each action stays a workspace action that
+        # user_action runs on the words of the user, and the panel says where to decide.
+        from memory_module import workspace
+        for name in ('reassess', 'focus_check', 'focus_start', 'hive_post', 'hive_close', 'hive_purge', 'session_flag', 'session_flags',
+                     'session_proposal', 'reconcile', 'reconcile_read_only', 'confirm_criteria', 'merge', 'phase', 'lesson_review', 'instructions'):
+            self.assertIn(name, workspace.OPERATIONS)
+        self.assertNotIn('forms.js', viewer.UI_SCRIPTS)
+        self.assertFalse((UI / 'forms.js').exists())
+        core = (UI / 'core.js').read_text(encoding='utf-8')
+        self.assertNotIn('api/actions', core)
+        self.assertNotIn('registerForm', core)
+        self.assertIn('const chatHint = (text)', (UI / 'blocks.js').read_text(encoding='utf-8'))
+        work = (UI / 'views_work.js').read_text(encoding='utf-8')
+        knowledge = (UI / 'views_knowledge.js').read_text(encoding='utf-8')
+        self.assertIn('P.registerView("hive"', knowledge)
+        self.assertIn('P.registerView("sessions"', knowledge)
+        self.assertIn('P.registerPane("decide"', work)
+        self.assertIn('async function unconfirmedCard(params)', work)
 
     def test_the_budget_is_measured_with_the_usage_view_in_place(self):
         # The usage allowance pays for the view, its host cards and its routing table, so the budget may not be met by removing them.
@@ -188,33 +188,17 @@ class InterfaceBudgetTests(unittest.TestCase):
         self.assertIn('function usageCard(item, data)', views)
         self.assertIn('section("Routing decisions of recent runs"', views)
 
-    def test_the_budget_is_measured_with_the_sessions_view_and_reconciliation_in_place(self):
-        # These allowances pay for the Sessions view, the reconciliation card and the paged Now and board, so the budget
-        # may not be met by removing them.
-        self.assertLessEqual(sum(SESSIONS_ALLOWANCE.values()), SESSIONS_LIMIT)
-        self.assertLessEqual(sum(PANEL_ACTIONS_ALLOWANCE.values()), PANEL_ACTIONS_LIMIT)
-        forms = (UI / 'forms.js').read_text(encoding='utf-8')
-        for name in ('session_flag', 'session_proposal', 'reconcile', 'reconcile_read_only'):
-            self.assertIn(f'P.registerForm("{name}"', forms)
-        self.assertIn('P.registerView("sessions"', (UI / 'views_knowledge.js').read_text(encoding='utf-8'))
-        work = (UI / 'views_work.js').read_text(encoding='utf-8')
-        # Now is a digest that keeps the reconciliation card, and the decision pane serves the lessons, flags and proposals.
-        self.assertIn('P.registerPane("decide"', work)
-        self.assertIn('const [unconfirmed, kickoff] = await Promise.all([unconfirmedCard({}), kickoffCard(now)]);', work)
-        self.assertIn('async function unconfirmedCard(params)', work)
-
     def test_the_budget_is_measured_with_the_usability_changes_in_place(self):
         # The usability allowance pays for these parts, so the budget may not be met by removing them.
         self.assertLessEqual(sum(USABILITY_ALLOWANCE.values()), USABILITY_LIMIT)
         self.assertLessEqual(USABILITY_STYLE_ALLOWANCE, 400)
         work = (UI / 'views_work.js').read_text(encoding='utf-8')
         knowledge = (UI / 'views_knowledge.js').read_text(encoding='utf-8')
-        for part in ('P.actButton = ', 'P.planPayload = ', 'function quickEdit(card, field, label, options)', 'dataset: { key: "work-folded" }'):
+        for part in ('dataset: { key: "work-folded" }',):
             self.assertIn(part, work)
         # The Proposed lessons tab replaced the section that the link of Now opened.
-        for part in ('function titledButton(id, options = {})', '["proposed", "Proposed lessons", "review"]', '"Dismiss the " + flags.length + " shown flags"'):
+        for part in ('function titledButton(id, options = {})', '["proposed", "Proposed lessons", "review"]'):
             self.assertIn(part, knowledge)
-        self.assertIn('context.needsPaths', (UI / 'forms.js').read_text(encoding='utf-8'))
         # The pane replaced the drawer that covered the page, so the stylesheet now hides the view behind a full width pane.
         self.assertIn('.shell[data-pane="open"] .page { visibility: hidden; }', (UI / 'panel.css').read_text(encoding='utf-8'))
 
@@ -238,21 +222,18 @@ class InterfaceBudgetTests(unittest.TestCase):
         # Sessions, Learning and Decisions are tabs or a filter head with rows, and a lesson, a flag and a proposal share the decide pane.
         knowledge = (UI / 'views_knowledge.js').read_text(encoding='utf-8')
         for part in ('P.registerPane("guard"', 'P.registerPane("instructions"', 'const LEARNING_TABS = ', 'const SESSION_TABS = ',
-                     'P.openPane("decide", { kind: "lessons_to_accept"', 'decide("session_flags", flag.id)', 'decide("session_proposals", item.id)'):
+                     'P.openPane("decide", { kind: "lessons_to_accept"'):
             self.assertIn(part, knowledge)
         # Records is rows with a filter head and its fold, and Requirements reads in one region with its approval in the foot.
-        for part in ('const RECORD_ICONS = ', 'dataset: { scroll: "requirements" }', 'id: "review-requirements"'):
+        for part in ('const RECORD_ICONS = ', 'dataset: { scroll: "requirements" }'):
             self.assertIn(part, knowledge)
         # Agents and Machine are tabs of rows or regions, Hive is rows with the swarm in its pane, and Usage is one region.
         # The swarm pane names the route keys that close with it, so the address of Hive carries the swarm and its filters.
         for part in ('const AGENT_TABS = ', 'const MACHINE_TABS = ', 'P.registerPane("swarm"', 'P.openPane("swarm", { id, route: ["swarm", "move", "agent"] }, trigger)',
-                     'const syncHive = ', 'P.formButton("Ask a question", "hive_post"', 'const region = (...children)'):
+                     'const syncHive = ', 'const region = (...children)'):
             self.assertIn(part, knowledge)
         self.assertIn('P.filterBox = filterBox;', work)
-        # The closing repairs: Retire in the decision pane of a lesson, Edit plan once in the foot of a work item, the wide
-        # Machine cards and the reduced motion rule.
-        self.assertIn('button("Retire", "decide-retired"', work)
-        self.assertIn('pinned && next.textContent === "Edit plan" ? null : button("Edit plan"', work)
+        # The closing repairs: the wide Machine cards and the reduced motion rule.
         self.assertIn('for (const key of [state.pane, ...state.paneStack].flatMap((p) => p.params.route || []))', core)
         for part in ('[data-view="machine"] .grid {', '@media (prefers-reduced-motion: reduce)'):
             self.assertIn(part, (UI / 'panel.css').read_text(encoding='utf-8'))

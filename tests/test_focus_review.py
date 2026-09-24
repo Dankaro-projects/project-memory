@@ -7,7 +7,7 @@ import importlib.util
 import sys
 import unicodedata
 
-from memory_module import InvalidRecord, delegation, live, reviews, workspace
+from memory_module import InvalidRecord, delegation, reviews, workspace
 from tests.test_focus import CHECK_FILE, CHECK_FILE_REFUSED, DUPLICATE_HYPOTHESIS, H1, H2, H3, FocusFixture, change, work_report
 
 VALUE_TEST = ("import pathlib, unittest\n\n\n"
@@ -209,7 +209,7 @@ class PanelTests(FocusFixture):
         self.assertEqual(self.latest_plan(episode)['focus'], focus_before)
         self.assertEqual(self.focus.view(self.m, episode)['state'], 'ready')
 
-    def test_the_user_sets_the_check_and_starts_the_focused_problem_in_the_panel(self):
+    def test_the_user_sets_the_check_and_starts_the_focused_problem(self):
         episode = self.plan()
         self.propose(episode, (H2,), max_attempts=1)
         self.assertEqual(self.focus.view(self.m, episode)['state'], 'awaiting_check')
@@ -219,10 +219,6 @@ class PanelTests(FocusFixture):
         view = workspace.action(self.m, 'focus_start', {'episode_id': episode}, 'panel-start')
         self.assertEqual(view['state'], 'merged')
         self.assertEqual((self.project / 'src/app.py').read_text(), 'VALUE = 2\n')
-        # A panel that an assistant started does not carry these user actions.
-        for operation in ('focus_check', 'focus_start'):
-            self.assertEqual(live.user_authority_refusal(self.m, operation, {'episode_id': episode}),
-                             live.FOCUS_STARTED_BY_ASSISTANT)
 
 
 class KeyAndTextTests(FocusFixture):

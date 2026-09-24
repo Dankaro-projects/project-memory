@@ -204,10 +204,9 @@
     const buttons = h("div", { class: "row" }, !openable ? null : available("architecture", { focus: focusOf(node), level: "file" })
       ? Panel.button(node.kind === "workflow" ? "Open workflow nodes" : "Open files", "arch-open-" + node.id, () => actions.openFiles(node.id))
       : h("p", { class: "muted" }, "The file level is available in the live control panel."),
-    authoredId && isProposed(node) ? Panel.formButton("Confirm", "confirm_component", authoredId, { class: "primary", dataset: { key: "arch-confirm-" + node.id } }) : null,
-    authoredId ? Panel.formButton("Edit", "component", authoredId, { class: "quiet", dataset: { key: "arch-edit-" + node.id } }) : null,
     node.kind === "package" ? Panel.button("Show in the package table", "arch-package-table-" + node.id, () => Panel.go("dependencies", { tab: "packages", q: node.title }), "quiet") : null);
     if (buttons.childNodes.length) card.append(buttons);
+    if (authoredId && isProposed(node)) card.append(Panel.chatHint("This item stays proposed until you confirm it. Confirm or correct it in the chat."));
     return card;
   }
 
@@ -244,7 +243,7 @@
 
     // Heading, sentence and filters.
     head.append(h("h2", null, focus ? (focus.startsWith("n8n:") ? "Nodes in " : "Files in ") + (params.label || focus) : Panel.term("architecture_legend")),
-      focus ? back() : Panel.formButton("Add " + Panel.term("component").toLowerCase(), "component", {}, { class: "primary", id: "arch-add" }) || "");
+      focus ? back() : "");
     const parts = GROUPS.map((name) => [name, nodes.filter((node) => groupOf(node) === name).length]).filter(([, found]) => found).map(([name, found]) => Panel.count(found, name));
     let sentence = parts.length ? "This view shows " + joinList(parts) + "." : "No structure matches the current filters.";
     // A file takes the state of the work item whose paths cover its folder, so the file level states no work state.

@@ -78,7 +78,7 @@ WORKER_PROTOCOL = ('Hive protocol: log your work with hive_log as you go. First 
 
 SWARM_NOT_FOUND = 'The swarm {swarm} was not found in the hive of this project.'
 READ_ONLY = 'The hive was opened read only, so it cannot record this change.'
-PURGE_USER_ONLY = 'Only the user can purge swarms, in the control panel or with project-memory hive purge.'
+PURGE_USER_ONLY = 'Only the user can purge swarms, in the chat through user_action or with project-memory hive purge.'
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS counters (name TEXT PRIMARY KEY, value INTEGER NOT NULL);

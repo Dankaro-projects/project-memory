@@ -1,6 +1,6 @@
 # Project Memory
 
-Project Memory keeps the plan, the evidence, the decisions, the outcomes and the accepted lessons of one project in a local SQLite database. Your assistant reads and writes those records through three MCP tools. You follow the same records in a local control panel, and you decide what is approved, accepted and merged.
+Project Memory keeps the plan, the evidence, the decisions, the outcomes and the accepted lessons of one project in a local SQLite database. Your assistant reads and writes those records through three MCP tools. You follow the same records in a local control panel, which is read only, and you decide in the chat what is approved, accepted and merged.
 
 It works for a software product, a consulting engagement and a workflow automation built in n8n. Work items can be code, documents, deliverables or exported workflows.
 
@@ -91,7 +91,7 @@ These runs use your installed Codex or Claude Code account and consume that acco
 
 ## Guards and scope
 
-An accepted lesson with a trigger becomes a guard. When a guard matches the paths or the wording of a work item, a decision must list that lesson in `lessons_considered` with an explicit yes or no and a reason, otherwise the decision is rejected. When a work item has allowed paths, the lifecycle hooks block an edit outside them, record the block and ask you to extend the scope in the control panel. The [record fields](docs/record-fields.md) document defines the pattern rules.
+An accepted lesson with a trigger becomes a guard. When a guard matches the paths or the wording of a work item, a decision must list that lesson in `lessons_considered` with an explicit yes or no and a reason, otherwise the decision is rejected. When a work item has allowed paths, the lifecycle hooks block an edit outside them, record the block and ask you to extend the scope in the chat. The [record fields](docs/record-fields.md) document defines the pattern rules.
 
 ## Honest boundaries
 

@@ -248,8 +248,7 @@ class GuidanceTests(unittest.TestCase):
         self.assertIn('instead of guessing it', phase['next_action'])
 
     def test_a_component_without_a_path_is_told_that_a_link_attaches_its_work(self):
-        form = (ROOT / 'memory_module' / 'ui' / 'forms.js').read_text(encoding='utf-8')
-        self.assertIn('only when a link records the relation', form)
+        # The panel is read only, so the component is recorded in the chat and the operation carries the guidance.
         self.assertIn('a stakeholder or a workstream, shows its work only through a recorded link',
                       mcp.schema('component')['rules'])
 

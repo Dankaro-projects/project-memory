@@ -139,7 +139,7 @@ def save_component(memory, *, component_id=None, title, kind, description, statu
                 raise InvalidRecord('The user confirmed this component, so only the user can change it. Propose the change in a note or as a new proposed component.',
                                     component_id=identifier)
             if status == 'confirmed':
-                raise InvalidRecord('Only the user can confirm a component. Save it as proposed so the user can confirm it in the control panel.',
+                raise InvalidRecord('Only the user can confirm a component. Save it as proposed so the user can confirm it in the chat, where the assistant records it with user_action on the words of the user.',
                                     component_id=identifier)
         unchanged = current and all(current[key] == value for key, value in body.items())
         if unchanged:

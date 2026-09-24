@@ -1184,7 +1184,7 @@ def blocked_message(result):
     text = (f'Project Memory blocked this edit because {", ".join(result["blocked"])} '
             f'{"is" if len(result["blocked"]) == 1 else "are"} outside the recorded scope of work {result["episode_id"]}. '
             f'Allowed paths: {", ".join(result["allowed_patterns"])}. '
-            'Ask the user to extend the scope in the control panel, or record a plan revision with the reason.')
+            'Ask the user to extend the scope in the chat and record it with user_action, or record a plan revision with the reason.')
     if any(target.startswith(MCP_TARGET_PREFIX) for target in result['blocked']):
         text += (' A target that starts with mcp: is a write tool of an MCP server that changes something outside the project files. '
                  'The plan pattern mcp:<server> allows the write tools of that server.')

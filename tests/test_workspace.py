@@ -393,7 +393,7 @@ class WorkspaceTests(unittest.TestCase):
         self.assertEqual(saved['text'],guards.instructions(self.m,'worker')['text'])
         with self.assertRaises(InvalidRecord):action(self.m,'lesson_review',{'lesson_id':lesson['id'],'expected_version':self.m.episode(lessons)['version'],
                                                                              'status':'rejected','reason':'The user changes the roles.','roles':['reviewer']},'reject-with-roles')
-    def test_live_api_uses_origin_csrf_versions_and_shared_history(self):
+    def test_the_live_api_reads_the_shared_history_and_refuses_every_write(self):
         ready=queue.Queue()
         def serve():
             with Viewer(self.m.path,'workspace-test-token') as server:
@@ -402,23 +402,15 @@ class WorkspaceTests(unittest.TestCase):
         try:
             base=f'http://127.0.0.1:{server.server_port}/workspace-test-token/'
             origin=f'http://127.0.0.1:{server.server_port}'
-            try:
-                health=json.load(urlopen(base+'api/health'))
-                def post(data,**headers):
-                    return urlopen(Request(base+'api/actions',data=json.dumps(data).encode(),headers={'Content-Type':'application/json','Origin':origin,'X-Project-Memory':health['csrf'],**headers}))
-                payload={'operation':'plan','data':self.update(priority='high'),'request_key':'http-edit'}
-                with self.assertRaises(HTTPError) as wrong:post(payload,Origin='https://example.com')
-                self.assertEqual(wrong.exception.code,403)
-                with self.assertRaises(HTTPError):post(payload,**{'X-Project-Memory':'wrong'})
-                first=json.load(post(payload));self.assertEqual(json.load(post(payload)),first)
-                page=json.load(urlopen(base+'api/board?episode='+self.work['episode_id']))
-                self.assertEqual(page['cards'][0]['plan']['priority'],'high')
-                with self.assertRaises(HTTPError) as conflict:post({**payload,'request_key':'stale-edit'})
-                self.assertEqual(conflict.exception.code,409)
-                self.assertEqual(self.m.read(self.work['id'])['payload']['priority'],'normal')
-            finally:server.shutdown();thread.join()
-        finally:
-            if thread.is_alive():server.shutdown();thread.join()
+            payload={'operation':'plan','data':self.update(priority='high'),'request_key':'http-edit'}
+            with self.assertRaises(HTTPError) as refused:
+                urlopen(Request(base+'api/actions',data=json.dumps(payload).encode(),headers={'Content-Type':'application/json','Origin':origin}))
+            self.assertEqual(refused.exception.code,405);refused.exception.close()
+            # The same change made in the chat is read by the panel from the shared history.
+            action(self.m,'plan',self.update(priority='high'),'chat-edit')
+            page=json.load(urlopen(base+'api/board?episode='+self.work['episode_id']))
+            self.assertEqual(page['cards'][0]['plan']['priority'],'high')
+        finally:server.shutdown();thread.join()
 
 
 if __name__=='__main__':unittest.main()

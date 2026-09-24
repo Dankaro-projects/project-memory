@@ -23,7 +23,8 @@
  * Page
  *   Panel.props(entries): the property block at the top of a page; entries are [icon, label, value] and empty values
  *     are left out. Panel.heading(level, text, count), Panel.callout(icon, children, tone), Panel.toggle(key, summary,
- *     children, open) with the fold kept while the panel is open, and Panel.divider().
+ *     children, open) with the fold kept while the panel is open, Panel.divider(), and Panel.chatHint(text), the callout that
+ *     says what to ask the assistant, because the panel is read only.
  */
 (() => {
   "use strict";
@@ -219,6 +220,8 @@
   const toggle = (key, summary, children, open) => h("details", { class: "toggle", open: folds.has("toggle:" + key) ? folds.get("toggle:" + key) : Boolean(open),
     on: { toggle: (event) => folds.set("toggle:" + key, event.currentTarget.open) } }, h("summary", null, icon("chev"), h("span", null, summary)), h("div", { class: "toggle-body" }, children));
   const divider = () => h("hr", { class: "divider" });
+  // The panel is read only: a decision is taken in the chat, so a page says in one callout what to ask the assistant.
+  const chatHint = (text) => h("div", { class: "callout chat-hint" }, icon("chat"), h("div", { class: "callout-body" }, h("p", null, text)));
 
-  Object.assign(P, { dbBar, dbTable, sortRows, menu, menuItem, closeMenu, props, heading, callout, toggle, divider, shortDate });
+  Object.assign(P, { dbBar, dbTable, sortRows, menu, menuItem, closeMenu, props, heading, callout, toggle, divider, chatHint, shortDate });
 })();

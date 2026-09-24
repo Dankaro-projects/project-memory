@@ -1,21 +1,14 @@
 /*
- * Project Memory control panel: views_knowledge.js registers the Learning, Agents, Machine, Records and Requirements
- * views and the "record", "run", "guard" and "instructions" panes. Buttons open the forms of forms.js: lesson_review
- * {lesson_id, status}, instructions {role}, merge, discard, cancel_run and request_work_review {run_id}, requirements {},
- * promotion {promotion_id, status}, machine_rule {rule_id}, and reassess {decision_id, outcome_id} next to each counted
- * recurrence. Learning and Sessions are tabs of rows in the frame; a lesson, a flag and a proposal are decided in the
- * "decide" pane of views_work.js. A snapshot holds records {view, limit: 100} for each view, so the Records view filters
- * and pages those in the browser. A snapshot carries no machine response, because the machine memory stays on the
- * computer that holds it, and no sessions response. Agents and Machine are tabs of rows or of scrolling regions; a run
- * opens the "run" pane. The Hive view lists the swarms as rows, and a row opens the "swarm" pane with the timeline; it
- * opens hive_post {swarm_id, move, target}, hive_close {swarm_id} and hive_purge {}. The Usage view reads usage {} in one
- * scrolling region and offers no action. The Sessions view reads sessions {} and opens session_flag {flag_ids, status}.
+ * Project Memory control panel: views_knowledge.js registers the Learning, Agents, Machine, Records, Requirements, Hive,
+ * Usage and Sessions views and the "record", "run", "guard", "instructions" and "swarm" panes. The panel is read only:
+ * where the user decides, a chat hint says what to ask the assistant, which records it with the user_action operation.
+ * A snapshot holds records {view, limit: 100} for each view, so the Records view filters and pages those in the
+ * browser. A snapshot carries no machine, usage or sessions response, because they stay on the computer that holds them.
  */
 (() => {
   "use strict";
   const P = Panel, { h, put, button } = P;
-  const PAGE = 25, SNAPSHOT_PAGE = "100", ACTIVE = ["queued", "running", "cancelling"];
-  const RETRY_REVIEW = ["failed", "timed_out", "cancelled", "host_unavailable", "interrupted", "stale"];
+  const PAGE = 25, SNAPSHOT_PAGE = "100";
   const SUBJECTS = ["general", "code", "writing", "research"];
   const STATUSES = ["recorded", "needs_review", "review_due", "superseded", "proposed", "accepted", "rejected", "retired",
     "current_copy", "file_changed", "file_missing", "observed", "execution_unconfirmed", "current", "historical"];
@@ -50,7 +43,6 @@
     return node;
   }
   const actionButton = (label, key, open, tone) => button(label, key, open, ["small", tone]);
-  const openForm = (name, context) => (trigger) => P.openForm(name, context, trigger);
   const openRun = (id) => (trigger) => P.openPane("run", { id }, trigger);
   function valueNode(value, name) {
     if (value === null || value === undefined || value === "") return "Not recorded";
@@ -89,7 +81,6 @@
     const parts = triggerParts(item, first).map((part) => h("span", { class: "chip mono" }, part));
     return parts.length ? h("div", { class: "row" }, parts) : empty;
   }
-  const lessonReview = (lesson, status) => openForm("lesson_review", { lesson_id: lesson.id, status });
   // The guard pane: the lesson, its triggers, and every counted recurrence with its Reassess action.
   P.registerPane("guard", { async render(body, params, ctx) {
       const data = await P.get("learning"), guard = (data.guards || []).find((entry) => entry.lesson_id === params.id);
@@ -102,10 +93,9 @@
       lessonText(guard).slice(1), triggerChips(guard, "paths", h("p", { class: "muted" }, "No triggers are recorded for this guard.")),
       count ? h("div", { class: "notice", dataset: { tone: "blocked" } },
         h("p", null, "The failure type " + (guard.failure_type || "of this guard") + " was recorded " + P.count(count, "time") + " after this lesson was accepted on " + P.date(guard.accepted_at) + "."),
-        h("ul", { class: "kn-plain" }, (recurrence.outcomes || []).map((outcome) => h("li", null, openButton(outcome.observed || outcome.id, outcome.id, { prefix: "recurrence-" }), " ", h("span", { class: "muted" }, P.date(outcome.created_at)), " ",
-          P.formButton("Reassess", "reassess", { decision_id: outcome.decision_id, outcome_id: outcome.id }, { class: "small" }))))) : null);
-      put(ctx.foot, h("div", { class: "row" }, openButton("Open the lesson", guard.lesson_id, { class: "small", prefix: "guard-" }),
-        ctx.canEdit ? actionButton("Retire", "retire-" + guard.lesson_id, lessonReview({ id: guard.lesson_id }, "retired")) : null));
+        h("ul", { class: "kn-plain" }, (recurrence.outcomes || []).map((outcome) => h("li", null, openButton(outcome.observed || outcome.id, outcome.id, { prefix: "recurrence-" }), " ", h("span", { class: "muted" }, P.date(outcome.created_at)), " "))),
+        P.chatHint("To remove an outcome from this count, ask the assistant in the chat to reassess it with your reason.")) : null);
+      put(ctx.foot, h("div", { class: "row" }, openButton("Open the lesson", guard.lesson_id, { class: "small", prefix: "guard-" })));
   } });
   // Instructions: the text each agent role receives, the rules composed into it and the rules left out.
   const RULE_STATE = { effective: "ready", unproven: "backlog", ineffective: "blocked" };
@@ -151,7 +141,7 @@
         composed.length ? h("ul", { class: "list" }, composed.map((rule) => ruleEntry(rule, role))) : P.empty("No rule is composed into this prompt."),
         waiting.length ? [h("h4", null, "Rules that wait for a matching run"), h("ul", { class: "list" }, waiting.map((rule) => ruleEntry(rule, role)))] : null,
         omitted.length ? [h("h4", null, "Rules left out"), h("ul", { class: "list" }, omitted.map((entry) => ruleEntry(found(entry.lesson_id), role, entry.reason)))] : null));
-      put(ctx.foot, P.formButton("Edit the base text", "instructions", { role }, { class: "small" }));
+      put(body, P.chatHint("To change the base text of this role, give the assistant the new text in the chat. Every earlier version stays readable."));
   } });
   const LEARNING_TABS = [["proposed", "Proposed lessons", "review"], ["guards", "Guards", "guarded"], ["failures", "Failures without a lesson", "blocked"],
     ["instructions", "Instructions", null], ["scope", "Scope changes", null], ["signals", "Signals", null]];
@@ -210,18 +200,6 @@
   const mergeLabel = (run) => (run.role !== "work" ? null : run.merge ? P.badge(run.merge.state)
     : run.state === "completed" && run.changed_files ? P.badge("review", "Awaiting a decision") : "Not merged");
   const reviewLabel = (run) => (run.role !== "work" ? null : run.review ? P.badge(run.review.state) : "No review");
-  const canMerge = (run) => run.role === "work" && run.state === "completed" && run.changed_files > 0 && !run.merge && !(run.review && ACTIVE.includes(run.review.state));
-  const canDiscard = (run) => run.role === "work" && !run.merge && !ACTIVE.includes(run.state) && !(run.review && ACTIVE.includes(run.review.state));
-  const canRetryReview = (run) => run.role === "work" && run.state === "completed" && !run.merge && (!run.review || RETRY_REVIEW.includes(run.review.state));
-  function runActions(run, ctx) {
-    if (!ctx.canEdit) return null;
-    const context = { run_id: run.id };
-    const buttons = [canMerge(run) ? actionButton("Merge", "merge-" + run.id, openForm("merge", context), "primary") : null,
-      canRetryReview(run) ? actionButton("Request review", "review-" + run.id, openForm("request_work_review", context)) : null,
-      ACTIVE.includes(run.state) ? actionButton("Cancel", "cancel-" + run.id, openForm("cancel_run", context), "danger") : null,
-      canDiscard(run) ? actionButton("Discard", "discard-" + run.id, openForm("discard", context), "danger") : null].filter(Boolean);
-    return buttons.length ? h("div", { class: "row" }, buttons) : null;
-  }
   function hostCard(host) {
     const ready = host.installed && host.available;
     return h("article", { class: "card" },
@@ -248,7 +226,7 @@
       container.classList.add("list-view");
       put(container, P.viewTabs("The parts of Agents", "agents-tab-", tabs, tab, (id) => P.go("agents", { tab: id }), ctx));
       // Runs are a table: the review and the merge describe delegated work and stay empty for an agent check.
-      if (tab.id === "runs") put(container, h("p", { class: "muted db-note" }, "A row opens the run with its report, its diff summary and its actions. Review, Merge and Changed files describe delegated work and stay empty for an agent check."),
+      if (tab.id === "runs") put(container, h("p", { class: "muted db-note" }, "A row opens the run with its report and its diff summary. Review, Merge and Changed files describe delegated work and stay empty for an agent check."),
         h("section", { class: "list-pane" }, P.dbTable({ id: "runs", rows: runs, rowKey: (run) => run.id, onOpen: (run, t) => openRun(run.id)(t), keepOrder: true, empty: "No agent run is recorded.",
           properties: [{ key: "title", label: "Run", type: "title", width: 240, sortable: false, rowIcon: () => "agents", get: (run) => P.words(run.role) + " run on " + P.words(run.host) },
             { key: "state", label: "State", type: "status", width: 130, sortable: false },
@@ -293,7 +271,7 @@
       const { run } = await P.get("run", { id: params.id }), report = run.report || {};
       ctx.setKind("Agent run");
       ctx.setTitle(P.words(run.role) + " run on " + P.words(run.host));
-      put(ctx.foot, runActions(run, ctx));
+      if (run.role === "work" && !run.merge) put(body, P.chatHint("To merge or discard this delegated work, cancel the run or request its review again, tell the assistant in the chat."));
       put(body, h("div", { class: "row" }, P.badge(run.state), run.role === "work" ? mergeLabel(run) : null, h("span", { class: "muted" }, P.date(run.created_at))),
         h("p", { class: "mono muted" }, run.id), run.summary ? h("p", null, run.summary) : null,
         run.error ? h("div", { class: "notice", dataset: { tone: "blocked" } }, h("p", null, run.error)) : null,
@@ -470,13 +448,9 @@
       put(body, P.props([["status", "State", P.badge(record.state || record.status)],
         ["select", "Kind", P.chip(record.kind === "episode" ? P.term("work_item") : P.words(record.kind))], ["select", "Subject", P.chip(P.words(record.subject))],
         ["relation", P.term("work_item"), work], ["date", "Date", P.date(record.date)], ["number", "Identifier", h("span", { class: "mono muted" }, record.id)]]));
-      if (record.kind === "lesson" && ctx.canEdit) {
-        const lesson = { ...payload, id: record.id, episode_id: record.episode_id };
-        const status = detail.lesson_status || record.status;
-        if (status === "proposed") put(ctx.foot, h("div", { class: "row" }, actionButton("Accept", "pane-accept", lessonReview(lesson, "accepted"), "primary"),
-          actionButton("Reject", "pane-reject", lessonReview(lesson, "rejected"))));
-        if (status === "accepted") put(ctx.foot, h("div", { class: "row" }, actionButton("Retire", "pane-retire", lessonReview(lesson, "retired"))));
-      }
+      if (record.kind === "lesson" && ["proposed", "accepted"].includes(detail.lesson_status || record.status)) put(body, P.chatHint((detail.lesson_status || record.status) === "proposed"
+        ? "Accept or reject this lesson in the chat: tell the assistant your decision, your reason and any triggers."
+        : "To retire this lesson, tell the assistant in the chat, with your reason."));
       const fields = record.kind === "episode" ? { objective: detail.objective, criterion: detail.criterion, task_type: detail.task_type, status: detail.status, version: detail.version }
         : record.kind === "source" ? { summary: detail.summary, origin: detail.origin, version: detail.version, checked_at: detail.checked_at, review_after: detail.review_after, ...(detail.document ? { path: detail.document.path, format: detail.document.format, authority: detail.document.authority } : {}) }
           : record.kind === "project_revision" ? { requirements: detail.requirements, reason: detail.reason, actor: detail.actor }
@@ -527,6 +501,7 @@
           ["number", "Version", String(items.version)], ["person", "Approved by", current.actor], ["date", "Approved on", current.created_at ? P.date(current.created_at) : null],
           ["text", "Reason", current.reason]]),
         P.callout("info", h("p", null, "The recorded requirements govern decisions. They do not prove that the project covers every need.")),
+        P.chatHint("To approve or revise the requirements, tell the assistant in the chat. An approval needs your reason and its evidence."),
         P.divider(),
         h("div", { class: "block-head" }, P.heading(2, "Requirements"), counted(items.total, "requirement")),
         items.items.length ? h("ol", { class: "kn-requirements", start: String(offset + 1) }, items.items.map((item) => h("li", null, item.text))) : P.empty("No requirement is recorded yet."),
@@ -540,9 +515,7 @@
             { key: "requirement_count", label: "Requirements", type: "number", width: 130, sortable: false }, { key: "evidence_count", label: "Evidence", type: "number", width: 110, sortable: false },
             { key: "actor", label: "Approved by", type: "text", icon: "person", width: 140, sortable: false }, { key: "created_at", label: "Date", type: "date", width: 130, sortable: false },
             { key: "reason_text", label: "Reason", type: "text", width: 320, sortable: false }],
-          foot: pager({ offset: revisionOffset, count: revisions.length, more: data.more, limit: 10 }, "revisions", (next) => P.go("requirements", { ...params, revision_offset: next ? String(next) : "" })) })))),
-        ctx.canEdit ? h("div", { class: "pane-foot" }, h("span", null, established ? P.count(items.total, "requirement") + " in version " + items.version + "." : "No version is approved yet."),
-          h("button", { type: "button", class: "primary small", id: "review-requirements", on: { click: (event) => P.openForm("requirements", {}, event.currentTarget) } }, "Review requirements")) : null));
+          foot: pager({ offset: revisionOffset, count: revisions.length, more: data.more, limit: 10 }, "revisions", (next) => P.go("requirements", { ...params, revision_offset: next ? String(next) : "" })) }))))));
   } });
 
   // Machine: the rules the user promoted out of single projects, the projects on this computer and the proposals
@@ -555,12 +528,9 @@
       h("h3", null, h("span", null, rule.do || "No action is recorded."), P.badge(rule.status)),
       ruleFacts(rule), ruleTriggers(rule),
       h("p", { class: "muted" }, P.count(rule.adopted_by || 0, "project") + " promoted this rule. It was recorded on " + P.date(rule.recorded_at) + "."),
-      rule.basis ? h("p", { class: "muted" }, "Basis: " + rule.basis) : null,
-      ctx.canEdit && !retired ? h("div", { class: "row" }, actionButton("Retire", "retire-rule-" + rule.rule_id,
-        openForm("machine_rule", { rule_id: rule.rule_id }))) : null);
+      rule.basis ? h("p", { class: "muted" }, "Basis: " + rule.basis) : null);
   }
   function promotionCard(item, ctx) {
-    const open = (status) => openForm("promotion", { promotion_id: item.id, status });
     const waiting = item.state === "proposed";
     return h("article", { class: ["card", waiting ? "proposed" : null], dataset: { key: "promotion-" + item.id } },
       h("h3", null, h("span", null, (item.rule || {}).do || "No action is recorded."), P.badge(item.state)),
@@ -568,9 +538,7 @@
       h("p", { class: "muted" }, "Proposed by " + (item.actor || "an agent") + " on " + P.date(item.proposed_at) + "."),
       item.basis ? h("p", { class: "muted" }, "Basis: " + item.basis) : null,
       item.reason ? h("p", { class: "muted" }, "Your reason: " + item.reason) : null,
-      ctx.canEdit && waiting ? h("div", { class: "row" },
-        actionButton("Accept", "accept-promotion-" + item.id, open("accepted"), "primary"),
-        actionButton("Decline", "decline-promotion-" + item.id, open("declined"))) : null);
+      waiting ? P.chatHint("Accept or decline this rule in the chat. You can correct its text as you accept it.") : null);
   }
   function registryTable(projects, here) {
     return table(["Project", "Template", "Lifecycle", "First seen", "Updated"], projects.map((item) => h("tr", { dataset: { key: "machine-project-" + item.id } },
@@ -651,7 +619,6 @@
     const { byId, swarm, ctx, revealing } = view, data = entry.data || {};
     const outgoing = entry.links_out.filter((link) => LINKS_OUT[link.relation]), incoming = entry.links_in.filter((link) => LINKS_IN[link.relation]);
     const answered = entry.links_in.some((link) => link.relation === "answers");
-    const canAnswer = entry.move === "question" && !answered && ctx.canEdit && swarm.state === "open" && entry.host !== "workspace-user";
     return h("article", { class: "card", id: "hive-" + entry.id, tabindex: "-1", dataset: { key: "hive-entry-" + entry.id, move: entry.move, host: entry.host || "unknown" },
       style: { borderLeft: "3px solid " + P.colors[hostTone(entry.host)] } },
     h("div", { class: "row" }, hostBadge(entry.host), h("strong", null, entry.agent), P.chip(P.words(entry.move)),
@@ -669,7 +636,6 @@
       incoming.map((link) => entryLink(LINKS_IN[link.relation], link.from, byId, entry))) : null,
     entry.confirmed ? h("p", { class: "muted" }, "Confirmed: " + entry.confirmed) : null,
     entry.disputed ? h("p", { class: "muted" }, "Disputed: " + entry.disputed) : null,
-    canAnswer ? h("div", { class: "row" }, P.formButton("Answer", "hive_post", { swarm_id: swarm.id, move: "answer", target: entry.id }, { class: "small" })) : null,
     children.length ? h("div", { class: "hive-thread" }, children) : null);
   }
   function timeline(entries, view) {
@@ -734,10 +700,7 @@
           entries.length ? timeline(entries, { byId, swarm, ctx, revealing })
             : P.empty(data.total ? "No entry matches the filters." : "No entry is recorded in this swarm yet."),
           data.more ? h("p", { class: "muted" }, `The first ${P.count(data.entries.length, "entry", "entries")} of ${data.total} are shown.`) : null));
-      put(ctx.foot, ctx.canEdit && open ? h("div", { class: "row", dataset: { key: "hive-actions" } },
-        P.formButton("Ask a question", "hive_post", { ...context, move: "question" }, { class: "small" }),
-        P.formButton("Post an observation", "hive_post", { ...context, move: "observation" }, { class: "small" }),
-        P.formButton("Close the swarm", "hive_close", context, { class: "small" })) : null);
+      if (open) put(body, P.chatHint("To answer a question, ask one, post an observation or close the swarm, tell the assistant in the chat."));
   } });
   // The swarms are rows, an address that names a swarm opens its pane, and the purge of closed swarms stays in the foot.
   P.registerView("hive", { title: "Hive", async render(container, params, ctx) {
@@ -748,17 +711,12 @@
         if (row && (hiveFilter.id !== params.swarm || document.getElementById("detail").hidden)) swarmPane(params.swarm, row); });
       ctx.setSummary(data.total ? `${P.count(data.total, "swarm")} ${isAre(data.total)} recorded, and ${opened} ${isAre(opened)} open.`
         : "No swarm is recorded yet. A swarm opens when agents start to work together on one problem.");
-      const closed = ctx.canEdit && swarms.some((swarm) => swarm.state !== "open");
       container.classList.add("list-view");
       put(container, P.listPane({ title: "Swarms", count: data.total || 0, note: "The hive is the shared record of agents that work on one problem together. Each group of agents is a swarm, and a row opens its entries as a conversation.",
         rows: swarms.map((swarm) => P.paneRow("hive-swarm-" + swarm.id, "hive", swarm.title, h("span", { class: "row" }, swarmBadge(swarm), P.chip(P.words(swarm.kind) + " swarm"),
           P.chip(P.count(swarm.entries, "entry", "entries")), swarm.blind ? P.chip("Blind phase first") : null, h("span", { class: "muted" }, swarm.agents.map((agent) => agent.agent_id).join(", "))),
         (trigger) => swarmPane(swarm.id, trigger))),
-        empty: "No swarm is recorded yet.", foot: [h("span", null, data.total > swarms.length ? `The ${swarms.length} newest swarms are shown.` : ""),
-          !closed ? null : (P.health() || {}).assistant_started
-            ? h("span", { dataset: { key: "hive-purge-refused" } }, "This control panel was started from inside an assistant session, so it does not purge swarms. Start the control panel from your own terminal with project-memory view to purge closed swarms.")
-            : P.formButton("Purge closed swarms", "hive_purge", {}, { class: "small danger" })] }));
-  } });
+        empty: "No swarm is recorded yet.", foot: [h("span", null, data.total > swarms.length ? `The ${swarms.length} newest swarms are shown.` : "")] }));  } });
 
   // Usage: the usage ledger of this machine for each host, the latest probe of each host and the routing decisions of
   // the recent runs of this project. The ledger stays on the computer that holds it, so a snapshot carries no usage.
@@ -861,7 +819,6 @@
       const empties = { flags: "No flag waits for a decision.", proposals: "No proposal is pending.", digests: "No session of this project is collected yet." };
       put(container, P.listPane({ title: tab.label, count: tab.count, tone: tab.tone, note: notes[tab.id], rows, empty: empties[tab.id],
         foot: tab.id !== "flags" ? null : [h("span", { dataset: { key: "sessions-note" } }, (open > flags.length ? "The newest " + flags.length + " of " + open + " open flags are shown. " : "")
-          + (decided ? "Of " + decided + " decided flags, " + counts.confirmed + " were confirmed." : "No flag is decided yet.")),
-        ctx.canEdit && flags.length > 1 ? P.formButton("Dismiss the " + flags.length + " shown flags", "session_flag", { flag_ids: flags.map((flag) => flag.id), status: "dismissed" }, { class: "small" }) : null] }));
+          + (decided ? "Of " + decided + " decided flags, " + counts.confirmed + " were confirmed." : "No flag is decided yet."))] }));
   } });
 })();

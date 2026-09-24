@@ -215,7 +215,7 @@ def main(argv=None):
     sessions_parser=sub.add_parser('sessions',help='Read the finished sessions of this project into digests, flags and proposals.')
     sessions_parser.add_argument('action',choices=['collect','list','flags','distill','on','off'],
         help='collect reads new transcript lines, list shows the digests, flags shows possible unrecorded directions, '
-             'distill asks a host for proposals that you accept or reject in the control panel, on and off switch session reading.')
+             'distill asks a host for proposals that you accept or reject in the chat, on and off switch session reading.')
     sessions_parser.add_argument('--project',default=os.environ.get('PROJECT_MEMORY_PROJECT',os.getcwd()))
     sessions_parser.add_argument('--db')
     sessions_parser.add_argument('--session',help='The session key, such as claude:<session id>. The latest session by default.')

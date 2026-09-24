@@ -15,7 +15,7 @@ from .workflow import Workflow, validate_payload, validate_event
 
 SCHEMA_VERSION = 2
 SUBJECTS = {"general", "code", "writing", "research"}
-# The actor of every change saved in the local control panel. MCP callers cannot use it.
+# The actor of every decision of the user, taken in the chat through user_action. MCP callers cannot name it.
 USER_ACTOR = "workspace-user"
 # Actor names that stand for the person. An assistant records what the user said in the
 # text of a record, under its own actor name, so every record keeps its true author.
@@ -29,7 +29,7 @@ RESERVED_SOURCE_PREFIXES = ("instructions-base:", "instructions:")
 # Tool output verified against its receipt hash, a criterion confirmed by the user in the control panel, and a work
 # item the user closed in the chat, verified against the hash of the prompt. Project Memory writes all three itself,
 # so an agent cannot present its own text as any of them.
-VERIFIED_SOURCE_PREFIXES = ("receipt-evidence:", "criterion-confirmation:", "user-closure:")
+VERIFIED_SOURCE_PREFIXES = ("receipt-evidence:", "criterion-confirmation:", "user-closure:", "user-chat:")
 # The phase of the project decides who may merge delegated work, so only the user changes it, in the
 # control panel. Project Memory writes this versioned source itself, through planning.set_phase.
 PHASE_SOURCE_KEY = "project-phase"
@@ -272,18 +272,18 @@ class Memory(Workflow):
         if not internal and source_key == PHASE_SOURCE_KEY:
             raise InvalidRecord(
                 "The source key " + PHASE_SOURCE_KEY + " holds the phase of this project. Only the user changes the "
-                "phase, in the control panel. Choose another source key.",
+                "phase, in the chat, where the assistant records it with user_action on the words of the user. Choose another source key.",
                 source_key=PHASE_SOURCE_KEY)
         if not internal and any(source_key.startswith(prefix) for prefix in RESERVED_SOURCE_PREFIXES):
             raise InvalidRecord(
                 "The source key " + source_key + " is reserved for the instructions of an agent role. "
-                "Only the user saves that text, in the control panel, and Project Memory stores the text of a run "
+                "Only the user saves that text, in the chat, where the assistant records it with user_action on the words of the user, and Project Memory stores the text of a run "
                 "itself. Choose another source key.",
                 reserved_prefixes=list(RESERVED_SOURCE_PREFIXES))
         if not internal and source_key.startswith(VERIFIED_SOURCE_PREFIXES):
             raise InvalidRecord("The source key " + source_key + " is reserved for evidence that Project Memory verifies "
                                 "itself: tool output checked against its receipt, stored through the evidence operation, "
-                                "criteria the user confirms in the control panel, and work the user closes in the chat. "
+                                "criteria the user confirms, work the user closes and decisions the user takes in the chat. "
                                 "Choose another source key.")
         if not internal and source_key.startswith("session-digest:"):
             raise InvalidRecord("The source key " + source_key + " is reserved for the session digests that Project Memory "

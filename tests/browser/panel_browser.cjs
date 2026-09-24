@@ -46,13 +46,16 @@ function stopServers() {
 function watch(page) {
   const problems = [];
   page.on("pageerror", (error) => problems.push("page error: " + error.message));
-  // The checks cause a conflict and an aborted update on purpose; Chromium reports both as resource errors.
-  const expected = /^Failed to load resource: (the server responded with a status of (400|409)|net::ERR_FAILED)/;
+  // The checks cause a refused write, a bad request and an aborted update on purpose; Chromium reports them as resource errors.
+  const expected = /^Failed to load resource: (the server responded with a status of (400|405)|net::ERR_FAILED)/;
   page.on("console", (message) => {
     if (message.type() === "error" && !expected.test(message.text())) problems.push("console: " + message.text());
   });
   return problems;
 }
+// A pinned step in the foot of the side peek stays on screen; a page without one passes.
+const footInReach = (page) => page.evaluate(() => { const node = document.querySelector("#detail .detail-foot button");
+  if (!node) return true; const box = node.getBoundingClientRect(); return box.top >= 0 && box.bottom <= window.innerHeight; });
 const settle = (page) => page.waitForFunction(() => !document.querySelector("#main .view.pending, .detail-content.pending"));
 async function closePane(page) {
   if (await page.locator("#detail").isHidden()) return;
@@ -81,11 +84,6 @@ async function fixedFrame(page, label) {
   assert.ok(size[0] <= size[1] && size[2] === 0, `${label} scrolls the page: ${size}`);
 }
 const text = (page, selector) => page.locator(selector).first().innerText();
-const field = (page, name) => page.locator(`#form-fields [name="${name}"]`);
-const savedToast = async (page, pattern) => {
-  await page.waitForSelector("#form-dialog:not([open])", { state: "attached", timeout: 15000 });
-  assert.match(await page.locator(".toast").last().textContent(), pattern);
-};
 
 // The fixed frame shell: the sidebar with its sections and foot, the breadcrumbs and the project activity.
 async function shell(page, kind) {
@@ -225,22 +223,14 @@ async function views(page, kind, expected) {
   assert.equal(await page.locator("#main a[href='#decisions']").count(), 1);
   step(`${kind}: a paused item names what it waits for and opens beside the digest, and the kickoff checklist and the latest decisions keep their place`);
 
-  // A proposed lesson opens its decision in the pane from Learning: Accept and Reject decide it, and Retire opens the review form.
+  // A proposed lesson opens its page from Learning, which says how to decide it in the chat and offers no action.
   await go(page, "#learning");
   await page.locator("#main .pane-row").first().click();
   await page.waitForFunction(() => document.getElementById("detail-kind").textContent === "Decide a lesson" && !document.querySelector(".detail-content.pending"));
-  assert.deepEqual(await page.locator("#detail .detail-foot button").allTextContents(), ["Accept", "Reject", "Retire"]);
-  await page.locator('[data-key="decide-retired"]').click();
-  await page.waitForSelector("#form-dialog[open]");
-  assert.equal(await text(page, "#form-title"), "Review the lesson");
-  assert.equal(await page.locator('#form-fields input[name="status"][value="retired"]').isChecked(), true);
-  await closeForm(page);
-  // A lesson still needs a reason: without one nothing is sent and the reason field takes the focus.
-  await page.locator('[data-key="decide-accepted"]').click();
-  assert.equal(await page.locator(".toast").last().textContent(), "Write the reason for your decision first.");
-  assert.equal(await page.evaluate(() => document.activeElement.id), "decide-reason");
+  assert.match(await text(page, "#detail .chat-hint"), /Accept, reject or retire this lesson in the chat/);
+  assert.equal(await page.locator("#detail .detail-foot button").count(), 0);
   await closePane(page);
-  step(`${kind}: a lesson asks for its reason in the pane and offers Retire`);
+  step(`${kind}: a proposed lesson opens as a page that says how to decide it in the chat`);
 
   // Plan is an outline table with nested sub-items and a gallery of the phases.
   await go(page, "#plan");
@@ -457,7 +447,7 @@ async function views(page, kind, expected) {
     step(`${kind}: a decision lineage of dozens of records opens as the readable list`);
   }
 
-  // Learning in the frame: one tab per part, the guards as rows, and the guard with the recurrence in the pane with its Reassess action.
+  // Learning in the frame: one tab per part, the guards as rows, and the guard with the recurrence in the pane, which says how to reassess it.
   await go(page, "#learning");
   assert.match(await text(page, "#view-summary"), /^2 guards are active, 1 guard recorded a recurrence, 1 rule is ineffective and 1 lesson waits\.$/);
   assert.deepEqual((await page.locator("#main .db-views button").allTextContents()).map((label) => label.replace(/\d+$/, "")),
@@ -472,16 +462,15 @@ async function views(page, kind, expected) {
   assert.match(await text(page, "#main .pane-row"), /Recurred 1 time/);
   await page.locator("#main .pane-row").first().click();
   await page.waitForFunction(() => document.getElementById("detail-kind").textContent === "Guard" && !document.querySelector(".detail-content.pending"));
-  assert.equal(await page.locator('#detail [data-key^="form:reassess:"]').count(), 1, `${kind}: the counted recurrence has no Reassess action next to it`);
-  assert.equal(await page.locator('#detail [data-key^="form:reassess:"]').first().innerText(), "Reassess");
-  assert.deepEqual(await page.locator("#detail .detail-foot button").allTextContents(), ["Open the lesson", "Retire"]);
+  assert.match(await text(page, "#detail .chat-hint"), /ask the assistant in the chat to reassess it/);
+  assert.deepEqual(await page.locator("#detail .detail-foot button").allTextContents(), ["Open the lesson"]);
   await closePane(page);
   await learningTab("failures");
   assert.equal(await page.locator("#main .pane-row").count(), 1);
   // The links of Now name a section, which the tabs replaced, so the section still selects its tab.
   await go(page, "#learning/section=instructions");
   assert.equal(await page.locator('#main [data-key="learning-tab-instructions"][aria-pressed="true"]').count(), 1);
-  step(`${kind}: Learning shows its parts as tabs, the guard with the recurrence opens in the pane with its Reassess action, and a section link selects its tab`);
+  step(`${kind}: Learning shows its parts as tabs, the guard with the recurrence opens in the pane and says how to reassess it, and a section link selects its tab`);
 
   // Instructions: one row per role, and the pane of a role holds its base text, its rules, its omissions and its budget.
   assert.equal(await page.locator('#main [data-key^="instructions-row-"]').count(), 3);
@@ -503,8 +492,8 @@ async function views(page, kind, expected) {
   assert.match(worker, /1 further accepted rule is composed only into a run that matches the triggers\./);
   assert.match(worker, /Ineffective/);
   assert.match(worker, /Recurrences before 1, after 1/);
-  assert.equal(await page.locator('#detail .detail-foot [data-key="form:instructions:worker"]').count(), 1);
-  step(`${kind}: the Instructions tab opens each role in the pane with its base text, its rules in force, its budget and the edit action in the foot`);
+  assert.match(await text(page, '#detail .chat-hint'), /give the assistant the new text in the chat/);
+  step(`${kind}: the Instructions tab opens each role in the pane with its base text, its rules in force, its budget and how to change it in the chat`);
 
   // On a phone the base text scrolls inside its own block and the rules stay on screen.
   await role("reviewer");
@@ -553,10 +542,10 @@ async function views(page, kind, expected) {
   await page.locator("#main .db-table tbody tr").filter({ hasText: "Awaiting a decision" }).first().locator("button.db-open").click();
   await page.waitForFunction(() => !document.getElementById("detail").hidden && document.getElementById("detail-title").textContent !== "Loading" && !document.querySelector(".detail-content.pending"));
   assert.equal(await page.evaluate(() => document.getElementById("detail-kind").textContent), "Agent run");
-  const runActions = await text(page, "#detail .detail-foot");
-  for (const part of ["Merge", "Discard"]) assert.ok(runActions.includes(part), `${kind}: the foot of the run pane lacks ${part}`);
+  assert.match(await text(page, "#detail .chat-hint"), /To merge or discard this delegated work/);
+  assert.equal(await page.locator("#detail .detail-foot button").count(), 0);
   await closePane(page);
-  step(`${kind}: a run row keeps the merge state on a phone and opens the run pane with Merge and Discard in its foot`);
+  step(`${kind}: a run row keeps the merge state on a phone and opens the run page, which says how to merge or discard it in the chat`);
 
   // The foot of the rail states the phase of the project, because the phase decides who merges delegated work.
   assert.match(await text(page, "#phase"), /Lifecycle\s*Development/);
@@ -570,7 +559,7 @@ async function views(page, kind, expected) {
   assert.deepEqual((await page.locator("#main .db-views button").allTextContents()).map((label) => label.replace(/\d+$/, "")), ["Proposals", "Rules in force", "Retired rules", "Projects"]);
   assert.match(await text(page, '#main [data-key="machine-isolation"]'), /no outcome is combined across projects/);
   assert.equal(await page.locator('#main [data-key^="promotion-"]').count(), 2);
-  assert.equal(await page.locator('#main [data-key^="accept-promotion-"]').count(), 1);
+  assert.equal(await page.locator('#main [data-key^="promotion-"] .chat-hint').count(), 1, `${kind}: the waiting proposal does not say how to decide it in the chat`);
   // The proposal and rule cards use the width of the region: at least 480 pixels each at 1440 pixels.
   const cardWidths = (selector) => page.locator(selector).evaluateAll((nodes) => nodes.map((node) => Math.round(node.getBoundingClientRect().width)));
   assert.ok((await cardWidths('#main [data-key^="promotion-"]')).every((width) => width >= 480), `${kind}: a proposal card of Machine is narrower than 480 pixels`);
@@ -578,7 +567,6 @@ async function views(page, kind, expected) {
   assert.equal(await page.locator('#main [data-key^="machine-rule-"]').count(), 1);
   assert.ok((await cardWidths('#main [data-key^="machine-rule-"]')).every((width) => width >= 480), `${kind}: a rule card of Machine is narrower than 480 pixels`);
   assert.match(await text(page, '#main [data-key^="machine-rule-"]'), /1 project promoted this rule/);
-  assert.equal(await page.locator('#main [data-key^="retire-rule-"]').count(), 1);
   assert.match(await text(page, '#main [data-key="machine-isolation"]'), /no outcome is combined across projects/);
   await go(page, "#machine/tab=projects");
   assert.equal(await page.locator('#main [data-key^="machine-project-"]').count(), 1);
@@ -657,11 +645,10 @@ async function views(page, kind, expected) {
   const beside = await page.evaluate(() => ["main", "detail"].map((id) => { const box = document.getElementById(id).getBoundingClientRect(); return [Math.round(box.left), Math.round(box.right)]; }));
   assert.ok(beside[0][1] > beside[0][0] + 300 && beside[0][1] <= beside[1][0], `${kind}: the pane covers the view at 1440 pixels: ${beside}`);
   assert.equal(await cards.first().getAttribute("aria-current"), "true");
-  // The actions of the item stay pinned under the scrolling body, in reach at a window height of 640 pixels.
+  // The body of the page scrolls, and a pinned step in its foot stays in reach at a window height of 640 pixels.
   await page.setViewportSize({ width: 1600, height: 640 });
-  const pinned = await page.evaluate(() => { const body = document.querySelector("#detail .detail-scroll"), action = document.querySelector("#detail .detail-foot button").getBoundingClientRect();
-    return { scrolls: body.scrollHeight > body.clientHeight, top: action.top, bottom: action.bottom, height: window.innerHeight }; });
-  assert.ok(pinned.scrolls && pinned.top > 0 && pinned.bottom <= pinned.height, `${kind}: the first action of the pane is out of reach at 640 pixels: ${JSON.stringify(pinned)}`);
+  assert.ok(await page.evaluate(() => { const body = document.querySelector("#detail .detail-scroll"); return body.scrollHeight > body.clientHeight; }), `${kind}: the page of the item does not scroll at 640 pixels`);
+  assert.ok(await footInReach(page), `${kind}: the pinned step of the pane is out of reach at 640 pixels`);
   await fixedFrame(page, `${kind} work pane at 1600 by 640`);
   // J and K open the next and the previous row of the kind that opened the pane, and start no back stack.
   const first = await text(page, "#detail-title");
@@ -671,7 +658,7 @@ async function views(page, kind, expected) {
   assert.equal(await page.locator("#detail-back").isHidden(), true);
   await page.keyboard.press("k");
   await page.waitForFunction((title) => document.getElementById("detail-title").textContent === title, first);
-  step(`${kind}: the pane opens beside the view, marks its row, pins its actions at 640 pixels and follows J and K`);
+  step(`${kind}: the pane opens beside the view, marks its row, scrolls its page at 640 pixels and follows J and K`);
 
   // Below 1180 pixels one pane shows at a time, and Escape returns to the view and to the row that opened the pane.
   await page.setViewportSize({ width: 1000, height: 800 });
@@ -684,7 +671,7 @@ async function views(page, kind, expected) {
   step(`${kind}: below 1180 pixels one pane shows at a time and Escape returns to the opening row`);
 
   // Work and Plan in the frame: the board keeps its five columns beside the open pane and scrolls sideways inside its
-  // region, the filters stay at the top, and the pane keeps its actions in the foot, its quick edits and the list of the lineage.
+  // region, the filters stay at the top, and the pane offers no edit and keeps the list of the lineage.
   await go(page, "#work/tab=board");
   await cards.first().click();
   await loaded();
@@ -692,23 +679,17 @@ async function views(page, kind, expected) {
     return { main: main.scrollHeight <= main.clientHeight, sideways: board.scrollWidth > board.clientWidth, columns: board.querySelectorAll(".board-column").length,
       filters: filters.top >= 0 && filters.bottom <= window.innerHeight, selected: board.querySelector("[data-selected]").getBoundingClientRect().left >= board.getBoundingClientRect().left }; });
   assert.deepEqual(withPane, { main: true, sideways: true, columns: 5, filters: true, selected: true }, `${kind}: the board beside the pane: ${JSON.stringify(withPane)}`);
-  const actions = await page.locator("#detail .detail-foot").innerText();
-  for (const part of ["Edit plan", "Allow paths", "Delegate", "Request check", "Comment"]) assert.ok(actions.includes(part), `${kind}: the foot of the pane lacks ${part}`);
-  assert.equal(await page.locator("#detail-body #work-quick-state, #detail-body #work-quick-priority").count(), 2);
+  // The page of a work item offers no edit: its foot holds at most the step that opens the next page.
+  assert.equal(await page.locator("#detail-body select, #detail-body textarea").count(), 0);
+  for (const part of ["Edit plan", "Allow paths", "Delegate", "Request check", "Comment"]) assert.ok(!(await text(page, "#detail")).includes(part), `${kind}: the page still offers ${part}`);
   await page.locator('#detail-body [data-key$="-toggle"]').click();
   assert.equal(await page.locator("#detail-body .lineage-list").count(), 1);
   assert.match(await text(page, '#detail-body [data-key$="-toggle"]'), /Show as graph/);
-  // Edit plan shows once in the foot: as the pinned next step of the first phase, and in the small action row of an item whose next step is another form.
-  const editPlan = () => page.evaluate(() => { const foot = document.querySelector("#detail .detail-foot"), pinned = foot.querySelector("button.primary");
-    return { count: [...foot.querySelectorAll("button")].filter((node) => node.textContent === "Edit plan").length, pinned: pinned ? pinned.textContent : null }; });
   await go(page, "#work");
-  await page.locator("#main button.db-open").first().click();
-  await loaded();
-  assert.deepEqual(await editPlan(), { count: 1, pinned: "Edit plan" }, `${kind}: the foot of the first phase`);
   await page.locator("#main button.db-open").nth(1).click();
   await loaded();
-  assert.deepEqual(await editPlan(), { count: 1, pinned: "Open the prerequisite" }, `${kind}: the foot of the second phase`);
-  step(`${kind}: the board keeps its five columns beside the open pane and scrolls sideways, the filters stay at the top, the pane keeps its actions, its quick edits and the list of the lineage, and Edit plan shows once`);
+  assert.deepEqual(await page.locator("#detail .detail-foot button").allTextContents(), ["Open the prerequisite"], `${kind}: the foot of the second phase`);
+  step(`${kind}: the board keeps its five columns beside the open pane and scrolls sideways, the filters stay at the top, the page offers no edit and keeps the list of the lineage, and a waiting item opens its prerequisite`);
 
   // At the three measured sizes Work as a board, Work as a table and Plan scroll only inside their region, with and
   // without the pane, the tools of the bar stay in reach without scrolling, and the primary action of the item is visible.
@@ -725,7 +706,7 @@ async function views(page, kind, expected) {
       await page.locator(row).first().click();
       await loaded();
       await fixedFrame(page, `${kind} ${hash} with the pane at ${width} by ${height}`);
-      assert.ok(await inReach(page, "#detail .detail-foot button"), `${kind} ${hash} at ${width} by ${height}: the primary action of the item is out of reach`);
+      assert.ok(await footInReach(page), `${kind} ${hash} at ${width} by ${height}: the pinned step of the item is out of reach`);
     }
   }
   await page.setViewportSize({ width: 1440, height: 900 });
@@ -744,7 +725,7 @@ async function views(page, kind, expected) {
       await loaded();
       await fixedFrame(page, `${kind} ${hash} with the pane at ${width} by ${height}`);
       assert.equal(await page.evaluate(() => document.getElementById("detail-kind").textContent), expected);
-      if (hash !== "#decisions") assert.ok(await inReach(page, "#detail .detail-foot button"), `${kind} ${hash} at ${width} by ${height}: the primary action of the item is out of reach`);
+      assert.ok(await footInReach(page), `${kind} ${hash} at ${width} by ${height}: the foot of the page is out of reach`);
     }
   }
   // Scope changes and Signals keep their cards in a scrolling region, and neither scrolls the page at 1600 by 640.
@@ -776,16 +757,15 @@ async function views(page, kind, expected) {
     await go(page, "#records/view=lessons");
     await page.locator(ROW).first().click();
     await loaded();
-    assert.ok(await inReach(page, "#detail .detail-foot button"), `${kind} lesson record at ${width} by ${height}: the decision of the lesson is out of reach`);
+    assert.equal(await page.locator("#detail .chat-hint").count(), 1, `${kind} lesson record at ${width} by ${height}: the page does not say how to decide the lesson`);
     await go(page, "#requirements");
     await fixedFrame(page, `${kind} #requirements at ${width} by ${height}`);
     const shape = await page.evaluate(() => { const main = document.getElementById("main"), body = main.querySelector('[data-scroll="requirements"]');
       return { frame: main.scrollHeight <= main.clientHeight, scrolls: getComputedStyle(body).overflowY, parts: ["Version", "Approval evidence", "History", "Version 0"].every((part) => body.textContent.includes(part)) }; });
     assert.deepEqual(shape, { frame: true, scrolls: "auto", parts: true }, `${kind} #requirements at ${width} by ${height}: ${JSON.stringify(shape)}`);
-    assert.ok(await inReach(page, "#review-requirements"), `${kind} #requirements at ${width} by ${height}: Review requirements is out of reach`);
   }
   await page.setViewportSize({ width: 1440, height: 900 });
-  step(`${kind}: Records and Requirements scroll only inside the frame at ${FRAMES.map((size) => size.join(" by ")).join(", ")} pixels, the pager and Review requirements stay in the foot, and a lesson keeps its decision in reach`);
+  step(`${kind}: Records and Requirements scroll only inside the frame at ${FRAMES.map((size) => size.join(" by ")).join(", ")} pixels, the pager stays in the foot, and a lesson says how to decide it in the chat`);
 
   // Agents, Machine and Usage scroll only inside their region at the three sizes, with and without the run pane, whose
   // primary action stays in reach. Hive is measured with a swarm on the focus fixture.
@@ -801,10 +781,10 @@ async function views(page, kind, expected) {
     await page.locator("#main .db-table tbody tr").filter({ hasText: "Awaiting a decision" }).first().locator("button.db-open").click();
     await loaded();
     await fixedFrame(page, `${kind} #agents with the pane at ${width} by ${height}`);
-    assert.ok(await inReach(page, "#detail .detail-foot button"), `${kind} #agents at ${width} by ${height}: the merge decision of the run is out of reach`);
+    assert.equal(await page.locator("#detail .chat-hint").count(), 1, `${kind} #agents at ${width} by ${height}: the run does not say how to merge it`);
   }
   await page.setViewportSize({ width: 1440, height: 900 });
-  step(`${kind}: Agents, Machine and Usage scroll only inside their region at ${FRAMES.map((size) => size.join(" by ")).join(", ")} pixels, and the merge decision of a run stays in reach in the pane`);
+  step(`${kind}: Agents, Machine and Usage scroll only inside their region at ${FRAMES.map((size) => size.join(" by ")).join(", ")} pixels, and the page of a run says how to merge it in the chat`);
 
   // A long document reads at full width: the toggle of the pane bar hides the list beside the pane, and Escape
   // restores the list with the focus on the row that opened the record.
@@ -837,8 +817,17 @@ async function views(page, kind, expected) {
   step(`${kind}: no page overflow at 1440, 768, 390 and 320 pixels`);
 }
 
-// The editing checks run on one fixture, because each action changes the records the other checks read.
-async function editing(page, ids, posts) {
+// A write in the chat, made as the assistant would make it through user_action: the workspace action on the database.
+function chatComment(fixture, episode, text) {
+  const script = "import sys\nfrom memory_module import Memory\nfrom memory_module.workspace import action\n" +
+    "m = Memory(sys.argv[1])\naction(m, 'comment', {'episode_id': sys.argv[2], 'expected_version': m.episode(sys.argv[2])['version'], 'text': sys.argv[3]}, 'chat-' + str(abs(hash(sys.argv[3]))))\nm.close()\n";
+  execFileSync(PYTHON, ["-c", script, fixture.database, episode, text], { cwd: ROOT });
+}
+
+// The panel is read only, so these checks run on one fixture: the server refuses every write, each place where the
+// user decides says in a chat hint what to ask the assistant, and live updates from the chat keep the reader's place.
+async function readOnly(page, fixture) {
+  const ids = fixture.ids;
   await go(page, "#work");
   const trigger = `[data-key="work-row-${ids.story}"]`;
   await page.locator(trigger).focus();
@@ -847,7 +836,7 @@ async function editing(page, ids, posts) {
   await settle(page);
   const shown = await text(page, "#detail");
   for (const part of ["Intended result", "Done when", "Next step", "Acceptance criteria", "Scope", "Allowed paths", "src/app/**",
-    "Dependencies", "Agent checks and delegated runs", "Lineage", "History", "Edit plan", "Allow paths", "Delegate", "Request check", "Comment"]) {
+    "Dependencies", "Agent checks and delegated runs", "Lineage", "History"]) {
     assert.ok(shown.includes(part), "the work pane lacks " + part);
   }
   // The history stays closed until the reader opens it, and sections without content share one sentence.
@@ -861,193 +850,38 @@ async function editing(page, ids, posts) {
   await page.waitForFunction((selector) => document.getElementById("detail").hidden && document.activeElement.matches(selector), trigger);
   step("the keyboard opens the work pane and Escape returns focus to the trigger");
 
-  // A change of priority needs no plan form: the pane saves the complete plan with the one changed field.
-  await page.locator(trigger).click();
-  await settle(page);
-  await page.locator("#work-quick-priority").selectOption("high");
-  await page.waitForFunction(() => /Priority\s*High/.test(document.querySelector("#detail-body .props").innerText), null, { timeout: 15000 });
-  assert.equal(await page.locator(".toast").last().textContent(), "The priority is now high.");
-  assert.equal(await page.locator("#form-dialog[open]").count(), 0);
-  const kept = await page.evaluate(async (id) => (await Panel.get("work", { id })).card.plan, ids.story);
-  assert.deepEqual([kept.priority, kept.paths, kept.autonomy], ["high", ["src/app/**"], "act"], "the quick edit lost a field of the plan");
-  assert.equal(await page.locator("#work-quick-state option[value=done]").count(), 0, "the quick edit offers Done, which may start an agent check");
-  await closePane(page);
-  step("the pane changes the priority without the plan form and keeps every other field of the plan");
-
-  // A conflict keeps the draft, and Reload saved version recovers it.
-  await page.locator(trigger).click();
-  await settle(page);
-  await page.locator('[data-key="work-edit"]').click();
-  await page.waitForSelector("#form-dialog[open]");
-  await page.waitForFunction(() => document.querySelectorAll("#form-fields [name]").length > 0);
-  await field(page, "scope").fill("The work covers the sample client files only.");
-  await field(page, "reason").fill("The user narrows the scope after the review.");
-  await page.evaluate(async (id) => {
-    const value = await Panel.get("record", { id });
-    await Panel.action("comment", { episode_id: id, expected_version: value.record.detail.version, text: "This comment changes the version." },
-      Panel.requestKey("panel-check"));
-  }, ids.story);
-  await page.locator("#form-save").click();
-  await page.waitForSelector("#form-reload:not([hidden])", { timeout: 15000 });
-  assert.match(await page.locator("#form-error").textContent(), /changed while you were editing/);
-  assert.equal(await field(page, "scope").inputValue(), "The work covers the sample client files only.");
-  step("a conflict keeps the draft and offers Reload saved version");
-  await page.locator("#form-reload").click();
-  await page.waitForSelector("#form-reload[hidden]", { state: "attached" });
-  await field(page, "reason").fill("The user narrows the scope after the review.");
-  await page.locator("#form-save").click();
-  await savedToast(page, /plan is saved/);
-  step("Reload saved version draws the saved plan and the next save succeeds");
-  await closePane(page);
-
-  // The panel creates no work item: Plan and Work offer no Add item, because new work is planned in the chat.
-  await go(page, "#plan");
-  assert.equal(await page.getByRole("button", { name: "Add item" }).count(), 0);
-  await go(page, "#work");
-  assert.equal(await page.getByRole("button", { name: "Add item" }).count(), 0);
-  step("Plan and Work offer no Add item, because new work is planned in the chat");
-
-  // Accepting a proposed lesson with its triggers: the row opens the decision, the full lesson opens from it, and the
-  // form of the full lesson takes the triggers.
+  // No form and no write: the server refuses a write, and the places where the user decides point to the chat.
+  assert.equal(await page.locator("#form-dialog").count(), 0);
+  const refused = await page.evaluate(async () => { const response = await fetch("api/actions", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+    return [response.status, (await response.json()).error]; });
+  assert.deepEqual(refused, [405, "ReadOnly"]);
   await go(page, "#learning");
-  await page.locator(`[data-key="lesson-row-${ids.proposed_lesson}"]`).click();
+  await page.locator("#main .pane-row").first().click();
   await page.waitForFunction(() => document.getElementById("detail-kind").textContent === "Decide a lesson" && !document.querySelector(".detail-content.pending"));
-  await page.locator('[data-key="decide-open"]').click();
-  await page.waitForSelector('#detail [data-key="pane-accept"]');
-  await page.locator('[data-key="pane-accept"]').click();
-  await page.waitForSelector("#form-dialog[open] textarea[name=reason]");
-  assert.equal(await page.locator("input[name=status][value=accepted]").isChecked(), true);
-  await field(page, "reason").fill("The practice prevents unclear release notes.");
-  await field(page, "paths").fill("docs/releases/**");
-  await field(page, "keywords").fill("release note");
-  await field(page, "failure_type").fill("unclear_wording");
-  await field(page, "role_reviewer").check();
-  await page.locator("#form-save").click();
-  await savedToast(page, /lesson is accepted/);
-  await page.waitForFunction(() => /^3 guards are active/.test(document.getElementById("view-summary").textContent), null, { timeout: 15000 });
+  assert.match(await text(page, "#detail .chat-hint"), /in the chat/);
+  assert.equal(await page.locator("#detail .detail-foot button, #detail .detail-foot textarea").count(), 0);
   await closePane(page);
-  const learningTab = async (name) => {
-    await page.click(`[data-key="learning-tab-${name}"]`);
-    await page.waitForFunction((key) => { const node = document.querySelector(`#main .view:not(.pending) [data-key="${key}"]`); return node && node.getAttribute("aria-pressed") === "true"; }, "learning-tab-" + name);
-    await settle(page);
-  };
-  await learningTab("guards");
-  assert.match(await text(page, "#main .pane-rows"), /release note/);
-  const guard = await page.evaluate(async (id) => {
-    const learning = await Panel.get("learning");
-    return learning.guards.find((entry) => entry.lesson_id === id);
-  }, ids.proposed_lesson);
-  assert.deepEqual([guard.paths, guard.keywords, guard.failure_type, guard.roles],
-    [["docs/releases/**"], ["release note"], "unclear_wording", ["reviewer"]]);
-  await learningTab("instructions");
-  const reviewerPane = () => page.waitForFunction(() => document.querySelector('#detail [data-key="instructions-reviewer"]') && !document.querySelector(".detail-content.pending"));
-  await page.locator('[data-key="instructions-row-reviewer"]').click();
-  await reviewerPane();
-  assert.match(await text(page, '#detail [data-key="instructions-reviewer"]'),
-    /1 further accepted rule is composed only into a run that matches the triggers\./);
-  step("a proposed lesson is accepted from its row with its path, keyword and failure type triggers and with the reviewer role");
-
-  // Saving a new version of the base text of one role, from the foot of the instructions pane.
-  await page.locator('#detail [data-key="form:instructions:reviewer"]').click();
-  await page.waitForSelector("#form-dialog[open] textarea[name=text]");
-  assert.match(await field(page, "text").inputValue(), /You are the reviewer in this project\./);
-  await field(page, "text").fill("You are the reviewer in this project. State the evidence for every judgement and give one verdict.");
-  await field(page, "reason").fill("The user shortens the reviewer instructions.");
-  await page.locator("#form-save").click();
-  await savedToast(page, /Version 2 of the reviewer instructions is saved/);
-  await page.waitForFunction(() => /You saved version 2 of this text/.test(
-    document.querySelector('#detail [data-key="instructions-reviewer"]').textContent), null, { timeout: 15000 });
-  assert.match(await text(page, '#detail [data-key="base-reviewer"]'), /State the evidence for every judgement and give one verdict\./);
-  await closePane(page);
-  step("a new version of the reviewer base text is saved and the pane shows it");
-
-  // Reassessing the counted recurrence from the guard pane as the user removes it from the count.
-  const recurrencesBefore = await page.evaluate(async () => (await Panel.get("learning")).recurrences.reduce((sum, entry) => sum + entry.total, 0));
-  assert.equal(recurrencesBefore, 1);
-  await learningTab("guards");
-  await page.locator('#main [data-key^="guard-row-"]').first().click();
-  await page.waitForFunction(() => document.getElementById("detail-kind").textContent === "Guard" && !document.querySelector(".detail-content.pending"));
-  await page.locator(`#detail [data-key^="form:reassess:"][data-key$=":${ids.recurrence_outcome}"]`).click();
-  await page.waitForSelector("#form-dialog[open] textarea[name=reason]");
-  assert.match(await text(page, "#form-fields"), /Observed/);
-  assert.equal(await page.locator('input[name="assessment"][value="good"]').isChecked(), true);
-  await field(page, "reason").fill("The archive import was repeated and every character arrived.");
-  await page.locator("#form-save").click();
-  await savedToast(page, /The outcome is reassessed as good\./);
-  await page.waitForFunction(() => !/recorded a recurrence/.test(document.getElementById("view-summary").textContent), null, { timeout: 15000 });
-  await settle(page);
-  assert.equal(await page.locator('#detail [data-key^="form:reassess:"]').count(), 0);
-  assert.doesNotMatch(await text(page, "#main"), /Recurred 1 time/);
-  const after = await page.evaluate(async () => {
-    const learning = await Panel.get("learning");
-    return [learning.recurrences.length, learning.guards.reduce((sum, guard) => sum + (guard.recurrences || 0), 0)];
-  });
-  assert.deepEqual(after, [0, 0]);
-  await closePane(page);
-  step("the user reassesses the counted recurrence from the guard pane and the recurrence count drops from 1 to 0");
-
-  // Allowing the blocked path of the scope block from the side peek of its work item.
-  const blocked = await page.evaluate(async () => (await Panel.get("now")).scope_blocks[0].episode_id);
-  await go(page, "#work");
-  await page.locator(`[data-key="work-row-${blocked}"]`).click();
-  await page.waitForFunction(() => !document.getElementById("detail").hidden && !document.querySelector(".detail-content.pending"));
-  await page.locator('#detail [data-key="work-allow"]').click();
-  await page.waitForSelector("#form-dialog[open]");
-  await field(page, "paths").fill("docs/brief.md");
-  await field(page, "reason").fill("The work item needs the brief.");
-  await page.locator("#form-save").click();
-  await savedToast(page, /docs\/brief\.md/);
-  step("the blocked path of a scope block is allowed from the side peek of its work item");
-  await closePane(page);
-
-  // The phase of the project, which decides who merges delegated work.
-  await page.locator('[data-key="phase-change"]').click();
-  await page.waitForSelector("#form-dialog[open] textarea[name=reason]");
-  await page.locator('input[name="phase"][value="production"]').check();
-  await field(page, "reason").fill("The parser serves users now, so the user merges delegated work.");
-  await page.locator("#form-save").click();
-  await savedToast(page, /The project is in production/);
-  await page.waitForFunction(() => /Production/.test(document.getElementById("phase").textContent), null, { timeout: 15000 });
-  const phase = await page.evaluate(() => Panel.health().phase);
-  assert.equal(phase.phase, "production");
-  assert.equal(phase.version, 1);
-  step("the phase of the project is changed to production with a reason and the top bar states it");
-
-  // Accepting a proposed rule into the machine memory, with its text corrected first.
+  await go(page, "#requirements");
+  assert.match(await text(page, "#main .chat-hint"), /approve or revise the requirements/);
   await go(page, "#machine");
-  await page.locator(`[data-key="accept-promotion-${ids.proposed_promotion}"]`).click();
-  await page.waitForSelector("#form-dialog[open] textarea[name=reason]");
-  assert.equal(await page.locator('input[name=status][value=accepted]').isChecked(), true);
-  await field(page, "do").fill("State which checks ran and what each one reported before the merge.");
-  await field(page, "reason").fill("The rule holds for every project on this computer.");
-  await page.locator("#form-save").click();
-  await savedToast(page, /The rule is in force on/);
-  await page.waitForFunction(() => /2 rules are in force/.test(document.getElementById("view-summary").textContent), null, { timeout: 15000 });
-  await go(page, "#machine/tab=rules");
-  assert.match(await text(page, "#main .pane-body"), /State which checks ran and what each one reported before the merge\./);
-  step("a proposed rule is corrected and accepted into the machine memory");
-
-  // Retiring a rule of the machine memory. The rule and its history stay readable under the Retired rules tab.
-  await page.locator(`[data-key="retire-rule-${ids.machine_rule}"]`).click();
-  await page.waitForSelector("#form-dialog[open] textarea[name=reason]");
-  await field(page, "reason").fill("The allowed paths are now required before a run starts.");
-  await page.locator("#form-save").click();
-  await savedToast(page, /The rule is retired/);
-  await page.waitForFunction(() => /1 rule is in force/.test(document.getElementById("view-summary").textContent), null, { timeout: 15000 });
-  await go(page, "#machine/tab=retired");
-  assert.match(await text(page, `#main [data-key="machine-rule-${ids.machine_rule}"]`), /Retired/);
-  step("a rule of the machine memory is retired and stays readable");
+  assert.match(await text(page, "#main .chat-hint"), /Accept or decline this rule in the chat/);
+  await go(page, "#agents");
+  await page.locator("#main .db-table tbody tr").filter({ hasText: "Awaiting a decision" }).first().locator("button.db-open").click();
+  await page.waitForFunction(() => !document.getElementById("detail").hidden && !document.querySelector(".detail-content.pending"));
+  assert.match(await text(page, "#detail .chat-hint"), /To merge or discard this delegated work/);
+  await closePane(page);
+  for (const name of ["now", "plan", "work", "decisions", "records", "learning", "agents", "machine", "hive", "sessions"]) {
+    await go(page, "#" + name);
+    assert.equal(await page.locator('#main button.primary, #main [data-key^="form:"]').count(), 0, `the ${name} view still offers an edit action`);
+  }
+  step("the panel is read only: the server refuses a write, and the lesson, the requirements, a machine rule and a merge point to the chat");
 
   // Focus and the open view survive a new revision.
   await go(page, "#work/tab=board");
   const card = `[data-key="work-card-${ids.review}"]`;
   await page.locator(card).focus();
   const revision = await page.evaluate(() => Panel.health().revision);
-  await page.evaluate(async (id) => {
-    const work = await Panel.get("work", { id });
-    await Panel.action("comment", { episode_id: id, expected_version: work.card.version, text: "The browser check adds this comment." },
-      Panel.requestKey("panel-check"));
-  }, ids.review);
+  chatComment(fixture, ids.review, "The browser check adds this comment.");
   await page.waitForFunction((value) => Panel.health().revision !== value, revision);
   await page.waitForTimeout(700);
   assert.ok(await page.evaluate((selector) => document.activeElement.matches(selector), card), "focus moved after the refresh");
@@ -1064,10 +898,7 @@ async function editing(page, ids, posts) {
   assert.ok(before[0] > 0 && before[1] > 0, `the board region or the pane does not scroll at 640 pixels: ${before}`);
   const update = async () => {
     const from = await page.evaluate(() => Panel.health().revision);
-    await page.evaluate(async (id) => {
-      const work = await Panel.get("work", { id });
-      await Panel.action("comment", { episode_id: id, expected_version: work.card.version, text: "The browser check adds a second comment." }, Panel.requestKey("panel-check"));
-    }, ids.review);
+    chatComment(fixture, ids.review, "The browser check adds a second comment.");
     await page.waitForFunction((value) => Panel.health().revision !== value, from);
     await page.waitForTimeout(700);
     await settle(page);
@@ -1089,11 +920,7 @@ async function editing(page, ids, posts) {
   // Focus that moves while a refresh is still loading has to survive the swap instead of falling back to the body.
   await page.route("**/api/board*", async (route) => { await new Promise((resolve) => setTimeout(resolve, 1200)); await route.continue(); });
   const slow = await page.evaluate(() => Panel.health().revision);
-  await page.evaluate(async (id) => {
-    const work = await Panel.get("work", { id });
-    await Panel.action("comment", { episode_id: id, expected_version: work.card.version, text: "The browser check adds a second comment." },
-      Panel.requestKey("panel-check"));
-  }, ids.review);
+  chatComment(fixture, ids.review, "The browser check adds a third comment.");
   await page.waitForFunction((value) => Panel.health().revision !== value, slow);
   await page.waitForTimeout(300);
   await page.locator(card).focus();
@@ -1102,11 +929,6 @@ async function editing(page, ids, posts) {
   assert.ok(await page.evaluate((selector) => document.activeElement.matches(selector), card), "focus moved during a slow refresh was discarded");
   await page.unroute("**/api/board*");
   step("focus that moves while a refresh is loading is kept when the new view appears");
-
-  assert.ok(posts.length >= 5, "the checks should have sent several actions");
-  assert.ok(posts.every((post) => post.csrf && post.csrf.length > 10), "an action was sent without the CSRF header");
-  assert.ok(posts.every((post) => post.key && post.key.length > 10), "an action was sent without a request key");
-  step(`every one of the ${posts.length} actions carried the CSRF header and a request key`);
 
   // Update failures show and recover.
   await page.route("**/api/health", (route) => route.abort());
@@ -1117,23 +939,6 @@ async function editing(page, ids, posts) {
   assert.equal(await page.locator("#alerts .alert").count(), 0);
   step("an update failure is reported and clears when the updates return");
 
-  // The delegation form asks for missing allowed paths itself and saves them in the plan, so it is no dead end.
-  await page.evaluate((id) => Panel.openWork(id), ids.research);
-  await page.waitForSelector('[data-key="work-delegate"]:not([disabled])');
-  await settle(page);
-  await page.locator('[data-key="work-delegate"]').click();
-  await page.waitForSelector("#form-dialog[open] textarea[name=paths]");
-  assert.equal(await page.locator("#form-save").isDisabled(), false, "the delegation form stops on the missing paths");
-  assert.equal(await page.locator("#form-fields input[name=act]").count(), 0, "the plan already lets the agent act");
-  await page.locator("#form-save").click();
-  await page.waitForFunction(() => /Write at least one allowed path\./.test(document.getElementById("form-error").textContent));
-  await field(page, "paths").fill("docs/research/**");
-  await page.locator("#form-save").click();
-  await page.waitForFunction(async (id) => ((await Panel.get("work", { id })).card.plan.paths || []).includes("docs/research/**"), ids.research, { timeout: 15000 });
-  await page.waitForFunction(() => !document.getElementById("form-dialog").open || !document.getElementById("form-error").hidden, null, { timeout: 30000 });
-  if (await page.locator("#form-dialog[open]").count()) await closeForm(page);
-  await closePane(page);
-  step("the delegation form takes the missing allowed paths and saves them in the plan before it delegates");
 }
 
 // The Focus section runs on a separate product fixture with a finished focused problem, so the counts that the other
@@ -1144,11 +949,6 @@ const FOCUS = {
   second: "The parser converts every date to local time before the export reads it.",
   third: "The export template truncates the date to its first ten characters.",
 };
-// The dialog closes first and the panel releases the form in its close event, so a check waits for both.
-async function closeForm(page) {
-  await page.keyboard.press("Escape");
-  await page.waitForFunction(() => !document.getElementById("form-dialog").open && !document.getElementById("form-fields").children.length);
-}
 async function openFocus(page, id) {
   await closePane(page);
   await page.evaluate((value) => Panel.openWork(value), id);
@@ -1202,35 +1002,10 @@ async function focused(browser, directory) {
   assert.ok(Math.abs(wide[0].y - wide[1].y) < 2 && wide[1].x > wide[0].right, `the attempts are not side by side at 1440 pixels: ${JSON.stringify(wide)}`);
   step("focus: the work pane shows the problem, the check, both attempts side by side, the ruled out hypothesis and the report");
 
-  // A panel started by an assistant does not carry the actions of the user, so it names the reason instead of the buttons.
-  const assistant = await page.evaluate(() => Boolean((Panel.health() || {}).assistant_started));
-  const buttons = page.locator('[data-key="work-focus"] [data-key^="form:focus_"]');
-  if (assistant) {
-    assert.equal(await buttons.count(), 0, "a panel started by an assistant offers the focus actions");
-    assert.match(await text(page, '[data-key="work-focus"]'), /started from inside an assistant session, so it does not set the check or start the attempts/);
-  } else {
-    assert.deepEqual(await buttons.allInnerTexts(), ["Set the check", "Start the attempts"]);
-  }
-  // openForm resolves only when the form closes, so the check does not wait for it.
-  await page.evaluate((value) => { Panel.openForm("focus_check", { episode_id: value }); }, id);
-  await page.waitForSelector('#form-dialog[open] textarea[name="command"]');
-  assert.equal(await field(page, "command").inputValue(), "python3\n-m\nunittest\ntests.test_export_format");
-  assert.equal(await field(page, "timeout_seconds").inputValue(), "120");
-  await field(page, "timeout_seconds").fill("300");
-  await page.locator("#form-save").click();
-  // The fixture is not a git repository, so even a panel started by the user is refused before anything is recorded.
-  await page.waitForFunction(() => document.getElementById("form-error").textContent.length > 0, null, { timeout: 15000 });
-  assert.match(await page.locator("#form-error").textContent(), assistant ? /started from inside an assistant session/ : /is not committed with its current content: tests\/test_export_format\.py\./);
-  await closeForm(page);
-  // openForm resolves only when the form closes, so the check does not wait for it.
-  await page.evaluate((value) => { Panel.openForm("focus_start", { episode_id: value }); }, id);
-  await page.waitForSelector("#form-dialog[open] #form-save");
-  await page.waitForFunction((statement) => document.getElementById("form-fields").textContent.includes(statement), FOCUS.third);
-  assert.ok(!(await text(page, "#form-fields")).includes(FOCUS.first), "the start form lists a ruled out hypothesis as open");
-  await closeForm(page);
-  const plan = await page.evaluate(async (value) => (await Panel.get("focus", { id: value })).focus.check.timeout_seconds, id);
-  assert.equal(plan, 120, "a refused Set the check changed the recorded check");
-  step("focus: the Set the check and Start the attempts forms open with the recorded check and the open hypothesis, and a refused check changes nothing");
+  // The check runs a command on this computer, so the user sets it and starts the attempts in the chat, as the section says.
+  assert.equal(await page.locator('[data-key="work-focus"] button').filter({ hasText: /Set the check|Start the attempts/ }).count(), 0);
+  assert.match(await text(page, '[data-key="work-focus"] .chat-hint'), /Ask the assistant in the chat to start the attempts/);
+  step("focus: the Focus section offers no form and says how to start the attempts in the chat");
 
   await page.setViewportSize({ width: 390, height: 900 });
   await page.waitForTimeout(250);
@@ -1286,8 +1061,8 @@ async function hived(browser, fixture) {
   const problems = watch(page);
   await page.goto(fixture.url);
   await page.waitForFunction(() => document.getElementById("live-status").textContent === "Live", null, { timeout: 20000 });
-  // Session flags are low risk decisions: a row of Sessions decides one in its pane without a dialog, and the next item
-  // opens by itself. A proposed lesson of Learning is decided in the same pane with its reason.
+  // Session flags are read in the panel and decided in the chat: a row opens the flag as a page that says so, and keys
+  // typed into the search move nothing.
   await go(page, "#sessions");
   await page.waitForSelector('#main .view:not(.pending) [data-key="session-row-flag_fixture_4"]');
   assert.match(await text(page, "[data-key=sessions-tab-flags]"), /Flags\s*4/);
@@ -1295,40 +1070,19 @@ async function hived(browser, fixture) {
   await page.click('[data-key="session-row-flag_fixture_4"]');
   await page.waitForFunction(() => /Wait for the review before the release/.test(document.getElementById("detail-title").textContent));
   await settle(page);
-  assert.equal(await page.locator("#decide-reason").getAttribute("placeholder"), "Add a reason (optional)");
-  // The decision letters and J and K stay quiet while the reader types: in the reason field of the pane and in the search field.
+  assert.match(await text(page, "#detail .chat-hint"), /Confirm or dismiss this flag in the chat/);
+  assert.equal(await page.locator("#detail .detail-foot button, #detail textarea").count(), 0);
   const quiet = () => page.evaluate(() => [/Wait for the review before the release/.test(document.getElementById("detail-title").textContent),
-    document.querySelector("#main [data-selected]").dataset.key, [...document.querySelectorAll(".toast")].some((node) => /dismissed/.test(node.textContent)), document.getElementById("form-dialog").open]);
-  await page.locator("#decide-reason").focus();
-  await page.keyboard.type("dj");
-  await page.waitForTimeout(400);
-  assert.deepEqual([await page.locator("#decide-reason").inputValue(), ...await quiet()], ["dj", true, "session-row-flag_fixture_4", false, false], "a key typed into the reason field decided the flag or moved the selection");
-  await page.locator("#decide-reason").fill("");
+    document.querySelector("#main [data-selected]").dataset.key]);
   await page.locator("#find-open").click();
   await page.waitForSelector("#find[open]");
   await page.keyboard.type("jk");
   await page.waitForTimeout(400);
-  assert.deepEqual([await page.locator("#search-input").inputValue(), ...await quiet()], ["jk", true, "session-row-flag_fixture_4", false, false], "a key typed into the search field moved the selection");
+  assert.deepEqual([await page.locator("#search-input").inputValue(), ...await quiet()], ["jk", true, "session-row-flag_fixture_4"], "a key typed into the search field moved the selection");
   await page.keyboard.press("Escape");
   await page.waitForFunction(() => !document.getElementById("find").open);
-  step("sessions: the decision letters and J and K stay quiet while the reader types in the reason field and in the search field");
-  await page.locator("#detail-title").focus();
-  await page.keyboard.press("d");
-  await page.waitForFunction(() => !/Wait for the review/.test(document.getElementById("detail-title").textContent) && !["Loading", "This item is decided"].includes(document.getElementById("detail-title").textContent), null, { timeout: 15000 });
-  assert.equal(await page.locator("#form-dialog[open]").count(), 0, "a flag still needs a dialog");
-  assert.equal(await page.locator("#detail").isHidden(), false);
-  await page.waitForFunction(() => /Flags\s*3/.test(document.querySelector("#main .view:not(.pending) [data-key=sessions-tab-flags]").textContent), null, { timeout: 15000 });
-  await closePane(page);
-  await go(page, "#learning");
-  await page.locator("#main .pane-row").first().click();
-  await page.waitForFunction(() => document.getElementById("detail-kind").textContent === "Decide a lesson" && !document.querySelector(".detail-content.pending"));
-  await page.locator("#decide-reason").fill("The practice prevents unclear release notes.");
-  await page.locator('[data-key="decide-accepted"]').click();
-  await page.waitForFunction(() => [...document.querySelectorAll(".toast")].some((node) => node.textContent === "The lesson is accepted."), null, { timeout: 15000 });
-  await page.waitForFunction(() => document.getElementById("detail").hidden, null, { timeout: 15000 });
-  step("sessions: a flag is dismissed with one key and the next flag opens by itself, and a lesson is accepted in the pane with its reason");
-  // Sessions in the frame: the flags are rows under a tab, and no size scrolls the page with or without the pane, whose
-  // Confirm action stays in reach.
+  step("sessions: a flag opens as a page that says how to decide it in the chat, and keys typed into the search move nothing");
+  // Sessions in the frame: the flags are rows under a tab, and no size scrolls the page with or without the pane.
   const flagPane = (pattern) => page.waitForFunction((source) => new RegExp(source).test(document.getElementById("detail-title").textContent) && !document.querySelector(".detail-content.pending"), pattern.source);
   for (const [width, height] of FRAMES) {
     await page.setViewportSize({ width, height });
@@ -1336,10 +1090,8 @@ async function hived(browser, fixture) {
     await page.waitForSelector("#main .pane-row");
     await fixedFrame(page, `sessions at ${width} by ${height}`);
     await page.locator("#main .pane-row").first().click();
-    await flagPane(/Use the second file instead/);
+    await flagPane(/Wait for the review before the release/);
     await fixedFrame(page, `sessions with the pane at ${width} by ${height}`);
-    const box = await page.locator('#detail .detail-foot [data-key="decide-confirmed"]').boundingBox();
-    assert.ok(box && box.y >= 0 && box.y + box.height <= height, `sessions at ${width} by ${height}: Confirm is out of reach`);
   }
   // The Proposals and Digests tabs scroll no page at 1600 by 640 either.
   await page.setViewportSize({ width: 1600, height: 640 });
@@ -1348,14 +1100,12 @@ async function hived(browser, fixture) {
     await fixedFrame(page, `${hash} at 1600 by 640`);
   }
   await page.setViewportSize({ width: 1440, height: 900 });
-  step(`sessions: no page scroll at ${FRAMES.map((size) => size.join(" by ")).join(", ")} pixels with and without the pane, Confirm stays in reach, and the Proposals and Digests tabs scroll no page at 1600 by 640`);
+  step(`sessions: no page scroll at ${FRAMES.map((size) => size.join(" by ")).join(", ")} pixels with and without the pane, and the Proposals and Digests tabs scroll no page at 1600 by 640`);
 
-  // A flag row of Sessions is decided in the same pane as in Now: J and K move along the rows, one key dismisses the flag
-  // without a dialog, the next flag opens by itself, and one dialog without a reason dismisses the rest.
+  // J and K move along the flag rows while a flag is open.
   await go(page, "#sessions");
-  await page.waitForFunction(() => /3 open flags/.test(document.getElementById("view-summary").textContent));
+  await page.waitForFunction(() => /4 open flags/.test(document.getElementById("view-summary").textContent));
   assert.deepEqual((await page.locator("#main .db-views button").allTextContents()).map((label) => label.replace(/\d+$/, "")), ["Flags", "Proposals", "Digests"]);
-  assert.equal(await page.locator("#main .pane-row").count(), 3);
   await page.click('[data-key="session-row-flag_fixture_3"]');
   await flagPane(/Use the second file instead/);
   assert.equal(await page.locator('#main [data-key="session-row-flag_fixture_3"]').getAttribute("aria-current"), "true");
@@ -1364,20 +1114,8 @@ async function hived(browser, fixture) {
   await flagPane(/Do not change the export format/);
   await page.keyboard.press("k");
   await flagPane(/Use the second file instead/);
-  await page.keyboard.press("d");
-  await page.waitForFunction(() => [...document.querySelectorAll(".toast")].some((node) => node.textContent === "The flag is dismissed."), null, { timeout: 15000 });
-  await flagPane(/Do not change the export format/);
-  assert.equal(await page.locator("#form-dialog[open]").count(), 0, "a single flag still needs a dialog");
-  await page.waitForFunction(() => /2 open flags/.test(document.getElementById("view-summary").textContent), null, { timeout: 15000 });
-  await page.click('#main [data-key="form:session_flag:dismissed"]');
-  await page.waitForSelector("#form-dialog[open]");
-  assert.equal(await text(page, "#form-title"), "Decide the 2 shown flags");
-  await page.locator("#form-save").click();
-  await savedToast(page, /2 flags are dismissed\./);
-  await page.waitForFunction(() => /0 open flags/.test(document.getElementById("view-summary").textContent), null, { timeout: 15000 });
-  assert.match(await text(page, '#main [data-key="sessions-note"]'), /Of 4 decided flags, 0 were confirmed\./);
   await closePane(page);
-  step("sessions: a flag row is decided in the shared pane with J, K and D, the next flag opens by itself, and one dialog without a reason dismisses the rest");
+  step("sessions: J and K move along the flag rows in the open page");
 
   // Hive in the frame: the swarms are rows, and a row opens the swarm as a conversation in the pane, whose body scrolls
   // and whose foot holds the actions of the user.
@@ -1394,7 +1132,7 @@ async function hived(browser, fixture) {
   assert.deepEqual(await page.evaluate(() => [document.getElementById("detail-kind").textContent, document.getElementById("detail-title").textContent]), ["Swarm", "Wrong delivery day in the export"]);
   assert.equal(await text(page, '#detail [data-key="hive-state"]'), "The swarm is open with 13 entries from 4 agents.");
   assert.equal(await cards(page).count(), 13);
-  assert.match(await text(page, '#detail [data-key="hive-actions"]'), /Ask a question\s*Post an observation\s*Close the swarm/);
+  assert.match(await text(page, "#detail .chat-hint"), /To answer a question, ask one, post an observation or close the swarm, tell the assistant in the chat/);
   step("hive: the list shows the swarm row with its kind, agents and counts, and the row opens the swarm in the pane as a timeline of 13 entries");
 
   // Hosts are named in words as well as colours, and a verified command is marked with its exit code.
@@ -1488,11 +1226,11 @@ async function hived(browser, fixture) {
   await fixedFrame(page, "hive with the swarm pane");
   step(`hive: an entry written while the page is open appears ${shown - stored} milliseconds after it is stored (${stored - written} to store it), codex-2 leaves the blind phase, and the timeline keeps its reading position`);
 
-  // No size scrolls the page with the swarm list alone or with the pane, and the actions of the user stay in reach.
+  // No size scrolls the page with the swarm list alone or with the pane, and the open swarm says how to take part in the chat.
   for (const [width, height] of FRAMES) {
     await page.setViewportSize({ width, height });
     await fixedFrame(page, `hive with the pane at ${width} by ${height}`);
-    assert.ok(await page.locator('#detail .detail-foot [data-key^="form:hive_post:"]').first().evaluate((node) => { const box = node.getBoundingClientRect(); return box.top >= 0 && box.bottom <= window.innerHeight; }), `hive at ${width} by ${height}: the actions of the swarm are out of reach`);
+    assert.match(await text(page, "#detail .chat-hint"), /tell the assistant in the chat/, `hive at ${width} by ${height}: the open swarm does not say how to take part`);
     await closePane(page);
     await fixedFrame(page, `hive at ${width} by ${height}`);
     await page.locator(`[data-key="hive-swarm-${swarm}"]`).click();
@@ -1507,70 +1245,13 @@ async function hived(browser, fixture) {
   // A nested entry keeps at least 70 percent of a 320 pixel screen, so the indentation of a thread never squeezes its text.
   assert.ok(phone.every((value) => value >= 224), `a nested entry is too narrow to read at 320 pixels: ${phone}`);
   await page.setViewportSize({ width: 1440, height: 900 });
-  step(`hive: no size scrolls the page with the swarm list or the pane, the actions stay in reach, and the timeline with its nested replies stays readable at 390 and 320 pixels`);
+  step(`hive: no size scrolls the page with the swarm list or the pane, the open swarm points to the chat, and the timeline with its nested replies stays readable at 390 and 320 pixels`);
 
-  // The user posts as workspace-user: an answer to the open question and a question to one agent.
-  await page.locator(`[data-key="form:hive_post:${swarm}:answer:${e.user_question}"]`).click();
-  await page.waitForSelector("#form-dialog[open] textarea[name=claim]");
-  assert.match(await text(page, "#form-fields"), /time zone of the customer/);
-  await field(page, "claim").fill("The export shows each day in the time zone of the warehouse");
-  await page.locator("#form-save").click();
-  await page.waitForFunction(() => /rule claim_sentence/.test(document.getElementById("form-error").textContent), null, { timeout: 15000 });
-  await field(page, "claim").fill("The export shows each day in the time zone of the warehouse.");
-  await page.locator("#form-save").click();
-  await savedToast(page, /The answer e\d+ is posted\./);
-  await page.waitForFunction((id) => document.querySelector(`#hive-${id} > .hive-thread [data-state="host-workspace-user"]`), e.user_question, { timeout: 15000 });
-  await settle(page);
-  await page.locator(`[data-key="form:hive_post:${swarm}:question"]`).click();
-  await page.waitForSelector("#form-dialog[open] select[name=addressee]");
-  await field(page, "claim").fill("Which file formats the date for the warehouse report?");
-  await field(page, "addressee").selectOption("agent:codex-2");
-  await page.locator("#form-save").click();
-  await savedToast(page, /The question e\d+ is posted\./);
-  await page.waitForFunction(() => /Addressed to agent codex-2\./.test(document.querySelector('#detail .detail-content:not(.pending) [data-key="hive-timeline"]').textContent), null, { timeout: 15000 });
-  await page.locator(`[data-key="form:hive_post:${swarm}:observation"]`).click();
-  await page.waitForSelector("#form-dialog[open] textarea[name=bases]");
-  await field(page, "claim").fill("The warehouse report reads the export module.");
-  await field(page, "bases").fill("src/app/export.py:1");
-  await page.locator("#form-save").click();
-  await page.waitForFunction(() => /no known kind/.test(document.getElementById("form-error").textContent));
-  await field(page, "bases").fill("file: src/app/export.py:1");
-  await page.locator("#form-save").click();
-  await savedToast(page, /The observation e\d+ is posted\./);
-  await shownEntries(17);
-  step("hive: the user answers the open question, asks codex-2 a question and posts an observation, and a refused claim names its rule");
-
-  await page.locator(`#detail [data-key="form:hive_close:${swarm}"]`).click();
-  await page.waitForSelector("#form-dialog[open] textarea[name=summary]");
-  assert.match(await text(page, "#form-fields"), /Confirmed conclusions\s*1 of 1/);
-  await field(page, "summary").fill("Keeping the offset fixes the delivery day in both exports.");
-  await page.locator("#form-save").click();
-  await savedToast(page, /The swarm is closed\. Confirmed conclusions: 1 of 1\. Proposed lessons: 0\./);
-  await page.waitForFunction(() => /The swarm is closed with 17 entries/.test((document.querySelector('#detail .detail-content:not(.pending) [data-key="hive-state"]') || {}).textContent || ""), null, { timeout: 15000 });
-  await settle(page);
-  assert.equal(await page.locator('[data-key="hive-actions"]').count(), 0, "a closed swarm still offers actions");
-  assert.equal(await page.locator('[data-key^="form:hive_post:"]').count(), 0, "a closed swarm still offers an answer");
-  step("hive: the user closes the swarm with a summary, and the closed swarm offers no further posts");
-
-  // Purge is a user action in the foot of the list, so a panel started by an assistant refuses it there and names the reason.
-  await go(page, "#hive");
-  const assistant = await page.evaluate(() => Boolean((Panel.health() || {}).assistant_started));
-  if (assistant) {
-    assert.equal(await page.locator('[data-key="form:hive_purge"]').count(), 0, "a panel started by an assistant offers the purge");
-    assert.match(await text(page, '#main .pane-foot [data-key="hive-purge-refused"]'), /does not purge swarms/);
-    const refusal = await page.evaluate(() => Panel.action("hive_purge", { closed_before_days: 0 }, Panel.requestKey("hive-purge")).then(() => "", (error) => error.message));
-    assert.match(refusal, /does not purge swarms of the hive/);
-    assert.equal(await text(page, "#view-summary"), "1 swarm is recorded, and 0 are open.");
-    step("hive: a panel started by an assistant offers no purge and the server refuses one");
-  } else {
-    await page.locator('#main .pane-foot [data-key="form:hive_purge"]').click();
-    await page.waitForSelector("#form-dialog[open] input[name=closed_before_days]");
-    await field(page, "closed_before_days").fill("0");
-    await page.locator("#form-save").click();
-    await savedToast(page, /1 swarm with 17 entries was purged\./);
-    await page.waitForFunction(() => /No swarm is recorded yet/.test(document.getElementById("view-summary").textContent), null, { timeout: 15000 });
-    step("hive: the user purges the closed swarm and the list is empty");
-  }
+  // The user takes part in a swarm in the chat, so the panel offers no answer, question, close or purge.
+  assert.equal(await page.locator('#detail button').filter({ hasText: /^(Answer|Ask a question|Post an observation|Close the swarm)$/ }).count(), 0);
+  await closePane(page);
+  assert.equal(await page.locator("#main button").filter({ hasText: /Purge closed swarms/ }).count(), 0);
+  step("hive: the panel offers no post, close or purge, because the user takes part in the chat");
   assert.deepEqual(problems, [], "the Hive checks logged console or page errors");
   await page.close();
 }
@@ -1583,16 +1264,10 @@ async function hived(browser, fixture) {
       const fixture = serve(kind, directory);
       const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
       const problems = watch(page);
-      const posts = [];
-      page.on("request", (request) => {
-        if (request.method() === "POST") {
-          posts.push({ csrf: request.headers()["x-project-memory"], key: (JSON.parse(request.postData() || "{}")).request_key });
-        }
-      });
       await page.goto(fixture.url);
       await page.waitForFunction(() => document.getElementById("live-status").textContent === "Live", null, { timeout: 20000 });
       await views(page, kind, expected);
-      if (kind === "product") await editing(page, fixture.ids, posts);
+      if (kind === "product") await readOnly(page, fixture);
       assert.deepEqual(problems, [], `${kind} logged console or page errors`);
       step(`${kind}: no console or page errors in live mode`);
       await page.close();

@@ -71,7 +71,7 @@ const loaded = (page) => page.waitForFunction(() => !document.getElementById("de
       page.on("request", (request) => { if (!request.url().startsWith("file:") && !request.url().startsWith("data:")) requests.push(request.url()); });
       await page.goto(pathToFileURL(fixture.snapshot).href);
       await page.waitForFunction(() => /^Snapshot from /.test(document.getElementById("live-status").textContent), null, { timeout: 20000 });
-      assert.equal(await page.evaluate(() => Panel.canEdit()), false);
+      assert.equal(await page.evaluate(() => Panel.live), false);
       assert.equal(await page.locator("#template-notice").isVisible(), false);
       assert.equal(await page.evaluate(() => Panel.term("components")), expected.term);
       step(`${kind}: the snapshot opens read only with its own labels and the export time`);
@@ -125,8 +125,8 @@ const loaded = (page) => page.waitForFunction(() => !document.getElementById("de
           '#main [data-key^="accept-"], #main [data-key^="retire-"], #main [data-key^="merge-"], #main [data-key^="plan-add-"]').count();
         assert.equal(controls, 0, `${kind}: the ${name} view offers an edit control in a snapshot`);
       }
-      assert.equal(await page.evaluate(() => Panel.openForm("plan", {})), null);
-      assert.equal(await page.locator("#form-dialog").evaluate((node) => node.open), false);
+      // The panel holds no form at all, and no script can write.
+      assert.deepEqual(await page.evaluate(() => [typeof Panel.openForm, typeof Panel.action, Boolean(document.getElementById("form-dialog"))]), ["undefined", "undefined", false]);
       step(`${kind}: no view offers an edit control and no form can be opened`);
 
       // A snapshot holds no sessions response, so the Sessions view states that instead of failing, and Learning keeps its tabs.

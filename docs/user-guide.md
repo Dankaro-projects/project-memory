@@ -51,7 +51,7 @@ Capturing a document does not approve its contents. A recorded plan does not aut
 
 Run `project-memory view` in the project folder, or ask the assistant to open Project Memory. Start on **Now**: it states the project position in one sentence and lists the work in progress, the paused work, the work ready to start and the finished work, each item with its next step. Every row opens the work item behind it as a page beside the list.
 
-Use **Plan** for the outline of phases and items, **Work** for the table and the board of work items, and **Learning** for the lessons and their guards. The [control panel guide](control-panel.md) describes every view.
+Use **Plan** for the outline of phases and items, **Work** for the table and the board of work items, and **Learning** for the lessons and their guards. The panel is read only. When a page says that a decision is yours, tell the assistant in the chat: it records your decision with your exact words, which Project Memory checks against the prompt you sent. The [control panel guide](control-panel.md) describes every view.
 
 ## Keep the records honest
 

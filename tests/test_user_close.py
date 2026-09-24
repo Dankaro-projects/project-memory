@@ -56,7 +56,7 @@ class UserCloseTests(ReceiptEvidenceFixture):
     def test_a_notification_cannot_close_an_item(self):
         text = '<task-notification>\n<status>completed</status>\n</task-notification>'
         receipt = self.prompt(text)
-        with self.assertRaisesRegex(InvalidRecord, 'notification cannot close'):
+        with self.assertRaisesRegex(InvalidRecord, 'notification cannot decide'):
             self.close(receipt, text=text)
 
     def test_a_prompt_of_another_session_is_refused(self):

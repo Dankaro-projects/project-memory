@@ -63,7 +63,7 @@ HIVE_OPENED = ('Project Memory logged the orient entry {orient_id} and the hypot
 HIVE_ORIENT_CLAIM = 'The goal of this agent is the objective and completion criterion of the delegated work item.'
 HANDOVER_LIMIT = 600
 PRODUCTION_MERGE_REFUSED = ('This project is in production, so bringing delegated work into the project is a user action. '
-                            'Open the control panel and merge the run there. The work is prepared and waiting: its changes '
+                            'The user asks for the merge in the chat, where it is recorded with user_action. The work is prepared and waiting: its changes '
                             'and its work review are recorded, and the project files are unchanged.')
 
 
@@ -996,8 +996,8 @@ def require_user_grant(memory, episode_id):
         previous = payload
     if previous.get('autonomy') != 'act' or not previous.get('paths') or granted:
         return
-    message = ('An assistant can delegate this work item only after the user saves its plan with autonomy act and the allowed paths '
-               'in the control panel.')
+    message = ('An assistant can delegate this work item only after the user grants its plan with autonomy act and the allowed paths '
+               'in the chat, where the assistant records it with user_action on the words of the user.')
     if changed_by:
         message += f' The autonomy or the allowed paths were last changed by {changed_by}.'
     raise InvalidRecord(message, changed_by=changed_by)
@@ -1020,16 +1020,16 @@ def merge_authority(memory, actor):
     """Return the current phase, or raise when the project is in production and the actor is not the user.
 
     In development the orchestrator merges after a passing work review. In production the merge belongs to
-    the user, so an assistant is refused here and the prepared run waits in the control panel.
+    the user, so an assistant is refused here and the prepared run waits until the user asks for the merge in the chat.
     """
     current = planning.phase(memory)
     if current['phase'] != 'production' or actor == USER_ACTOR:
         return current
     raise InvalidRecord(PRODUCTION_MERGE_REFUSED, phase=current['phase'], phase_reason=current['reason'],
                         phase_version=current['version'], merge_actor=USER_ACTOR,
-                        next_step={'action': 'merge_in_control_panel',
-                                   'reason': 'The user merges this run in the control panel. Report that the work is '
-                                             'prepared and waiting, and do not attempt the merge again.'})
+                        next_step={'action': 'ask_user',
+                                   'reason': 'Report that the work is prepared and waiting. When the user asks for the merge in the chat, '
+                                             'record it with user_action on the words of the user.'})
 
 
 def merge(memory, run_id, *, request_key, actor, override_reason=None):

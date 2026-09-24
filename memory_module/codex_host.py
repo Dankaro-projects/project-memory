@@ -455,7 +455,7 @@ def session_context(memory, session, compacted=False):
     from .planning import phase as project_phase
     if project_phase(memory)['phase'] == 'production':
         parts.append('This project is in production: delegated work and its review still run, and only the user brings '
-                     'the result into the project, in the control panel.')
+                     'the result into the project, by asking for the merge in the chat; record it with user_action.')
     parts.append('Use memory_context before repeating research. Record a decision when choosing or revising an approach with consequences, using this session_id, evidence, uncertainty and alternatives. Routine acknowledgement needs no decision record. '
                  'Tool receipts are observations; outcomes and lesson acceptance require explicit assessment.')
     return ' '.join(parts)

@@ -320,24 +320,12 @@ button.pane-row:hover { background: var(--hover); }
 .shell[data-wide] .detail { box-shadow: none; }
 .shell[data-wide] #detail-title, .shell[data-wide] .detail-scroll, .shell[data-wide] .detail-foot { padding-left: max(28px, calc((100% - 760px) / 2)); padding-right: max(28px, calc((100% - 760px) / 2)); }
 
-/* Form dialog */
-.form-dialog {
-  width: min(640px, calc(100vw - 24px)); max-height: calc(100dvh - 24px); padding: 0;
-  color: var(--ink); background: var(--bg); border: 0; border-radius: 12px; box-shadow: var(--shadow-menu);
-}
-.form-dialog::backdrop { background: rgba(15, 15, 15, 0.4); }
-.form-dialog form { display: flex; flex-direction: column; max-height: calc(100dvh - 26px); }
-#form-title { padding: 20px var(--space-6) var(--space-2); font-size: 20px; font-weight: 700; }
-.form-fields { display: grid; gap: var(--space-4); padding: var(--space-2) var(--space-6) var(--space-4); overflow-y: auto; }
-.form-error { margin: 0 var(--space-6) var(--space-3); padding: 10px var(--space-3); color: var(--red-text); background: var(--red-bg); border-radius: var(--radius); }
-.form-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--space-2); padding: 12px var(--space-6); border-top: 1px solid var(--line); }
 .field { display: grid; gap: 4px; min-width: 0; }
 .field > span { font-size: 12px; font-weight: 500; color: var(--muted); }
 .field > small, .hint { font-size: 12px; color: var(--muted); }
 .field input:not([type="checkbox"]):not([type="radio"]), .field select { width: 100%; }
 .field.check { display: flex; align-items: center; gap: var(--space-2); }
 .field.check > span { font-size: 14px; color: var(--ink); }
-.form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-4); }
 fieldset { margin: 0; padding: var(--space-3); border: 1px solid var(--line); border-radius: var(--radius); display: grid; gap: var(--space-3); }
 legend { padding: 0 var(--space-1); font-weight: 600; }
 
@@ -464,8 +452,7 @@ table.data th button { min-height: 0; padding: 0; border: 0; background: transpa
   .activity { left: 12px; right: 12px; width: auto; }
 }
 @media (max-width: 639px) {
-  .kv, .form-grid { grid-template-columns: minmax(0, 1fr); }
-  #form-title, .form-fields, .form-actions { padding-left: var(--space-4); padding-right: var(--space-4); }
+  .kv { grid-template-columns: minmax(0, 1fr); }
   .sentence { font-size: 17px; }
   #detail-title { padding: 14px 16px 4px; font-size: 22px; }
   .detail-scroll, .detail-foot { padding-left: 16px; padding-right: 16px; }
@@ -610,19 +597,6 @@ summary > h3 { display: inline; }
   .tree details.acceptance { margin-left: 40px; }
 }
 
-/* forms.js: dependency rows, choice lists and facts inside the form dialog. */
-.dependency-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; gap: var(--space-3); align-items: end; }
-.choices { display: grid; gap: var(--space-2); }
-.choices .field.check { align-items: flex-start; }
-.choices .field.check > span { display: grid; gap: 2px; }
-.choices .field.check input { margin-top: 4px; }
-.form-fields fieldset .field.check > span { font-weight: 400; }
-.form-fields .kv { grid-template-columns: minmax(110px, 160px) minmax(0, 1fr); }
-@media (max-width: 639px) {
-  .dependency-row, .form-fields .kv { grid-template-columns: minmax(0, 1fr); }
-  .dependency-row > button { justify-self: start; }
-}
-/* End of forms.js rules. */
 
 /* graphs.js: the Architecture view, the Dependencies view and the lineage graph. */
 .graph[tabindex]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
@@ -910,3 +884,6 @@ button.find-item .icon { width: 18px; height: 18px; color: var(--muted); }
 [data-key="work-quick"] .field > span { padding: 0 6px 0 28px; font-size: 14px; font-weight: 400; color: var(--muted); }
 [data-key="work-quick"] select { justify-self: start; width: auto; min-height: 30px; padding: 0 8px; font-weight: 500; background: transparent; box-shadow: none; cursor: pointer; }
 [data-key="work-quick"] select:hover { background: var(--hover-strong); }
+/* The callout that points to the chat carries the accent, so it reads as the way to act. */
+.callout.chat-hint { background: var(--accent-soft); }
+.callout.chat-hint > .icon { color: var(--accent-text); }
