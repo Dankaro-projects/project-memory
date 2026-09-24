@@ -91,6 +91,8 @@ const Panel = (() => {
     ["architecture", "Architecture", MORE], ["dependencies", "Dependencies", MORE], ["agents", "Agents", MORE],
     ["machine", "Machine", MORE], ["hive", "Hive", MORE], ["usage", "Usage", MORE]];
   // The dot colours of the Notion status properties, for the graphs that cannot read the style tokens.
+  // Views that read as a document sit in a centred column, as a Notion page does; databases keep the full width.
+  const DOCUMENTS = new Set(["now", "requirements"]);
   const COLORS = { blocked: "#e16f64", review: "#d9730d", in_progress: "#5b97bd", ready: "#6c9b7d",
     done: "#91918e", backlog: "#c4c3c0", guarded: "#9d68d3", neutral: "#9b9a97" };
   const TONES = {};
@@ -364,6 +366,29 @@ const Panel = (() => {
     $("nav").replaceChildren(...[...groups].map(([section, items]) => (section === MORE
       ? h("details", { class: "nav-group nav-more", id: "nav-more" }, h("summary", null, icon("more"), h("span", null, section), icon("chev")), h("ul", null, items))
       : h("div", { class: "nav-group" }, section ? h("h2", null, section) : null, h("ul", null, items)))));
+    $("nav").firstChild.after(h("div", { class: "nav-group recent", id: "recent", hidden: true }));
+    drawRecent();
+  }
+  // Recent pages: the last items opened in the side peek, kept in this browser for this project and shown in the sidebar.
+  // Browser storage can be missing or blocked, so every read and write is guarded and the panel works without it.
+  const recentKey = () => "project-memory-recent:" + ((state.health && state.health.project) || snapshot.project || "project");
+  function readRecent() {
+    try { const value = JSON.parse(localStorage.getItem(recentKey()) || "[]"); return Array.isArray(value) ? value.slice(0, 5) : []; } catch (error) { return []; }
+  }
+  function remember(entry) {
+    const list = [entry, ...readRecent().filter((item) => !(item.kind === entry.kind && item.id === entry.id))].slice(0, 5);
+    try { localStorage.setItem(recentKey(), JSON.stringify(list)); } catch (error) { /* The list stays for this visit only. */ }
+    drawRecent(list);
+  }
+  const RECENT_ICONS = { work: "work", decision: "decisions", record: "records", run: "agents", guard: "learning", instructions: "learning", swarm: "hive" };
+  function drawRecent(list = readRecent()) {
+    const host = $("recent");
+    if (!host) return;
+    host.hidden = !list.length;
+    if (!list.length) { host.replaceChildren(); return; }
+    host.replaceChildren(h("h2", null, "Recent"), h("ul", null, list.map((item) => h("li", null, h("button", { type: "button", class: "nav-link recent-link",
+      dataset: { key: "recent-" + item.kind + "-" + item.id }, title: item.title, on: { click: (event) => openPane(item.kind, { id: item.id }, event.currentTarget) } },
+    icon(RECENT_ICONS[item.kind] || "page"), h("span", { class: "nav-title" }, item.title))))));
   }
   function updateChrome() {
     const title = (views.get(state.route.name) || {}).title || words(state.route.name);
@@ -371,8 +396,9 @@ const Panel = (() => {
     const entry = NAV.find(([name]) => name === state.route.name), section = entry ? entry[2] : MORE;
     const project = (state.health && state.health.project) || snapshot.project || "Project Memory";
     $("crumbs").replaceChildren(...[project, section !== title ? section : "", title].filter(Boolean).map((text, index, all) =>
-      h("li", { "aria-current": index === all.length - 1 ? "page" : null }, text)));
+      h("li", { "aria-current": index === all.length - 1 ? "page" : null }, index === all.length - 1 ? icon(state.route.name) : null, text)));
     $("page-icon").replaceChildren(icon(state.route.name));
+    if (DOCUMENTS.has(state.route.name)) $("app").dataset.doc = ""; else delete $("app").dataset.doc;
     document.title = title + " | " + ((state.health && state.health.project) || snapshot.project || "Project Memory");
     for (const node of document.querySelectorAll(".nav-link")) {
       if (node.dataset.nav !== state.route.name) { node.removeAttribute("aria-current"); continue; }
@@ -420,9 +446,18 @@ const Panel = (() => {
     $("activity-toggle").setAttribute("aria-expanded", String(open));
     if (open) drawActivity();
   }
+  // The top bar states when the panel last saw a change, as the edit time of a Notion page. It says nothing before the first change.
+  function drawUpdated() {
+    const node = $("updated");
+    if (!live) { node.textContent = "Snapshot of " + date(snapshot.exported_at); return; }
+    if (!state.changedAt) { node.textContent = ""; return; }
+    const minutes = Math.floor((Date.now() - state.changedAt) / 60000);
+    node.textContent = minutes < 1 ? "Updated just now" : minutes === 1 ? "Updated 1 minute ago" : minutes < 60 ? "Updated " + minutes + " minutes ago" : "Updated at " + new Date(state.changedAt).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+  }
   function setStatus(kind, message) {
     const node = $("live-status");
     node.dataset.state = kind;
+    drawUpdated();
     node.textContent = { connecting: "Connecting", live: "Live", failed: "Update failed", snapshot: "Snapshot from " + date(snapshot.exported_at) }[kind];
     node.title = kind === "live" ? "Last successful update at " + new Date().toLocaleTimeString("en-GB") + "." : kind === "snapshot" ? "This snapshot is read only." : "";
     if (kind === "failed") alert("Updates are unavailable. The control panel tries again every 2 seconds. " + (message || ""), "updates");
@@ -432,6 +467,73 @@ const Panel = (() => {
     if (open) $("app").style.setProperty("--menu-top", Math.max(0, Math.round(document.querySelector(".topbar").getBoundingClientRect().bottom)) + "px");
     $("app").dataset.menu = open ? "open" : "closed";
     $("menu-toggle").setAttribute("aria-expanded", String(open));
+  }
+
+  // Quick find: Command K opens one search over the pages of the panel, the recent items, the work items and the records,
+  // as the quick find of Notion. Arrows move the selection, Enter opens it and Escape closes the dialog.
+  const find = { items: [], index: 0, token: 0, timer: null };
+  function openFind() {
+    if (state.form || $("find").open) return;
+    find.back = document.activeElement;
+    $("search-input").value = "";
+    $("find").showModal();
+    drawFind("");
+    $("search-input").focus();
+  }
+  const findItem = (group, name, title, sub, run) => ({ group, icon: name, title: String(title || "Untitled"), sub, run });
+  async function drawFind(query) {
+    const token = ++find.token, text = query.trim().toLowerCase(), has = (value) => !text || String(value || "").toLowerCase().includes(text);
+    const pages = NAV.filter(([name, title]) => views.has(name) && !omitted(name) && has(title))
+      .map(([name, title, section]) => findItem("Pages", name, title, section || "Home", () => go(name)));
+    const recent = readRecent().filter((item) => has(item.title))
+      .map((item) => findItem("Recent", RECENT_ICONS[item.kind] || "page", item.title, words(item.kind), () => openPane(item.kind, { id: item.id })));
+    let work = [], records = [];
+    if (text) {
+      const cards = await get("board", { limit: "100" }).then((value) => value.cards || [], () => []);
+      work = cards.filter((card) => has(card.title)).slice(0, 8).map((card) => findItem(term("work_items"), "work", card.title, words(card.state), () => openWork(card.id)));
+      if (live) records = await Promise.all(["events", "sources"].map((view) => get("records", { view, query: text, limit: "5" }).then((value) => value.records || [], () => [])))
+        .then((lists) => lists.flat().map((record) => findItem("Records", record.kind === "decision" ? "decisions" : "records", record.title || record.id,
+          words(record.kind) + (record.date ? ", " + date(record.date) : ""), () => openRecord(record.id))));
+    }
+    if (token !== find.token) return;
+    // The last result searches every record in Records, as Enter in the search of the sidebar did.
+    const all = text ? [findItem("Search", "records", "Search all records for \u201C" + query.trim() + "\u201D", "Records", () => go("records", { query: query.trim() }))] : [];
+    find.items = text ? [...pages, ...work, ...records, ...recent, ...all] : [...recent, ...pages];
+    find.index = 0;
+    const groups = [...new Set(find.items.map((item) => item.group))];
+    $("find-results").replaceChildren(...(find.items.length ? groups.map((group) => h("div", { class: "find-group", role: "group", "aria-label": group },
+      h("div", { class: "find-heading" }, group), find.items.filter((item) => item.group === group).map((item) => {
+        const position = find.items.indexOf(item);
+        return h("button", { type: "button", class: "find-item", role: "option", id: "find-item-" + position, dataset: { index: String(position) },
+          on: { click: () => runFind(position), mousemove: () => selectFind(position) } }, icon(item.icon), h("span", { class: "find-title" }, item.title),
+        h("span", { class: "find-sub" }, item.sub));
+      }))) : [h("p", { class: "find-empty" }, "Nothing matches " + query.trim() + ".")]));
+    selectFind(0);
+  }
+  function selectFind(position) {
+    find.index = Math.max(0, Math.min(find.items.length - 1, position));
+    for (const node of $("find-results").querySelectorAll(".find-item")) node.setAttribute("aria-selected", String(Number(node.dataset.index) === find.index));
+    const current = $("find-item-" + find.index);
+    if (current) { current.scrollIntoView({ block: "nearest" }); $("search-input").setAttribute("aria-activedescendant", current.id); }
+  }
+  function runFind(position) {
+    const item = find.items[position];
+    if (!item) return;
+    $("find").close();
+    item.run();
+  }
+  function bindFind() {
+    $("search-input").addEventListener("input", (event) => { clearTimeout(find.timer); const value = event.currentTarget.value; find.timer = setTimeout(() => drawFind(value), 120); });
+    $("search-input").addEventListener("keydown", (event) => {
+      if (event.key === "ArrowDown" || event.key === "ArrowUp") { event.preventDefault(); selectFind(find.index + (event.key === "ArrowDown" ? 1 : -1)); }
+      else if (event.key === "Enter") { event.preventDefault(); runFind(find.index); }
+      // A search field would spend the first Escape on clearing its text; quick find closes at once, as in Notion.
+      else if (event.key === "Escape") { event.preventDefault(); $("find").close(); }
+    });
+    // Closing returns the focus at once to where it was, so a key pressed right after reaches the page and not the closed field.
+    $("find").addEventListener("close", () => { const back = find.back; find.back = null; if (back && back.isConnected && back !== document.body) back.focus({ preventScroll: true }); else $("search-input").blur(); });
+    // A click on the backdrop outside the dialog closes it.
+    $("find").addEventListener("click", (event) => { if (event.target === $("find")) $("find").close(); });
   }
 
   // Rendering that keeps scroll position and focus.
@@ -547,12 +649,27 @@ const Panel = (() => {
     const done = await renderInto($("detail-body"), container, (shown) => panes.get(kind).render(body, { ...params }, ctx(shown)),
       token, () => state.paneToken, options.keep);
     if (done && $("detail-title").textContent === "Loading") $("detail-title").textContent = "Details";
+    if (done && params.id && ["work", "decision", "record", "run"].includes(kind)) remember({ kind, id: params.id, title: $("detail-title").textContent });
+    if (done) drawOutline();
+    if (done) $("detail-previous").hidden = $("detail-next").hidden = !$("main").querySelector("[data-selected]");
     if (done && options.focus) $("detail-title").focus({ preventScroll: true });
+  }
+  // The outline of a page: a dash for each section heading along the right edge of the side peek, as the floating
+  // table of contents of a Notion page. A dash names its heading on hover and scrolls to it on a click.
+  function drawOutline() {
+    const body = $("detail-body").querySelector(".detail-scroll"), old = $("detail-body").querySelector(".outline");
+    if (old) old.remove();
+    const headings = body ? [...body.querySelectorAll("h2.block-heading")] : [];
+    if (headings.length < 3) return;
+    $("detail-body").append(h("nav", { class: "outline", "aria-label": "Sections of the page" }, headings.map((node, index) => h("button", { type: "button",
+      dataset: { key: "outline-dash-" + index }, title: node.firstChild.textContent, on: { click: () => node.scrollIntoView({ block: "start", behavior: "smooth" }) } },
+    h("span", { class: "outline-dash" }), h("span", { class: "outline-label" }, node.firstChild.textContent)))));
   }
   // Full width hides the view behind the pane. The toggle is built here, because the pane bar is part of the shell.
   function setWide(on) {
     if (on) $("app").dataset.wide = "open"; else delete $("app").dataset.wide;
-    $("detail-wide").textContent = on ? "Show the list" : "Full width";
+    $("detail-wide").replaceChildren(icon(on ? "collapse" : "expand"), h("span", { class: "visually-hidden" }, on ? "Show the list" : "Full width"));
+    $("detail-wide").title = on ? "Show the list" : "Full width";
     $("detail-wide").setAttribute("aria-pressed", String(on));
   }
   function closePane() {
@@ -729,6 +846,8 @@ const Panel = (() => {
           state.stale = false;
           cache.clear();
           for (const listener of revisionListeners) try { listener(value.revision); } catch (error) { /* A listener failure must not stop updates. */ }
+          if (state.revision !== null && state.seenRevision !== undefined) state.changedAt = Date.now();
+          state.seenRevision = value.revision;
           updateShell();
           refresh();
         }
@@ -751,26 +870,37 @@ const Panel = (() => {
     window.addEventListener("hashchange", () => { state.route = parseHash(); setMenu(false); setActivity(false); renderView({ focus: true }); });
     $("activity-toggle").addEventListener("click", () => setActivity($("activity").hidden));
     document.addEventListener("click", (event) => { if (!$("activity").hidden && !event.target.closest("#activity, #activity-toggle")) setActivity(false); });
-    $("menu-toggle").addEventListener("click", () => setMenu($("app").dataset.menu !== "open"));
+    $("menu-toggle").addEventListener("click", () => { if ($("app").dataset.rail === "hidden" && window.innerWidth >= 900) { delete $("app").dataset.rail; try { localStorage.setItem("project-memory-rail", ""); } catch (error) { /* Kept for this visit. */ } return; } setMenu($("app").dataset.menu !== "open"); });
     $("nav").addEventListener("click", (event) => { if (event.target.closest("a")) setMenu(false); });
-    $("search").addEventListener("submit", (event) => { event.preventDefault(); const query = $("search-input").value.trim(); go("records", query ? { query } : {}); });
     $("detail-close").addEventListener("click", closePane);
     $("detail-back").addEventListener("click", backPane);
-    $("detail-close").before(button("Full width", "detail-wide", () => setWide(!$("app").dataset.wide), "small", { id: "detail-wide", "aria-pressed": "false" }));
+    $("detail-back").before(button([icon("expand"), h("span", { class: "visually-hidden" }, "Full width")], "detail-wide", () => setWide(!$("app").dataset.wide), "icon-button",
+      { id: "detail-wide", "aria-pressed": "false", title: "Full width" }));
+    $("detail-previous").addEventListener("click", () => stepRow(-1));
+    $("detail-next").addEventListener("click", () => stepRow(1));
+    // The sidebar folds away and comes back from the menu button of the top bar; the choice stays in this browser.
+    const setRail = (hidden) => { if (hidden) $("app").dataset.rail = "hidden"; else delete $("app").dataset.rail; try { localStorage.setItem("project-memory-rail", hidden ? "hidden" : ""); } catch (error) { /* Kept for this visit. */ } };
+    try { if (localStorage.getItem("project-memory-rail") === "hidden") $("app").dataset.rail = "hidden"; } catch (error) { /* The sidebar starts open. */ }
+    $("rail-hide").addEventListener("click", () => { setRail(true); $("menu-toggle").focus(); });
+    $("find-open").addEventListener("click", () => openFind());
     $("form").addEventListener("submit", submitForm);
     $("form-cancel").addEventListener("click", () => $("form-dialog").close());
     $("form-reload").addEventListener("click", reloadForm);
     $("form-dialog").addEventListener("close", formClosed);
     document.addEventListener("keydown", (event) => {
       if (event.defaultPrevented || $("form-dialog").open) return;
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") { event.preventDefault(); if ($("find").open) $("find").close(); else openFind(); return; }
+      if ($("find").open) return;
       if (event.key === "Escape" && $("app").dataset.menu === "open") { setMenu(false); $("menu-toggle").focus(); }
       else if (event.key === "Escape" && !$("activity").hidden) { setActivity(false); $("activity-toggle").focus(); }
       else if (event.key === "Escape" && state.pane) { event.preventDefault(); closePane(); }
       else if (event.target.closest("input, textarea, select, [contenteditable]") || event.metaKey || event.ctrlKey || event.altKey) return;
-      else if (event.key === "/") { event.preventDefault(); $("search-input").focus(); }
+      else if (event.key === "/") { event.preventDefault(); openFind(); }
       else if (state.pane && /^[jk]$/i.test(event.key)) { event.preventDefault(); stepRow(event.key.toLowerCase() === "j" ? 1 : -1); }
     });
     document.addEventListener("visibilitychange", () => { if (!document.hidden) poll(); });
+    setInterval(drawUpdated, 30000);
+    bindFind();
   }
   function boot() {
     buildNav();

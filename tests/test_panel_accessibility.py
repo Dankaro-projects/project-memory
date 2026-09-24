@@ -43,11 +43,12 @@ FOCUS_PAIRS = (
     (':focus-visible', 'outline', '#ffffff', 'the focus outline on white'),
     (':focus-visible', 'outline', '.rail', 'the focus outline on the sidebar'),
 )
-# The rules that remove the outline: two headings that take focus by script and the view pane, and the fields, which
-# show their focus as a ring of 2 pixels in the accent instead: every field, the search of the sidebar through its
-# wrapper, and the search of a database.
-OUTLINE_REMOVED = {'#view-title', '#detail-title', '.main', 'input:focus, select:focus, textarea:focus', '.search input'}
-RINGS = ('input:focus, select:focus, textarea:focus', '.search:focus-within', '.db-search input:focus', ':is(.kn-filter-box, .list-head) .field:focus-within')
+# The rules that remove the outline: two headings that take focus by script and the view pane; the fields, which show
+# their focus as a ring of 2 pixels in the accent instead, as every field and the search of a database do; and the field
+# of quick find, the only control of its open dialog, which holds the focus with its caret while the dialog is open.
+OUTLINE_REMOVED = {'#view-title', '#detail-title', '.main', 'input:focus, select:focus, textarea:focus',
+                   '.find-field input, .find-field input:focus, .find-field input:focus-visible'}
+RINGS = ('input:focus, select:focus, textarea:focus', '.db-search input:focus', ':is(.kn-filter-box, .list-head) .field:focus-within')
 
 
 def declaration(selector, prop, variables=LIGHT):

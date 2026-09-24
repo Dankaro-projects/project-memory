@@ -184,7 +184,7 @@
     { key: "title", label: "Title", type: "title", width: 320, sortable: false, rowIcon: (c) => TYPE_ICONS[(c.plan || {}).item_type] || "work" },
     { key: "state", label: "State", type: "status", width: 128, sortable: false },
     ...(extra || []),
-    { key: "next", label: "Next step", type: "text", width: 420, sortable: false, get: (c) => (c.plan || {}).next_action || "" },
+    { key: "next", label: "Next step", type: "text", width: 300, sortable: false, get: (c) => (c.plan || {}).next_action || "" },
     { key: "type", label: "Type", type: "select", width: 108, sortable: false, get: (c) => (c.plan || {}).item_type || "task", labelOf: (c) => typeLabel((c.plan || {}).item_type) },
   ];
   const WHY = { key: "why", label: "Waiting for", type: "custom", icon: "alert", width: 220, sortable: false,

@@ -190,19 +190,6 @@ input::placeholder, textarea::placeholder { color: var(--muted); }
 button.phase-button:hover { background: transparent; color: var(--ink); }
 .phase-value { padding: 0 6px; font-weight: 500; line-height: 20px; border-radius: 4px; color: var(--tone-text, var(--ink)); background: var(--tone-bg, var(--plain-bg)); }
 
-/* Search sits in the sidebar, as in Notion, and the slash key reaches it from anywhere. */
-.search {
-  display: flex; align-items: center; gap: 8px; min-height: 30px; padding: 0 8px; margin-bottom: 2px;
-  color: var(--muted); border-radius: var(--radius);
-}
-.search:hover { background: var(--hover); }
-.search:focus-within { background: var(--bg); box-shadow: inset 0 0 0 2px var(--accent); }
-.search input { flex: 1; min-width: 0; min-height: 28px; padding: 0; font-weight: 500; color: var(--ink); background: transparent; border: 0; box-shadow: none; outline: none; }
-.search input::placeholder { color: var(--ink-2); }
-.search input:focus { box-shadow: none; }
-.search input::-webkit-search-cancel-button { display: none; }
-.search kbd { padding: 0 5px; font: 500 11px/18px var(--font-sans); color: var(--muted); border: 1px solid var(--line-strong); border-radius: 4px; }
-
 /* Top bar: the breadcrumbs of the page and the activity menu, in one row of 44 pixels. */
 .column { position: relative; min-width: 0; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
 .topbar { display: flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 12px; }
@@ -222,10 +209,12 @@ button.phase-button:hover { background: transparent; color: var(--ink); }
 /* Page: the icon, the title and the sentence of the view stay in place, and the view scrolls under them. */
 .panes { min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr); }
 .page { min-width: 0; min-height: 0; display: grid; grid-template-rows: auto auto minmax(0, 1fr); }
-.page-head { display: grid; justify-items: start; gap: 6px; padding: 28px var(--page-x) 14px; }
-.page-icon { display: grid; place-items: center; width: 44px; height: 44px; margin-bottom: 4px; color: var(--ink-2); background: var(--callout); border-radius: 10px; }
-.page-icon .icon { width: 26px; height: 26px; stroke-width: 1.4; }
-#view-title { font-size: 32px; font-weight: 700; line-height: 1.2; letter-spacing: -0.01em; outline: none; }
+.page-head { display: grid; justify-items: start; gap: 6px; padding: 36px var(--page-x) 16px; }
+/* A document view reads in a centred column of 1,000 pixels, as a Notion page that is not set to full width. */
+.shell[data-doc] .page { --page-x: max(24px, calc((100% - 1000px) / 2)); }
+.page-icon { display: block; height: 52px; margin: 0 0 6px -4px; color: var(--ink-2); }
+.page-icon .icon { width: 52px; height: 52px; stroke-width: 1.15; }
+#view-title { font-size: 40px; font-weight: 700; line-height: 1.2; letter-spacing: -0.015em; outline: none; }
 .summary { min-width: 0; max-width: 72ch; font-size: 15px; color: var(--muted); }
 .summary:empty { display: none; }
 
@@ -469,9 +458,9 @@ table.data th button { min-height: 0; padding: 0; border: 0; background: transpa
   }
   .shell[data-menu="open"] .rail { display: flex; }
   .menu-toggle { display: inline-flex; }
-  #view-title { font-size: 26px; }
   .page-head { padding-top: 16px; }
-  .page-icon { width: 36px; height: 36px; }
+  .page-icon, .page-icon .icon { width: 40px; height: 40px; }
+  #view-title { font-size: 30px; }
   .activity { left: 12px; right: 12px; width: auto; }
 }
 @media (max-width: 639px) {
@@ -843,3 +832,81 @@ hr.divider { width: 100%; height: 1px; margin: 4px 0; border: 0; background: var
   #view-title { font-size: 24px; }
   .summary { font-size: 14px; }
 }
+
+/* Notebook polish: the quiet icon buttons, the foldable sidebar, the time of the last change, the side peek controls and
+   its slide in, the outline of a page and quick find. */
+button.icon-button { flex: none; width: 28px; min-width: 28px; min-height: 28px; padding: 0; color: var(--muted); border: 0; background: transparent; }
+button.icon-button:hover, button.icon-button[aria-expanded="true"], button.icon-button[aria-pressed="true"] { color: var(--ink); background: var(--hover); }
+button.icon-button .icon { width: 18px; height: 18px; }
+.workspace #rail-hide { margin-left: auto; opacity: 0; transition: opacity 120ms ease; }
+.workspace:hover #rail-hide, .workspace #rail-hide:focus-visible { opacity: 1; }
+button.find-open {
+  justify-content: flex-start; gap: 8px; width: 100%; min-height: 30px; padding: 0 8px; margin-bottom: 2px;
+  font-weight: 500; color: var(--ink-2); border: 0; background: transparent;
+}
+button.find-open:hover { background: var(--hover); }
+button.find-open .icon { width: 18px; height: 18px; color: var(--muted); }
+button.find-open kbd { margin-left: auto; padding: 0 5px; font: 500 11px/18px var(--font-sans); color: var(--muted); border: 1px solid var(--line-strong); border-radius: 4px; }
+.nav-group.recent .nav-link { width: 100%; font-weight: 400; border: 0; background: transparent; justify-content: flex-start; }
+.nav-group.recent .nav-link:hover { background: var(--hover); }
+.nav-group.recent .nav-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.shell[data-rail="hidden"] { grid-template-columns: minmax(0, 1fr); }
+.shell[data-rail="hidden"] .rail { display: none; }
+.shell[data-rail="hidden"] .menu-toggle { display: inline-flex; }
+.crumbs li { display: inline-flex; align-items: center; gap: 6px; }
+.crumbs li .icon { width: 16px; height: 16px; color: var(--muted); }
+.updated { flex: none; font-size: 13px; color: var(--muted); white-space: nowrap; }
+.detail-bar { gap: 2px; }
+.detail-kind { padding-left: 10px; }
+@keyframes peek-in { from { opacity: 0; transform: translateX(24px); } to { opacity: 1; transform: none; } }
+.shell[data-pane="open"] .detail { animation: peek-in 180ms cubic-bezier(0.2, 0.7, 0.3, 1); }
+@keyframes pop-in { from { opacity: 0; transform: translateY(-4px) scale(0.98); } to { opacity: 1; transform: none; } }
+.menu, .find[open], .activity:not([hidden]) { animation: pop-in 120ms ease-out; }
+/* A page reads at the size of Notion text, with headings that open a section. */
+.detail-scroll { font-size: 15px; line-height: 1.6; }
+.detail-scroll h2.block-heading { margin-top: 18px; font-size: 22px; }
+.detail-scroll h3.block-heading { margin-top: 10px; font-size: 17px; }
+.outline { position: absolute; top: 50%; right: 8px; z-index: 3; display: grid; gap: 4px; padding: 8px 6px; transform: translateY(-50%); border-radius: 8px; }
+.outline button { justify-content: flex-end; gap: 10px; min-height: 14px; padding: 0; border: 0; background: transparent; }
+.outline-dash { display: block; width: 14px; height: 2px; background: var(--line-strong); border-radius: 1px; }
+.outline-label { display: none; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 400; color: var(--ink-2); }
+.outline:hover, .outline:focus-within { background: var(--bg); box-shadow: var(--shadow-menu); }
+.outline:hover .outline-label, .outline:focus-within .outline-label { display: inline; }
+.outline button:hover .outline-label { color: var(--ink); }
+.outline button:hover .outline-dash { background: var(--ink-2); }
+.find {
+  width: min(640px, calc(100vw - 24px)); max-height: min(560px, calc(100dvh - 24px)); margin: 12vh auto auto; padding: 0;
+  color: var(--ink); background: var(--bg); border: 0; border-radius: 12px; box-shadow: var(--shadow-menu); overflow: hidden;
+}
+.find[open] { display: flex; flex-direction: column; }
+.find::backdrop { background: rgba(15, 15, 15, 0.35); }
+.find-field { display: flex; align-items: center; gap: 10px; padding: 0 14px; border-bottom: 1px solid var(--line); }
+.find-field .icon { width: 20px; height: 20px; color: var(--muted); }
+/* The field of quick find holds the focus while its dialog is open, with its caret, so it draws no ring of its own. */
+.find-field input, .find-field input:focus, .find-field input:focus-visible { flex: 1; min-height: 52px; padding: 0; font-size: 17px; background: transparent; border: 0; box-shadow: none; outline: none; }
+.find-field input::-webkit-search-cancel-button { display: none; }
+.find kbd { padding: 0 5px; font: 500 11px/18px var(--font-sans); color: var(--muted); border: 1px solid var(--line-strong); border-radius: 4px; }
+.find-results { flex: 1; min-height: 0; overflow-y: auto; padding: 6px; }
+.find-heading { padding: 10px 8px 4px; font-size: 12px; font-weight: 500; color: var(--muted); }
+button.find-item { display: grid; grid-template-columns: 20px minmax(0, 1fr) auto; justify-content: stretch; align-items: center; gap: 10px; width: 100%;
+  min-height: 36px; padding: 0 8px; font-weight: 400; text-align: left; border: 0; border-radius: var(--radius); background: transparent; }
+button.find-item[aria-selected="true"] { background: var(--hover-strong); }
+button.find-item .icon { width: 18px; height: 18px; color: var(--muted); }
+.find-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.find-sub { font-size: 12px; color: var(--muted); white-space: nowrap; }
+.find-empty { padding: 18px 10px; color: var(--muted); }
+.find-foot { display: flex; gap: 16px; padding: 8px 14px; font-size: 12px; color: var(--muted); border-top: 1px solid var(--line); }
+.find-foot kbd { margin-right: 3px; }
+@media (max-width: 639px) {
+  .updated { display: none; }
+  .outline { display: none; }
+  .find { margin-top: 12px; }
+}
+/* The quick edits of a work item read as editable properties of the page: the label beside a plain value that shows its
+   control on hover, as a Notion property does. */
+[data-key="work-quick"] { display: grid; gap: 0; margin-top: -20px; }
+[data-key="work-quick"] .field { display: grid; grid-template-columns: minmax(120px, 170px) minmax(0, 1fr); align-items: center; min-height: 34px; gap: 0; border-radius: var(--radius); }
+[data-key="work-quick"] .field:hover { background: var(--hover); }
+[data-key="work-quick"] .field > span { padding: 0 6px 0 28px; font-size: 14px; font-weight: 400; color: var(--muted); }
+[data-key="work-quick"] select { justify-self: start; width: auto; min-height: 30px; padding: 0 8px; font-weight: 500; background: transparent; box-shadow: none; cursor: pointer; }
+[data-key="work-quick"] select:hover { background: var(--hover-strong); }

@@ -105,15 +105,24 @@ BATCH_CONFIRM_ALLOWANCE = {'views': 250, 'forms.js': 1_400}
 NOTION_ALLOWANCE = {'blocks.js': 15_750, 'views': 3_500, 'core.js': 50}
 NOTION_LIMIT = 20_000
 NOTION_STYLE_ALLOWANCE = 17_150
+# Allowance for the notebook polish, which the user asked for on 24 September 2026 to reach the feel of AFFiNE or a Notion
+# notebook. Measured against main at e6c7ecb: core.js grew by 8,532 code characters with quick find, the Recent section of
+# the sidebar, the outline of a page, the time of the last change and the folding sidebar; panel.css by 5,127; and
+# viewer.html by 2,203 with the dialog of quick find, the controls of the side peek and eight icons. Rounded up to the next
+# 50, the allowance is 8,550 for core.js, 5,150 for the stylesheet and 2,250 for the page shell. The user has not yet
+# confirmed it.
+NOTEBOOK_ALLOWANCE = {'core.js': 8_550}
+NOTEBOOK_STYLE_ALLOWANCE = 5_150
+NOTEBOOK_SHELL_ALLOWANCE = 2_250
 ALLOWANCES = (FOCUS_ALLOWANCE, HIVE_ALLOWANCE, USAGE_ALLOWANCE, SESSIONS_ALLOWANCE, PANEL_ACTIONS_ALLOWANCE, USABILITY_ALLOWANCE,
-              REDESIGN_ALLOWANCE, BATCH_CONFIRM_ALLOWANCE, NOTION_ALLOWANCE)
+              REDESIGN_ALLOWANCE, BATCH_CONFIRM_ALLOWANCE, NOTION_ALLOWANCE, NOTEBOOK_ALLOWANCE)
 TOTAL_SCRIPT_CHARACTERS = 196_000 + sum(sum(allowance.values()) for allowance in ALLOWANCES)
 FILE_BUDGETS = {'core.js': 36_000 + sum(allowance.get('core.js', 0) for allowance in ALLOWANCES),
                 'forms.js': 37_000 + sum(allowance.get('forms.js', 0) for allowance in ALLOWANCES), 'graphs.js': 41_000,
                 'blocks.js': sum(allowance.get('blocks.js', 0) for allowance in ALLOWANCES)}
 VIEW_CHARACTERS = 82_000 + sum(allowance.get('views', 0) for allowance in ALLOWANCES)
-STYLE_CHARACTERS = 27_000 + USABILITY_STYLE_ALLOWANCE + REDESIGN_STYLE_ALLOWANCE + NOTION_STYLE_ALLOWANCE
-SHELL_CHARACTERS = 6_600 + REDESIGN_SHELL_ALLOWANCE
+STYLE_CHARACTERS = 27_000 + USABILITY_STYLE_ALLOWANCE + REDESIGN_STYLE_ALLOWANCE + NOTION_STYLE_ALLOWANCE + NOTEBOOK_STYLE_ALLOWANCE
+SHELL_CHARACTERS = 6_600 + REDESIGN_SHELL_ALLOWANCE + NOTEBOOK_SHELL_ALLOWANCE
 
 
 def size(path):
@@ -271,6 +280,15 @@ class InterfaceBudgetTests(unittest.TestCase):
         style = (UI / 'panel.css').read_text(encoding='utf-8')
         for part in ('@media (prefers-color-scheme: dark)', 'table.db-table {', '.menu {', '.props {', '.callout {', 'details.toggle > summary {'):
             self.assertIn(part, style)
+
+    def test_the_budget_is_measured_with_the_notebook_polish_in_place(self):
+        # The notebook allowance pays for these parts, so the budget may not be met by removing them.
+        core = (UI / 'core.js').read_text(encoding='utf-8')
+        for part in ('function openFind()', 'async function drawFind(query)', 'function drawRecent(list = readRecent())', 'function drawOutline()', 'function drawUpdated()'):
+            self.assertIn(part, core)
+        shell = (ROOT / 'viewer.html').read_text(encoding='utf-8')
+        for part in ('<dialog id="find"', 'id="rail-hide"', 'id="detail-previous"', 'id="updated"'):
+            self.assertIn(part, shell)
 
 
 if __name__ == '__main__':

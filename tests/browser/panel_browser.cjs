@@ -126,8 +126,8 @@ async function shell(page, kind) {
   await closePane(page);
   step(`${kind}: Project activity shows the work by state, opens the work in progress and closes with Escape`);
 
-  // Every focus stop shows a visible focus style: the five stops after the search field, which reach the links of the sidebar.
-  await page.locator("#search-input").focus();
+  // Every focus stop shows a visible focus style: the five stops after the Search button, which reach the links of the sidebar.
+  await page.locator("#find-open").focus();
   const stops = [];
   for (let index = 0; index < 5; index++) {
     await page.keyboard.press("Tab");
@@ -179,6 +179,36 @@ async function views(page, kind, expected) {
   assert.ok(!/wait for you|waits for you/.test(await text(page, "#main")), `${kind}: Now still counts what waits for the reader`);
   step(`${kind}: Now shows the work in progress, paused and ready in tables that hold exactly the items of the board`);
   await shell(page, kind);
+
+  // Quick find opens with Command K and with the slash key, lists the pages, finds a work item by its title and opens it.
+  // The opened page joins Recent in the sidebar, and a page with three or more sections carries its outline.
+  if (kind === "product") {
+    await go(page, "#now");
+    // The step before hid the menu button that held the focus, so the focus returns to the page before the key.
+    await settle(page);
+    await page.locator("#view-title").focus();
+    await page.keyboard.press("Meta+k");
+    await page.waitForSelector("#find[open]");
+    assert.ok((await page.locator("#find .find-item").count()) >= RAIL.length, "quick find lists fewer pages than the sidebar");
+    await page.keyboard.press("Escape");
+    await page.waitForFunction(() => !document.getElementById("find").open);
+    await page.keyboard.press("/");
+    await page.waitForSelector("#find[open]");
+    await page.keyboard.type("Build the export");
+    await page.waitForFunction(() => /Build the export/.test(document.querySelector('#find .find-item[aria-selected="true"]')?.textContent || ""));
+    assert.match(await text(page, "#find"), /Search all records for/);
+    await page.keyboard.press("Enter");
+    await page.waitForFunction(() => document.getElementById("detail-title").textContent === "Build the export" && !document.querySelector(".detail-content.pending"));
+    assert.equal(await page.locator("#find").evaluate((node) => node.open), false);
+    assert.match(await text(page, "#recent"), /Build the export/);
+    assert.ok((await page.locator("#detail .outline button").count()) >= 3, "the page of a work item carries no outline of its sections");
+    await closePane(page);
+    await page.locator("#rail-hide").click();
+    assert.equal(await page.locator("#rail").isVisible(), false);
+    await page.locator("#menu-toggle").click();
+    assert.equal(await page.locator("#rail").isVisible(), true);
+    step(`${kind}: quick find opens with Command K and slash, opens a work item, which joins Recent and shows its outline, and the sidebar folds away and returns`);
+  }
 
   // A paused item names what it waits for, and its row opens the item beside the digest with its next step.
   await go(page, "#now");
@@ -1274,11 +1304,13 @@ async function hived(browser, fixture) {
   await page.waitForTimeout(400);
   assert.deepEqual([await page.locator("#decide-reason").inputValue(), ...await quiet()], ["dj", true, "session-row-flag_fixture_4", false, false], "a key typed into the reason field decided the flag or moved the selection");
   await page.locator("#decide-reason").fill("");
-  await page.locator("#search-input").focus();
+  await page.locator("#find-open").click();
+  await page.waitForSelector("#find[open]");
   await page.keyboard.type("jk");
   await page.waitForTimeout(400);
   assert.deepEqual([await page.locator("#search-input").inputValue(), ...await quiet()], ["jk", true, "session-row-flag_fixture_4", false, false], "a key typed into the search field moved the selection");
-  await page.locator("#search-input").fill("");
+  await page.keyboard.press("Escape");
+  await page.waitForFunction(() => !document.getElementById("find").open);
   step("sessions: the decision letters and J and K stay quiet while the reader types in the reason field and in the search field");
   await page.locator("#detail-title").focus();
   await page.keyboard.press("d");

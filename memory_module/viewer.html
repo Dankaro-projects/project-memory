@@ -61,12 +61,20 @@
 <symbol id="i-link" viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></symbol>
 <symbol id="i-down" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
 <symbol id="i-close" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></symbol>
+<symbol id="i-sidebar" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="2"/><path d="M9.5 4.5v15M6 8.5h1.5M6 11.5h1.5"/></symbol>
+<symbol id="i-find" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="5.5"/><path d="m19 19-4.5-4.5"/></symbol>
+<symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></symbol>
+<symbol id="i-peek-close" viewBox="0 0 24 24"><path d="m6 7 5 5-5 5M13 7l5 5-5 5"/></symbol>
+<symbol id="i-back" viewBox="0 0 24 24"><path d="M19 12H5M11 6l-6 6 6 6"/></symbol>
+<symbol id="i-up" viewBox="0 0 24 24"><path d="m6 15 6-6 6 6"/></symbol>
+<symbol id="i-expand" viewBox="0 0 24 24"><path d="M14 4h6v6M10 20H4v-6M20 4l-7 7M4 20l7-7"/></symbol>
+<symbol id="i-collapse" viewBox="0 0 24 24"><path d="M20 4l-7 7M13 5v6h6M4 20l7-7M11 19v-6H5"/></symbol>
 <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="m20 20-4.5-4.5"/></symbol>
 </svg>
 <div id="app" class="shell" hidden>
 <nav id="rail" class="rail" aria-label="Control panel sections">
-<div class="workspace"><span id="project-mark" class="project-mark" aria-hidden="true">P</span><strong id="project-name">Project Memory</strong></div>
-<form id="search" class="search" role="search"><svg class="icon" aria-hidden="true"><use href="#i-search"/></svg><label class="visually-hidden" for="search-input">Search records</label><input id="search-input" type="search" name="query" placeholder="Search" autocomplete="off" /><kbd aria-hidden="true">/</kbd></form>
+<div class="workspace"><span id="project-mark" class="project-mark" aria-hidden="true">P</span><strong id="project-name">Project Memory</strong><button id="rail-hide" type="button" class="icon-button" title="Hide the sidebar"><svg class="icon" aria-hidden="true"><use href="#i-sidebar"/></svg><span class="visually-hidden">Hide the sidebar</span></button></div>
+<button id="find-open" type="button" class="find-open" aria-haspopup="dialog" title="Search (/ or ⌘K)"><svg class="icon" aria-hidden="true"><use href="#i-find"/></svg><span>Search</span><kbd aria-hidden="true">⌘K</kbd></button>
 <div id="nav"></div>
 <div class="rail-foot"><div id="phase" class="phase" hidden></div><span id="live-status" class="status" data-state="connecting">Connecting</span></div>
 </nav>
@@ -74,7 +82,7 @@
 <header class="topbar">
 <button id="menu-toggle" class="menu-toggle" type="button" aria-controls="rail" aria-expanded="false"><svg class="icon" aria-hidden="true"><use href="#i-menu"/></svg><span class="visually-hidden">Menu</span></button>
 <ol id="crumbs" class="crumbs" aria-label="Location"></ol>
-<button id="activity-toggle" type="button" class="quiet" aria-expanded="false" aria-controls="activity">Activity</button>
+<span id="updated" class="updated" aria-live="off"></span><button id="activity-toggle" type="button" class="icon-button" aria-expanded="false" aria-controls="activity" title="Activity"><svg class="icon" aria-hidden="true"><use href="#i-clock"/></svg><span class="visually-hidden">Activity</span></button>
 </header>
 <aside id="activity" class="activity" aria-label="Project activity" hidden></aside>
 <div class="panes">
@@ -84,12 +92,13 @@
 <main id="main" class="main" tabindex="-1"></main>
 </div>
 <aside id="detail" class="detail" aria-labelledby="detail-title" hidden>
-<div class="detail-bar"><button id="detail-back" type="button" class="small" hidden>Back</button><span id="detail-kind" class="detail-kind"></span><button id="detail-close" type="button" class="small">Close</button></div>
+<div class="detail-bar"><button id="detail-close" type="button" class="icon-button" title="Close (Escape)"><svg class="icon" aria-hidden="true"><use href="#i-peek-close"/></svg><span class="visually-hidden">Close</span></button><button id="detail-back" type="button" class="icon-button" title="Back" hidden><svg class="icon" aria-hidden="true"><use href="#i-back"/></svg><span class="visually-hidden">Back</span></button><button id="detail-previous" type="button" class="icon-button" title="Previous row (K)"><svg class="icon" aria-hidden="true"><use href="#i-up"/></svg><span class="visually-hidden">Previous row</span></button><button id="detail-next" type="button" class="icon-button" title="Next row (J)"><svg class="icon" aria-hidden="true"><use href="#i-down"/></svg><span class="visually-hidden">Next row</span></button><span id="detail-kind" class="detail-kind"></span></div>
 <h2 id="detail-title" tabindex="-1"></h2>
 <div id="detail-body" class="detail-body"></div>
 </aside>
 </div>
 </div>
+<dialog id="find" class="find" aria-label="Quick find"><div class="find-field"><svg class="icon" aria-hidden="true"><use href="#i-search"/></svg><input id="search-input" type="search" placeholder="Search pages, work items and records" autocomplete="off" aria-controls="find-results" aria-label="Search" /><kbd aria-hidden="true">Esc</kbd></div><div id="find-results" class="find-results" role="listbox" aria-label="Results"></div><div class="find-foot"><span><kbd>↑</kbd><kbd>↓</kbd> to move</span><span><kbd>Enter</kbd> to open</span><span><kbd>Esc</kbd> to close</span></div></dialog>
 <dialog id="form-dialog" class="form-dialog" aria-labelledby="form-title">
 <form id="form" novalidate>
 <h2 id="form-title"></h2>
