@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+A log entry is accepted through the tool. The `log` operation checked its fields against those of `record`, so every call over MCP was refused for a missing `kind` and for a payload that was not text, although the `log` schema asks for a payload object and no kind. The tests wrote log entries directly and never met the check. On 24 September 2026 this refused the first log entry of a session. The check now takes the `log` payload as an object and leaves the names of missing fields to the operation itself.
+
 ## 0.6.0b14 (24 September 2026)
 
 The user can close a work item in the chat. On 24 September 2026 the user asked to close a release item that a later release had replaced. Done was refused because the last check was uncertain, and the only route was to rewrite the acceptance and run another check. The new `close` operation takes the receipt of the user's prompt and its exact text. Project Memory compares the text with the hash that the capture kept, refuses a notification or a prompt of another session, stores the text as user evidence under the reserved key prefix `user-closure:`, and records the plan as done on that evidence. A closed item counts as complete for the work that depends on it. Every other route to Done keeps the strict rule on evidence.

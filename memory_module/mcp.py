@@ -196,7 +196,7 @@ def validate_write_fields(memory, args):
     operation, data = args['operation'], args['data']
     parameters = inspect.signature(OPERATIONS[operation][1].target()).parameters
     # receipt_ids travels at the top level of the call, never inside data.
-    injected = {'self', 'memory', 'request_key', 'session_id', 'receipt_ids'} | ({'kind'} if operation in {'plan', 'sprint'} else set())
+    injected = {'self', 'memory', 'request_key', 'session_id', 'receipt_ids'} | ({'kind'} if operation in {'plan', 'sprint', 'log'} else set())
     extra, hidden = operation_rules(operation)
     properties = {key: S for key in parameters if key not in injected | hidden}
     typed(properties, {'expected_version', 'limit', 'offset', 'max_seconds'}, {'type': 'integer', 'minimum': 0})
@@ -215,6 +215,9 @@ def validate_write_fields(memory, args):
         schema_id = kind if known else schema_id
     elif operation in {'plan', 'sprint'}:
         properties['payload'] = payload_rule(operation)
+    elif operation == 'log':
+        # write_log names the missing or unknown payload fields itself.
+        properties['payload'] = {'type': 'object'}
     elif operation == 'progress':
         properties['payload'] = obj({'state': S, 'next_action': S, 'reason': S}, ['reason'])
     for key, parameter in parameters.items():

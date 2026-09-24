@@ -12,7 +12,7 @@ from pathlib import Path
 
 from memory_module import Memory, InvalidRecord, codex_host
 from memory_module.coverage import inspect
-from memory_module.mcp import write
+from memory_module.mcp import dispatch, write
 from memory_module.planning import latest
 
 SESSION = 's'
@@ -62,6 +62,15 @@ class RecordLessTests(unittest.TestCase):
         first = self.log(ep)
         second = self.log(ep, key='log-2', decision='Normalise tabs first.', observed='Both tests pass.')
         self.assertEqual(self.m.read(second['decision_id'])['supersedes'], first['decision_id'])
+
+    def test_the_tool_accepts_a_log_entry_without_a_kind(self):
+        ep = self.plan()['episode_id']
+        entry = {'decision': 'Accept tabs as whitespace.', 'why': 'The user files use tabs.', 'action': 'Changed the tokenizer.',
+                 'observed': 'The parser test passes.', 'assessment': 'good', 'completion': 'complete'}
+        result = dispatch(self.m, 'memory_write', {'operation': 'log', 'request_key': 'tool-log', 'session_id': SESSION,
+                                                   'data': {'episode_id': ep, 'expected_version': self.m.episode(ep)['version'],
+                                                            'actor': 'agent', 'evidence': self.evidence, 'payload': entry}})
+        self.assertEqual(latest(self.m, ep, 'outcome')['id'], result['id'])
 
     def test_a_log_entry_needs_the_six_fields(self):
         ep = self.plan()['episode_id']
