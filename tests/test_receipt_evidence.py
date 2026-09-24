@@ -215,7 +215,18 @@ class CheckTests(ReceiptEvidenceFixture):
             self.finished({'C001': 'met', 'C002': 'needs_user'})
             notice = reviews.hook(self.m, {'hook_event_name': 'Stop', 'session_id': SESSION, 'turn_id': 'turn-1'}, 'claude')
         self.assertIn('C002', notice['reason'])
-        self.assertIn('control panel', notice['reason'])
+        self.assertIn('in the chat', notice['reason'])
+        self.assertNotIn('control panel', notice['reason'])
+
+    def test_the_stop_notice_sends_unknown_criteria_back_to_the_agent(self):
+        d = self.complete([{'source_id': self.m.source('r', 'Run', 'Run.', 'Run passed.', 'tool', subject='code')['id'], 'reason': 'Run.'}])
+        codex_host.bind(self.m, SESSION, d['id'], 'bind')
+        with patch.object(reviews, 'launch'):
+            self.finished({'C001': 'met', 'C002': 'unknown'})
+            notice = reviews.hook(self.m, {'hook_event_name': 'Stop', 'session_id': SESSION, 'turn_id': 'turn-1'}, 'claude')
+        self.assertIn('C002', notice['reason'])
+        self.assertIn('memory_write evidence', notice['reason'])
+        self.assertNotIn('the user', notice['reason'])
 
 
 class ResumeTests(Fixture):

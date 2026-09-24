@@ -118,6 +118,7 @@ class BatchConfirmationTests(ReceiptEvidenceFixture):
         now = api.now(self.m, {})
         [group] = now['confirmations']
         self.assertEqual(group['episode_id'], self.first)
-        self.assertEqual([item['criterion'] for item in group['criteria']], ['C001', 'C002'])
+        # An unknown criterion lacks machine evidence, which is the agent's to attach, so only needs_user is listed.
+        self.assertEqual([item['criterion'] for item in group['criteria']], ['C001'])
         [kind] = [kind for kind in now['attention_kinds'] if kind['type'] == 'criteria_to_confirm']
-        self.assertEqual(kind['count'], 2)
+        self.assertEqual(kind['count'], 1)

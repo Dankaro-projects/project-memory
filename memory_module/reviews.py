@@ -401,10 +401,12 @@ def user_confirmations(memory, episode_id, checklist):
     return confirmed
 
 
-# A criterion is offered to the user when no machine could confirm it: the reviewer judged that only the user can (needs_user),
-# or found no evidence either way (unknown). A met or an unmet criterion is never offered, so a confirmation cannot overrule
-# a finding. The user chose on 23 September 2026 that unknown criteria are offered as well, each labelled as having no evidence.
+# The user may confirm a criterion that no machine could confirm: the reviewer judged that only the user can (needs_user),
+# or found no evidence either way (unknown). A met or an unmet criterion never can, so a confirmation cannot overrule a finding.
 CONFIRMABLE_RESULTS = ('needs_user', 'unknown')
+# Only needs_user is offered to the user. An unknown criterion lacks machine evidence, which the agent attaches; on
+# 24 September 2026, 50 of the 53 criteria waiting for the user were unknown.
+OFFERED_RESULTS = ('needs_user',)
 CONFIRM_BATCH = 100
 
 
@@ -492,7 +494,7 @@ def pending_confirmations(memory, episode_ids):
     """The confirmable criteria of the given work items, grouped by item, for the list of Now."""
     groups = []
     for episode_id in episode_ids:
-        offered = confirmable(memory, episode_id)
+        offered = confirmable(memory, episode_id, OFFERED_RESULTS)
         if offered:
             groups.append({'episode_id': episode_id, 'title': memory.episode(episode_id)['title'], 'criteria': offered})
     return groups
@@ -1158,6 +1160,55 @@ def propose_lessons(memory, run_id):
         return []
 
 
+REFRESH_LIMIT = 5
+
+
+def refresh_limit(memory):
+    """How many checks of finished work a project reruns by itself each day."""
+    row = memory.db.execute("SELECT value FROM settings WHERE key='check_refresh_daily_limit'").fetchone()
+    return int(row[0]) if row else REFRESH_LIMIT
+
+
+def set_refresh_limit(memory, limit):
+    if type(limit) is not int or not 0 <= limit <= 100:
+        raise InvalidRecord('The daily limit of automatic checks must be a whole number from 0 to 100.')
+    with memory._write():
+        memory.db.execute("INSERT OR REPLACE INTO settings VALUES ('check_refresh_daily_limit',?)", (str(limit),))
+
+
+def refresh_checks(memory, session_id=''):
+    """Request the outcome check of finished work whose check is stale or missing, within the daily limit.
+
+    Only the Stop hook of the session that did the work ran a check again, so once that session ended a stale check
+    stayed stale and the work waited for the user. Return the requested run ids.
+    """
+    if not configured(memory) or not exists(memory):
+        return []
+    from .planning import card
+    today = datetime.now(timezone.utc).date().isoformat()
+    ensure_run_columns(memory)
+    used = memory.db.execute("SELECT count(*) FROM review_runs WHERE request_key LIKE 'refresh:%' AND created_at>=?", (today,)).fetchone()[0]
+    room = refresh_limit(memory) - used
+    requested = []
+    rows = memory.db.execute("SELECT DISTINCT episode_id FROM events WHERE kind='outcome' AND json_extract(payload,'$.completion')='complete' "
+                             "AND json_extract(payload,'$.assessment')='good' ORDER BY episode_id").fetchall()
+    for (episode_id,) in rows:
+        if room <= 0:
+            break
+        item = card(memory, episode_id)
+        check = item.get('agent_check') or {}
+        outcome = item.get('outcome') or {}
+        if (item.get('recorded_state') in {'done', 'cancelled'} or check.get('state') not in {'stale', 'missing'}
+                or outcome.get('completion') != 'complete' or outcome.get('assessment') != 'good'):
+            continue
+        run = request(memory, episode_id, 'outcome', request_key='refresh:'+episode_id+':'+uuid.uuid4().hex, session_id=session_id)
+        if run['state'] == 'queued' and run.get('request_key', '').startswith('refresh:'):
+            launch(memory, run)
+            requested.append(run['id'])
+            room -= 1
+    return requested
+
+
 def request_for_done(memory, episode_id, *, session_id=''):
     """Request and launch an outcome check when Done is blocked only by a missing check.
 
@@ -1166,9 +1217,11 @@ def request_for_done(memory, episode_id, *, session_id=''):
     from .planning import card, completion_guidance
     item = card(memory, episode_id)
     step = completion_guidance(memory, item)
-    if step.get('action') != 'request_review':
+    if step.get('action') not in {'request_review', 'refresh_review'}:
         return {'requested': False, 'state': 'not_requested', 'reason': step['reason'], 'next_step': step}
-    run = request(memory, episode_id, 'outcome', request_key='done-check:'+item['outcome']['id'], session_id=session_id)
+    # A stale check needs a new run for the current evidence; the same evidence never gets a second run.
+    key = 'done-check:'+item['outcome']['id']+('' if step['action'] == 'request_review' else ':'+uuid.uuid4().hex)
+    run = request(memory, episode_id, 'outcome', request_key=key, session_id=session_id)
     launch(memory, run)
     result = {'requested': True, **run_summary(memory, run), 'read_with': {'view': 'reviews', 'id': episode_id}}
     if run['state'] in ACTIVE:
@@ -1187,6 +1240,12 @@ def hook(memory, event, host):
             cancel(memory, row[0])
         return {}
     if name not in {'Stop','SessionStart','UserPromptSubmit'}: return {}
+    if name=='SessionStart':
+        try:
+            refresh_checks(memory, session)
+        except (InvalidRecord, Conflict, OSError, subprocess.SubprocessError):
+            # A check that cannot start now is tried again at the next session start.
+            pass
     if name=='SessionStart' and event.get('source') not in {'resume','compact'}:return {}
     bound = memory.db.execute("SELECT episode_id FROM host_receipts WHERE session_id=? AND event_name='DecisionBound' ORDER BY rowid DESC LIMIT 1", (session,)).fetchone()
     if not bound: return {}
@@ -1207,10 +1266,14 @@ def hook(memory, event, host):
             reason += 'Wait for this existing check using '+wait_command(memory,run['id'])+'. '
         else:
             reason += 'This check is no longer running. Inspect its result before requesting another check. '
+            unproven = [item['criterion'] for item in confirmable(memory, ep, ('unknown',))]
+            if unproven:
+                reason += (f'{len(unproven)} criteria ({", ".join(unproven)}) have no machine evidence. Run what proves each of them and '
+                           'store its output with memory_write evidence and the receipt_ids; the next check reads it. ')
             waiting = awaiting_user(memory, ep)
             if waiting:
-                reason += (f'{len(waiting)} criteria ({", ".join(item["criterion"] for item in waiting)}) need the confirmation of the user, '
-                           'because no machine can confirm them. Ask the user to confirm them in the control panel; do not request another check before that. ')
+                reason += (f'{len(waiting)} criteria ({", ".join(item["criterion"] for item in waiting)}) need the judgement of the user. '
+                           'Name them to the user in the chat when you report the work. ')
         reason += (f'Read memory_get next with id {ep} for current completion blockers. '
                    'A missing, failed or stale check cannot establish completion. Do not repeat completed implementation work.')
         prompt = memory.db.execute("SELECT id FROM host_receipts WHERE session_id=? AND event_name='UserPromptSubmit' ORDER BY rowid DESC LIMIT 1", (session,)).fetchone()
