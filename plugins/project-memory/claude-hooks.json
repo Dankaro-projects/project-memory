@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "uvx --from https://github.com/Dankaro-projects/project-memory/releases/download/v0.6.0b10/project_memory_mcp-0.6.0b10-py3-none-any.whl project-memory hook --project \"${CLAUDE_PROJECT_DIR:-.}\" --host claude --if-unmanaged",
+            "command": "uvx --from https://github.com/Dankaro-projects/project-memory/releases/download/v0.6.0b11/project_memory_mcp-0.6.0b11-py3-none-any.whl project-memory hook --project \"${CLAUDE_PROJECT_DIR:-.}\" --host claude --if-unmanaged",
             "timeout": 30
           }
         ]
@@ -16,7 +16,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "uvx --from https://github.com/Dankaro-projects/project-memory/releases/download/v0.6.0b10/project_memory_mcp-0.6.0b10-py3-none-any.whl project-memory hook --project \"${CLAUDE_PROJECT_DIR:-.}\" --host claude --if-unmanaged",
+            "command": "uvx --from https://github.com/Dankaro-projects/project-memory/releases/download/v0.6.0b11/project_memory_mcp-0.6.0b11-py3-none-any.whl project-memory hook --project \"${CLAUDE_PROJECT_DIR:-.}\" --host claude --if-unmanaged",
             "timeout": 30
           }
         ],
@@ -28,7 +28,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "uvx --from https://github.com/Dankaro-projects/project-memory/releases/download/v0.6.0b10/project_memory_mcp-0.6.0b10-py3-none-any.whl project-memory hook --project \"${CLAUDE_PROJECT_DIR:-.}\" --host claude --if-unmanaged",
+            "command": "uvx --from https://github.com/Dankaro-projects/project-memory/releases/download/v0.6.0b11/project_memory_mcp-0.6.0b11-py3-none-any.whl project-memory hook --project \"${CLAUDE_PROJECT_DIR:-.}\" --host claude --if-unmanaged",
             "timeout": 30
           }
         ],
@@ -40,7 +40,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "uvx --from https://github.com/Dankaro-projects/project-memory/releases/download/v0.6.0b10/project_memory_mcp-0.6.0b10-py3-none-any.whl project-memory hook --project \"${CLAUDE_PROJECT_DIR:-.}\" --host claude --if-unmanaged",
+            "command": "uvx --from https://github.com/Dankaro-projects/project-memory/releases/download/v0.6.0b11/project_memory_mcp-0.6.0b11-py3-none-any.whl project-memory hook --project \"${CLAUDE_PROJECT_DIR:-.}\" --host claude --if-unmanaged",
             "timeout": 30
           }
         ]
@@ -51,7 +51,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "uvx --from https://github.com/Dankaro-projects/project-memory/releases/download/v0.6.0b10/project_memory_mcp-0.6.0b10-py3-none-any.whl project-memory hook --project \"${CLAUDE_PROJECT_DIR:-.}\" --host claude --if-unmanaged",
+            "command": "uvx --from https://github.com/Dankaro-projects/project-memory/releases/download/v0.6.0b11/project_memory_mcp-0.6.0b11-py3-none-any.whl project-memory hook --project \"${CLAUDE_PROJECT_DIR:-.}\" --host claude --if-unmanaged",
             "timeout": 30
           }
         ],
@@ -63,7 +63,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "uvx --from https://github.com/Dankaro-projects/project-memory/releases/download/v0.6.0b10/project_memory_mcp-0.6.0b10-py3-none-any.whl project-memory hook --project \"${CLAUDE_PROJECT_DIR:-.}\" --host claude --if-unmanaged",
+            "command": "uvx --from https://github.com/Dankaro-projects/project-memory/releases/download/v0.6.0b11/project_memory_mcp-0.6.0b11-py3-none-any.whl project-memory hook --project \"${CLAUDE_PROJECT_DIR:-.}\" --host claude --if-unmanaged",
             "timeout": 30
           }
         ]
@@ -74,7 +74,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "uvx --from https://github.com/Dankaro-projects/project-memory/releases/download/v0.6.0b10/project_memory_mcp-0.6.0b10-py3-none-any.whl project-memory hook --project \"${CLAUDE_PROJECT_DIR:-.}\" --host claude --if-unmanaged",
+            "command": "uvx --from https://github.com/Dankaro-projects/project-memory/releases/download/v0.6.0b11/project_memory_mcp-0.6.0b11-py3-none-any.whl project-memory hook --project \"${CLAUDE_PROJECT_DIR:-.}\" --host claude --if-unmanaged",
             "timeout": 30
           }
         ]
@@ -85,7 +85,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "uvx --from https://github.com/Dankaro-projects/project-memory/releases/download/v0.6.0b10/project_memory_mcp-0.6.0b10-py3-none-any.whl project-memory hook --project \"${CLAUDE_PROJECT_DIR:-.}\" --host claude --if-unmanaged",
+            "command": "uvx --from https://github.com/Dankaro-projects/project-memory/releases/download/v0.6.0b11/project_memory_mcp-0.6.0b11-py3-none-any.whl project-memory hook --project \"${CLAUDE_PROJECT_DIR:-.}\" --host claude --if-unmanaged",
             "timeout": 30
           }
         ]
@@ -96,7 +96,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "uvx --from https://github.com/Dankaro-projects/project-memory/releases/download/v0.6.0b10/project_memory_mcp-0.6.0b10-py3-none-any.whl project-memory hook --project \"${CLAUDE_PROJECT_DIR:-.}\" --host claude --if-unmanaged",
+            "command": "uvx --from https://github.com/Dankaro-projects/project-memory/releases/download/v0.6.0b11/project_memory_mcp-0.6.0b11-py3-none-any.whl project-memory hook --project \"${CLAUDE_PROJECT_DIR:-.}\" --host claude --if-unmanaged",
             "timeout": 30
           }
         ]

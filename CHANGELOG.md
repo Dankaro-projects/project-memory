@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.6.0b11 (24 September 2026)
+
+Version 0.6.0b10 was prepared but not tagged or published. This release carries its changes, listed under 0.6.0b10 below, and the changes that follow.
 
 A background agent no longer blocks the main conversation. Claude Code names the subagent that makes a tool call, and a background agent may still be searching or reading when the main conversation ends its turn. The session coverage counted those calls as tool calls of the main conversation without a result, and as activity without a decision, so on 24 September 2026 the Stop hook blocked one session three times while a research agent was running. The coverage checks of a session, the reconciliation count in the prompt hook and the session context now count only the calls of the main conversation. The calls of a subagent are still recorded, and one that never reports a result still appears in the global list of calls that need reconciliation.
 
