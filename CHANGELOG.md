@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.6.0b16 (25 September 2026)
 
 Now lists the archived work. Idle work that the expiry rule archived appears in a folded Archived part of the Now page, with the state a restore returns it to, its days without activity and its last activity, and a note that a sentence in the chat restores it. The part appears only when an item is archived, and it carries no count of things to do. The Now endpoint returns the ten most recent archived items under `archived` and their number under `archived_total`. This completes the criterion of Stage 3, whose report in the digest waited for the read only panel of 0.6.0b15.
 
