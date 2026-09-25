@@ -94,6 +94,19 @@ class ExpiryTests(unittest.TestCase):
         self.assertIn('Item idle', text)
         self.assertIn('restore', text)
 
+    def test_now_lists_the_archived_items_with_the_state_they_return_to(self):
+        from memory_module import api
+        idle = self.item('idle', state='review')
+        self.assertEqual((api.now(self.m, {})['archived'], api.now(self.m, {})['archived_total']), ([], 0))
+        planning.expire(self.m, now=self.later(15))
+        now = api.now(self.m, {})
+        [entry] = now['archived']
+        self.assertEqual((entry['id'], entry['title'], entry['state']), (idle, 'Item idle', 'cancelled'))
+        self.assertEqual((entry['restore_state'], entry['idle_days'], now['archived_total']), ('review', 14, 1))
+        # A restored item leaves the list.
+        source = self.m.source('ask', 'Restore', 'The user asks to restore it.', 'Bring back Item idle.', 'user', subject='code')['id']
+        planning.restore(self.m, idle, evidence=[{'source_id': source, 'reason': 'The user asked in the chat.'}], request_key='restore')
+        self.assertEqual(api.now(self.m, {})['archived'], [])
 
 if __name__ == '__main__':
     unittest.main()

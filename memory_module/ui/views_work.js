@@ -179,6 +179,14 @@
     render: (c) => { const issue = issueInfo(c.issues); return issue ? chip(issue.text, { dataset: { tone: issue.tone } }) : c.state === "review" ? chip("A check or a review") : null; } };
   const digestTable = (id, rows, extra, empty) => h("div", { class: "db-inline" }, P.dbTable({ id, rows, rowKey: (c) => c.id, onOpen: (c, t) => P.openWork(c.id, t),
     properties: digestProperties(extra), keepOrder: true, empty }));
+  // Idle work archived by the expiry rule; a sentence in the chat restores it.
+  const archivedPart = (now, part) => {
+    const rows = now.archived || [], col = (key, label, type) => ({ key, label, type, sortable: false });
+    return rows.length ? part("Archived", now.archived_total, h("p", { class: "muted", dataset: { key: "now-archived-note" } }, "Ask in the chat to restore one, and it returns to the state shown."),
+      P.toggle("now-archived", `Show the ${rows.length} most recent`, h("div", { class: "db-inline" }, P.dbTable({ id: "now-archived", rows, rowKey: (c) => c.id, keepOrder: true,
+        onOpen: (c, t) => P.openWork(c.id, t), properties: [col("title", "Title", "title"), col("restore_state", "Returns to", "status"),
+          col("idle_days", "Days without activity", "number"), col("last_activity", "Last activity", "date")] })), false)) : null;
+  };
   P.registerView("now", { title: "Now", async render(container, params, ctx) {
       const [now, board] = await Promise.all([P.get("now"), P.get("board", { limit: "100" })]);
       const cards = board.cards || [], byState = (...states) => cards.filter((c) => states.includes(c.state));
@@ -197,6 +205,7 @@
         part("Ready to start", ready.length, ready.length ? digestTable("now-ready", ready, null, "") : P.empty(`No ${noun(1)} is ready to start.`)),
         part("Done", done.length, done.length ? P.toggle("now-done", `Show the ${Math.min(done.length, 10)} most recent`, digestTable("now-done", done.slice(0, 10), null, ""), false)
           : P.empty(`No ${noun(1)} is done yet.`)),
+        archivedPart(now, part),
         part("Latest decisions", decisions.length, decisions.length ? [h("div", { class: "db-inline" }, P.dbTable({ id: "now-decisions", rows: decisions, rowKey: (d) => d.id, keepOrder: true,
           onOpen: (d, t) => openDecision(d.id, t), properties: [{ key: "title", label: "Decision", type: "title", width: 360, sortable: false, rowIcon: () => "decisions" },
             { key: "outcome", label: "Outcome", type: "custom", icon: "status", width: 170, sortable: false, render: (d) => outcomeBadge(d.outcome && d.outcome.assessment) },
@@ -530,7 +539,6 @@
           h("span", { class: "row" }, toneBadge(issue.type === "dependency" ? "backlog" : "review", P.words(issue.type))), h("span", null, issue.reason),
           issue.source_id || issue.record_id ? button("Open the evidence", "work-issue-" + index, (t) => P.openRecord(issue.source_id || issue.record_id, t), "link-button") : null,
           issue.run_id ? button("Open the check", "work-issue-run-" + index, (t) => openRun({ id: issue.run_id, episode_id: card.id }, t), "link-button") : null)))) : null,
-        // The block carries no count, so it reads as information and not as a list of tasks for the reader.
         (reviews.awaiting_user || []).length ? block("Criteria no machine can confirm", null,
           h("p", { class: "muted" }, "The latest check found that no machine can confirm these criteria. The assistant names them in the chat when it reports the work, and a statement you make there is recorded as your confirmation."),
           listOf(reviews.awaiting_user, (item) => h("div", { class: "stack", dataset: { key: "confirm-" + item.criterion } },

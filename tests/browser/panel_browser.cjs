@@ -171,11 +171,39 @@ async function views(page, kind, expected) {
     return { expected: [of("in_progress"), of("blocked", "review"), of("ready")], shown: [shown("now-progress"), shown("now-paused"), shown("now-ready")],
       headings: [...document.querySelectorAll("#main .digest-part h2")].map((node) => node.textContent) };
   });
+  // The fixture archived nothing, so Now shows no Archived part.
   assert.deepEqual(places.headings, ["In progress", "Paused", "Ready to start", "Done", "Latest decisions"]);
   assert.deepEqual(places.shown, places.expected);
   assert.match(await text(page, "#view-summary"), /\d+ work items? (is|are) in progress, \d+ (is|are) blocked and \d+ needs? review\./);
   assert.ok(!/wait for you|waits for you/.test(await text(page, "#main")), `${kind}: Now still counts what waits for the reader`);
   step(`${kind}: Now shows the work in progress, paused and ready in tables that hold exactly the items of the board`);
+  // Idle work that the expiry rule archived is a folded part of Now, which names the state a restore returns it to and
+  // says to ask in the chat. The response of api/now carries one archived item for this step.
+  if (kind === "product") {
+    await page.route(/\/api\/now(\?|$)/, async (route) => {
+      // The panel sends If-None-Match, so the route asks for the whole response and serves it without an ETag.
+      const headers = { ...route.request().headers() };
+      delete headers["if-none-match"];
+      const response = await route.fetch({ headers }), body = await response.json();
+      body.archived = [{ id: "episode_archived", title: "Retire the unused draft", state: "cancelled", item_type: "task", restore_state: "ready", idle_days: 14,
+        last_activity: "2026-09-01T09:00:00+00:00" }];
+      body.archived_total = 1;
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
+    });
+    await go(page, "#plan");
+    await go(page, "#now");
+    await page.waitForSelector('#main [data-key="now-archived-note"]');
+    assert.deepEqual(await page.locator("#main .digest-part h2").allTextContents(), ["In progress", "Paused", "Ready to start", "Done", "Archived", "Latest decisions"]);
+    assert.match(await text(page, '#main [data-key="now-archived-note"]'), /Ask in the chat to restore one, and it returns to the state shown\./);
+    await page.locator("#main details.toggle summary", { hasText: "most recent" }).last().click();
+    await page.waitForFunction(() => [...document.querySelectorAll('[data-scroll="now-archived-table"] .db-title')].some((node) => node.textContent === "Retire the unused draft"));
+    assert.match(await text(page, '[data-scroll="now-archived-table"]'), /Ready[\s\S]*14/);
+    assert.ok(!/wait for you|waits for you/.test(await text(page, "#main")), "the Archived part counts what waits for the reader");
+    await page.unroute(/\/api\/now(\?|$)/);
+    await go(page, "#plan");
+    await go(page, "#now");
+    step("product: Now folds the archived work under Archived, with the state a restore returns it to and a note to restore it in the chat");
+  }
   await shell(page, kind);
 
   // Quick find opens with Command K and with the slash key, lists the pages, finds a work item by its title and opens it.

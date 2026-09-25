@@ -58,6 +58,7 @@ Now is the home page of the project and a digest of its work. Its sentence state
 | Paused | The blocked items and the items in review, with what each waits for: another item, a check or a review. |
 | Ready to start | The work items that can start. |
 | Done | The finished items, folded behind a toggle that shows the ten most recent. |
+| Archived | The idle items that the expiry rule archived, folded behind a toggle that shows the ten most recent, with the state each returns to, its days without activity and its last activity. The part appears only when an item is archived. To restore one, ask in the chat. |
 | Latest decisions | The recent decisions with their outcome, and a link to Decisions. |
 
 A row opens its work item in the side peek. When the project follows a template, the kickoff checklist stands above the tables as a callout with the next step, until every kickoff step is done. When tool calls started without a recorded result, Needs reconciliation stands above the tables with the result that the transcript suggests for each call; ask the assistant in the chat to record the results.

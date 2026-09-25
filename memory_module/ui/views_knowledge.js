@@ -156,7 +156,6 @@
         weak ? P.count(weak, "rule") + " " + isAre(weak) + " ineffective" : ""].filter(Boolean).join(", ").replace(/, ([^,]+)$/, " and $1") + ".");
       const guards = [...(data.guards || [])].sort((a, b) => (b.recurrences || 0) - (a.recurrences || 0));
       const value = data.instructions || {}, roles = Object.keys(value.roles || {}), changes = data.scope_changes || [], signals = (data.signals || {}).signals || [];
-      // A proposed lesson is not counted: it is not a task that waits for the reader.
       const counts = { proposed: null, guards: data.guards_total || 0, failures: failures.length, instructions: roles.length, scope: changes.length, signals: signals.length };
       const tabs = LEARNING_TABS.map(([id, label, tone]) => ({ id, label, count: counts[id], tone: counts[id] ? tone : null }));
       // A link from Now names its tab as section, which the tabs replaced.
@@ -221,7 +220,6 @@
       ctx.setSummary((data.configured ? number(ready) + " of " + P.count(hosts.length, "configured host") + " can run work now. " : "No agent host is configured for this project. ") +
         (active.length ? P.count(active.length, "agent run") + " " + isAre(active.length) + " active. " : "No agent run is active. ") +
         (awaiting ? P.count(awaiting, "delegated run") + " " + (awaiting === 1 ? "has" : "have") + " changes that are not merged." : ""));
-      // Follow ups are not counted: they are not tasks that wait for the reader.
       const counts = { runs: null, hosts: hosts.length, attention: null };
       const tabs = AGENT_TABS.map(([id, label, tone]) => ({ id, label, count: counts[id], tone: counts[id] ? tone : null }));
       const tab = tabs.find((entry) => entry.id === params.tab) || tabs[0];
@@ -565,7 +563,6 @@
       ctx.setSummary((data.exists ? P.count(data.rules_total || 0, "rule") + " " + isAre(data.rules_total || 0) + " in force on " + data.machine + ", promoted from "
         + P.count(data.projects_total || 0, "project") + ". " : "No machine memory exists on this computer yet. ")
         + (waiting.length ? "Proposals of this project are listed under Proposals and are decided in the chat." : "No rule of this project is proposed."));
-      // A proposal is not counted: it is not a task that waits for the reader.
       const counts = { proposals: null, rules: rules.length, retired: retired.length, projects: data.projects_total || 0 };
       const tabs = MACHINE_TABS.map(([id, label, tone]) => ({ id, label, count: counts[id], tone: counts[id] ? tone : null }));
       const tab = tabs.find((entry) => entry.id === params.tab) || tabs[0];
@@ -804,7 +801,7 @@
       const decided = (counts.confirmed || 0) + (counts.dismissed || 0), open = Math.max(counts.open || 0, flags.length);
       ctx.setSummary(data.reading ? P.count(digests.length, "session digest") + " " + isAre(digests.length) + " shown. A flag or a proposal is decided in the chat when you choose to."
         : "Session reading is switched off for this project. Run project-memory sessions on to switch it on.");
-            // The tabs carry no count: a flag or a proposal is not a task that waits for the reader.
+            // No view counts items that wait for the reader.
       const tabs = SESSION_TABS.map(([id, label]) => ({ id, label }));
       const tab = tabs.find((entry) => entry.id === params.tab) || tabs[0];
       container.classList.add("list-view");

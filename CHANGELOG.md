@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+Now lists the archived work. Idle work that the expiry rule archived appears in a folded Archived part of the Now page, with the state a restore returns it to, its days without activity and its last activity, and a note that a sentence in the chat restores it. The part appears only when an item is archived, and it carries no count of things to do. The Now endpoint returns the ten most recent archived items under `archived` and their number under `archived_total`. This completes the criterion of Stage 3, whose report in the digest waited for the read only panel of 0.6.0b15.
+
 ## 0.6.0b15 (24 September 2026)
 
 The panel shows no count of things that wait for the user. Sessions, Learning, Agents and Machine counted open flags, pending proposals, lessons that wait, follow ups and merges in their summaries and tabs, which a check of 24 September 2026 found against the rule that nothing waits for the user. These views now list the items without a count and say that they are decided in the chat. The work item page lists criteria that no machine can confirm under Criteria no machine can confirm, with no count. The text on the removed acceptance form of a machine rule now points to the chat. Counts that describe the state of work, such as work in progress, paused and done, stay.

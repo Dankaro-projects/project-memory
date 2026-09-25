@@ -391,6 +391,9 @@ def now(memory, params):
     for item in items:
         counts[item['state']] += 1
     by_state = {state: [item for item in items if item['state'] == state] for state in ('in_progress', 'blocked', 'review', 'ready')}
+    # Idle work that the expiry rule archived, newest archive first, with the state a restore returns it to.
+    archived = sorted((item for item in items if item['state'] == 'cancelled' and (item['plan'] or {}).get('archived')),
+                      key=lambda item: item['date'], reverse=True)
     attention = []
     for block in scope_blocks(memory, limit=5):
         outside = block['still_outside']
@@ -497,6 +500,8 @@ def now(memory, params):
     result = {'project': memory.project, 'counts': counts, 'total': len(items), 'truncated': found['truncated'],
               'in_progress': _sorted_summaries(by_state['in_progress']), 'blocked': _sorted_summaries(by_state['blocked']),
               'review': _sorted_summaries(by_state['review']), 'ready': _sorted_summaries(by_state['ready']),
+              'archived': [{**planning.card_summary(item), **item['plan']['archived']} for item in archived[:SUMMARY_LIMIT]],
+              'archived_total': len(archived),
               'attention': listed[offset:offset + ATTENTION_LIMIT], 'attention_total': len(listed), 'attention_offset': offset,
               'attention_kinds': list(kinds.values()), 'attention_count': sum(kind['count'] for kind in kinds.values()),
               'agents': {'active': runs, 'recent': recent},
