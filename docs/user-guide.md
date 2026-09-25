@@ -62,7 +62,9 @@ Use **Plan** for the outline of phases and items, **Work** for the table and the
 
 ## Start a fresh session
 
-A long session costs more with every prompt, because the whole context is read again. When the context of a session passes 250,000 tokens, the prompt hook says so once, and again after each further 50,000 tokens. Change the threshold with `project-memory sessions on --hint-tokens 400000`.
+A long session costs more with every prompt, because the whole context is read again. When the context of a session passes 150,000 tokens, the prompt hook says so once, and again after each further 50,000 tokens. Change the threshold with `project-memory sessions on --hint-tokens 400000`. When a write closes a work item, as Done, a close in the chat or a complete outcome, in a session above 100,000 tokens, its result carries a `session_cost` sentence that suggests a fresh session.
+
+A new session also receives a setup report when the latest earlier session of the project was expensive. The report names the context that session started with before any work, its largest context and its number of calls, the servers it loaded but never used, the images and large tool results that stayed in the main conversation, and the tokens that subagents kept out of it. The session start text also asks the agent to send screenshot checks, long logs and broad file reads to a subagent that returns a short verdict. It then lists the options: turn off unused servers with `/mcp` or their plugin with `/plugin`, start a fresh session when the task changes, and send large reads to a subagent. Context sizes, server names and instruction sizes are measured from the transcript. The tokens of images and large results are estimates, and the tool definitions of each server are not measured. The report appears only when the starting context passed 40,000 tokens with unused servers, the large reads passed 20,000 tokens, or the session passed 150,000 tokens.
 
 Before you start a fresh session, run:
 

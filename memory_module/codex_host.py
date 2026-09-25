@@ -457,7 +457,8 @@ def session_context(memory, session, compacted=False):
         parts.append('This project is in production: delegated work and its review still run, and only the user brings '
                      'the result into the project, by asking for the merge in the chat; record it with user_action.')
     parts.append('Use memory_context before repeating research. Record a decision when choosing or revising an approach with consequences, using this session_id, evidence, uncertainty and alternatives. Routine acknowledgement needs no decision record. '
-                 'Tool receipts are observations; outcomes and lesson acceptance require explicit assessment.')
+                 'Tool receipts are observations; outcomes and lesson acceptance require explicit assessment. '
+                 'Send screenshot checks, long logs and broad file reads to a subagent that returns a short verdict, so they stay out of this context.')
     return ' '.join(parts)
 
 
@@ -619,6 +620,13 @@ def capture(memory, event, host='codex'):
             work = ''
         if work:
             started += ' ' + work
+        try:
+            report = sessions.setup_report(memory, session, room=HOOK_CHARACTERS - len(started) - 1)
+        except (OSError, ValueError, InvalidRecord, Conflict, sqlite3.Error):
+            # The setup report saves cost in later sessions; a failure to build it must not stop this one.
+            report = ''
+        if report:
+            started += ' ' + report
         try:
             earlier = sessions.start_summary(memory, session, room=HOOK_CHARACTERS - len(started) - 1)
         except (OSError, ValueError, InvalidRecord, Conflict, sqlite3.Error):

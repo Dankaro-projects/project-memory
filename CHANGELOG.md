@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+A new session receives a setup report when the latest earlier session of the project was expensive. On 25 September 2026 the user asked to be told at session start what made sessions expensive, with options to correct it. A session of the oneocean blueprint project on that day started at 60,206 tokens before any work, reached 322,841 tokens over 110 calls, loaded 34 servers and used 2 of them, and kept 14 images and one large result, about 32,600 tokens by estimate, in the main conversation. The transcript reader now keeps a cost profile of the main conversation of each Claude Code session: the context of each model call, the servers loaded and used, the size of their instructions and of the skill list, images and tool results of 20,000 characters or more, and the tokens that subagents kept out. The session start text carries the report after the work to continue, within 560 characters, and only when the starting context passed 40,000 tokens with unused servers, the large reads passed 20,000 tokens or the session passed 150,000 tokens. Estimates are named as estimates.
+
+The session start text asks the agent to send screenshot checks, long logs and broad file reads to a subagent that returns a short verdict. In the same oneocean blueprint session, three research subagents kept 371,695 tokens out of the main conversation, while the screenshots stayed in it. The setup report names the tokens that subagents kept out next to the large reads that stayed in.
+
+The running context warning starts at 150,000 tokens instead of 250,000. A write that closes work in a session above 100,000 tokens returns a `session_cost` sentence that suggests a fresh session.
+
 ## 0.6.0b16 (25 September 2026)
 
 Now lists the archived work. Idle work that the expiry rule archived appears in a folded Archived part of the Now page, with the state a restore returns it to, its days without activity and its last activity, and a note that a sentence in the chat restores it. The part appears only when an item is archived, and it carries no count of things to do. The Now endpoint returns the ten most recent archived items under `archived` and their number under `archived_total`. This completes the criterion of Stage 3, whose report in the digest waited for the read only panel of 0.6.0b15.

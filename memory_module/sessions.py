@@ -34,8 +34,18 @@ START_SECONDS = 1.5
 START_DIGESTS = 3
 START_CHARACTERS = 700
 START_TITLES = 3
-CONTEXT_HINT_TOKENS = 250_000
+CONTEXT_HINT_TOKENS = 150_000
 CONTEXT_HINT_STEP = 50_000
+# The setup report of the session start: its length and what makes an earlier session worth reporting.
+REPORT_CHARACTERS = 560
+REPORT_START_TOKENS = 40_000
+REPORT_PEAK_TOKENS = 150_000
+REPORT_LARGE_TOKENS = 20_000
+# A tool result at least this long counts as a large read; an image whose size cannot be read counts this many tokens.
+LARGE_RESULT_CHARACTERS = 20_000
+IMAGE_TOKENS = 1_600
+CLOSING_HINT_TOKENS = 100_000
+SUBAGENT_TOKENS = re.compile(r'<subagent_tokens>(\d+)</subagent_tokens>')
 TAIL_BYTES = 2 * 1024 * 1024
 MAX_TOOL_CALLS = 500
 SLOTS = ('decision', 'requirement', 'lesson', 'next_action', 'correction')
@@ -347,6 +357,7 @@ class ClaudeReader(Reader):
     def line(self, value, line):
         if not isinstance(value, dict) or value.get('isSidechain'):
             return
+        self.measure(value)
         if value.get('cwd') and not self.data['cwd']:
             self.data['cwd'] = value['cwd']
         if value.get('sessionId') and not self.data['session_id']:
@@ -376,6 +387,130 @@ class ClaudeReader(Reader):
             for part in content:
                 if isinstance(part, dict) and part.get('type') == 'tool_use':
                     self.call(part.get('id'), part.get('name') or '', part.get('input'), line, at)
+
+
+    def measure(self, value):
+        """The cost profile of the main conversation: the context of each model call, servers and large reads.
+
+        Contexts, server names, instruction and skill list sizes are measured. Tokens of images and large results are
+        estimates: an image by its pixel count, a text by four characters to a token.
+        """
+        cost = self.data.setdefault('cost', {
+            'calls': 0, 'first_context': None, 'peak_context': 0, 'last_context': None, 'loaded': {}, 'used': [],
+            'instruction_characters': {}, 'skills': 0, 'skill_characters': 0, 'images': 0, 'image_tokens': 0,
+            'large_results': 0, 'large_result_tokens': 0, 'subagents': 0, 'subagent_tokens': 0})
+        kind, message = value.get('type'), value.get('message')
+        if kind == 'attachment' and isinstance(value.get('attachment'), dict):
+            attachment = value['attachment']
+            if attachment.get('type') == 'deferred_tools_delta':
+                for name in _names(attachment.get('addedNames')):
+                    if server_of(name):
+                        cost['loaded'][server_of(name)] = cost['loaded'].get(server_of(name), 0) + 1
+                for name in _names(attachment.get('removedNames')):
+                    server = server_of(name)
+                    if server in cost['loaded']:
+                        cost['loaded'][server] -= 1
+                        if cost['loaded'][server] <= 0:
+                            del cost['loaded'][server]
+            elif attachment.get('type') == 'mcp_instructions_delta':
+                blocks = attachment.get('addedBlocks') if isinstance(attachment.get('addedBlocks'), list) else []
+                for name, block in zip(_names(attachment.get('addedNames')), blocks):
+                    cost['instruction_characters'][server_name(name)] = len(str(block))
+                for name in _names(attachment.get('removedNames')):
+                    cost['instruction_characters'].pop(server_name(name), None)
+            elif attachment.get('type') == 'skill_listing':
+                count, size = _integer(attachment.get('skillCount')), len(str(attachment.get('content') or ''))
+                if attachment.get('isInitial', True) in (True, 'True'):
+                    cost['skills'], cost['skill_characters'] = count, size
+                else:
+                    cost['skills'] += count
+                    cost['skill_characters'] += size
+            return
+        if not isinstance(message, dict):
+            return
+        content = message.get('content')
+        if kind == 'assistant':
+            usage = message.get('usage')
+            # Claude Code writes one line per content block of a response, each with the same message id and usage.
+            if isinstance(usage, dict) and message.get('id') != self.state.get('last_call'):
+                self.state['last_call'] = message.get('id')
+                context = sum(_integer(usage.get(name)) for name in ('input_tokens', 'cache_creation_input_tokens', 'cache_read_input_tokens'))
+                cost['calls'] += 1
+                if cost['first_context'] is None:
+                    cost['first_context'] = context
+                cost['peak_context'] = max(cost['peak_context'], context)
+                cost['last_context'] = context
+            for part in content if isinstance(content, list) else []:
+                server = server_of(part.get('name')) if isinstance(part, dict) and part.get('type') == 'tool_use' else None
+                if server and server not in cost['used']:
+                    cost['used'] = sorted(cost['used'] + [server])
+        elif kind == 'user':
+            if isinstance(content, str):
+                for tokens in SUBAGENT_TOKENS.findall(content):
+                    cost['subagents'] += 1
+                    cost['subagent_tokens'] += int(tokens)
+                return
+            extra = value.get('toolUseResult')
+            if isinstance(extra, dict) and isinstance(extra.get('totalTokens'), int):
+                cost['subagents'] += 1
+                cost['subagent_tokens'] += extra['totalTokens']
+            for part in content if isinstance(content, list) else []:
+                if not isinstance(part, dict) or part.get('type') != 'tool_result':
+                    continue
+                inner = part.get('content')
+                parts = inner if isinstance(inner, list) else [{'type': 'text', 'text': inner if isinstance(inner, str) else ''}]
+                characters = 0
+                for item in parts:
+                    if not isinstance(item, dict):
+                        continue
+                    if item.get('type') == 'image':
+                        cost['images'] += 1
+                        cost['image_tokens'] += image_tokens(item.get('source'))
+                    else:
+                        characters += len(str(item.get('text') or ''))
+                if characters >= LARGE_RESULT_CHARACTERS:
+                    cost['large_results'] += 1
+                    cost['large_result_tokens'] += characters // 4
+
+
+def _names(value):
+    return [name for name in value if isinstance(name, str)] if isinstance(value, list) else []
+
+
+def _integer(value):
+    try:
+        return max(0, int(value or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def server_name(name):
+    """The name of a server as its tools carry it: claude.ai Apollo.io becomes claude_ai_Apollo_io."""
+    return re.sub(r'[^A-Za-z0-9_-]', '_', str(name))
+
+
+def server_of(tool):
+    """The server of an MCP tool name, mcp__<server>__<tool>, or None for a built in tool."""
+    if not isinstance(tool, str) or not tool.startswith('mcp__'):
+        return None
+    rest = tool[5:]
+    return rest.rsplit('__', 1)[0] if '__' in rest else rest
+
+
+def image_tokens(source):
+    """An estimate of the tokens of an image: its pixels divided by 750 for a PNG, a fixed estimate otherwise."""
+    import base64
+    import struct
+    data = source.get('data') if isinstance(source, dict) else None
+    if isinstance(data, str):
+        try:
+            head = base64.b64decode(data[:32] + '=' * (-len(data[:32]) % 4))
+        except ValueError:
+            head = b''
+        if head[:8] == b'\x89PNG\r\n\x1a\n' and head[12:16] == b'IHDR' and len(head) >= 24:
+            width, height = struct.unpack('>II', head[16:24])
+            return width * height // 750
+    return IMAGE_TOKENS
 
 
 class CodexReader(Reader):
@@ -1068,6 +1203,86 @@ def start_summary(memory, session_id, *, room, found=None):
                            payload={'part': 'earlier_sessions', 'record_ids': ids, 'characters': len(result), 'omitted': omitted},
                            key=dumps([session_id, 'earlier_sessions', memory.now()]))
     return result
+
+
+def _thousands(value):
+    return f'{value:,}'
+
+
+def setup_report(memory, session_id, *, room, found=None):
+    """The setup report of the session start: what made the latest earlier session expensive, with the options.
+
+    It is empty unless that session loaded servers it never used while starting large, read large results in the main
+    conversation, or grew past the running warning. Measured figures are stated as such and estimates as estimates.
+    """
+    from . import codex_host
+    limit = min(REPORT_CHARACTERS, room)
+    if not enabled(memory) or limit < 200:
+        return ''
+    try:
+        collect(memory, found=found, limit=START_FILES, seconds=START_SECONDS, mentions=False)
+    except (OSError, ValueError, InvalidRecord):
+        pass
+    for item in digests(memory, limit=START_DIGESTS, exclude=session_id):
+        cost = json.loads(_session(memory, item['session_key'])['data']).get('cost')
+        if cost and cost.get('calls'):
+            break
+    else:
+        return ''
+    # The servers with the most tools cost the most context, so they are named first.
+    unused = sorted((set(cost['loaded']) | set(cost['instruction_characters'])) - set(cost['used']),
+                    key=lambda name: (-cost['loaded'].get(name, 0), name))
+    large = cost['image_tokens'] + cost['large_result_tokens']
+    started, peak = cost['first_context'] or 0, cost['peak_context']
+    if not (unused and started >= REPORT_START_TOKENS or large >= REPORT_LARGE_TOKENS or peak >= REPORT_PEAK_TOKENS):
+        return ''
+    head = (f'Setup report: the last session ({(item["last_at"] or "")[:10]}) started at {_thousands(started)} tokens '
+            f'and reached {_thousands(peak)} over {_count(cost["calls"], "call")}.')
+    options = []
+    def servers(shown):
+        names = ', '.join(unused[:shown]) + (f' and {len(unused) - shown} more' if len(unused) > shown else '')
+        instructions = sum(cost['instruction_characters'].get(name, 0) for name in unused) // 4
+        return (f' {_count(len(unused), "loaded server")} went unused: {names}'
+                + (f', with about {_thousands(instructions)} tokens of instructions by estimate' if instructions else '') + '.')
+    reads = ''
+    if large >= REPORT_LARGE_TOKENS:
+        kinds = [_count(cost['images'], 'image')] if cost['images'] else []
+        kinds += [_count(cost['large_results'], 'large result')] if cost['large_results'] else []
+        reads = f' {" and ".join(kinds)}, about {_thousands(large)} tokens by estimate, stayed in the main conversation.'
+    kept = f' Subagents kept {_thousands(cost["subagent_tokens"])} tokens out.' if cost['subagent_tokens'] else ''
+    if unused:
+        options.append('turn off unused servers here with /mcp or /plugin')
+    if peak >= REPORT_PEAK_TOKENS:
+        options.append('start a fresh session when the task changes')
+    if large >= REPORT_LARGE_TOKENS:
+        options.append('send large reads to a subagent')
+    tail = ' Offer the user these options: ' + '; '.join(options) + '.'
+    result = ''
+    # The tokens that subagents kept out show what delegation saves, so they outlast the names of the servers.
+    for shown, keep in ((3, True), (1, True), (3, False), (1, False), (0, False)):
+        text = head + (servers(shown) if unused and shown else (f' {_count(len(unused), "loaded server")} unused.' if unused else '')) + reads + (kept if keep else '') + tail
+        if len(text) <= limit:
+            result = text
+            break
+    if not result:
+        return ''
+    with memory._write():
+        codex_host.receipt(memory, session_id=session_id, event_name='ContextProvided',
+                           payload={'part': 'setup_report', 'record_ids': [item['source_id']], 'characters': len(result)},
+                           key=dumps([session_id, 'setup_report', memory.now()]))
+    return result
+
+
+def closing_hint(memory, session_id, found=None):
+    """One sentence for a write that closes work in a large session, suggesting a fresh session."""
+    if not session_id:
+        return ''
+    for path, host in _transcripts(session_id, folders() if found is None else found):
+        tokens = context_tokens(path)
+        if tokens and tokens >= CLOSING_HINT_TOKENS:
+            return (f'This work closed in a session that holds about {_thousands(tokens)} tokens of context. A fresh '
+                    'session would continue from Project Memory at lower cost; run project-memory handoff first.')
+    return ''
 
 
 START_WORK = 3

@@ -371,6 +371,133 @@ class SessionTests(Fixture):
                 self.assertNotIn(secret, sessions.redact('value ' + secret + ' end'))
 
 
+def attachment_line(at, attachment, *, session='s1', sidechain=False):
+    return json.dumps({'type': 'attachment', 'sessionId': session, 'timestamp': at, 'isSidechain': sidechain,
+                       'attachment': attachment})
+
+
+def png(width, height):
+    """The base64 head of a PNG file: its signature and the IHDR chunk that carries the size."""
+    import base64, struct
+    head = b'\x89PNG\r\n\x1a\n' + struct.pack('>I', 13) + b'IHDR' + struct.pack('>II', width, height) + b'\x08\x06\x00\x00\x00'
+    return base64.b64encode(head + b'\x00' * 64).decode()
+
+
+class SetupReportTests(Fixture):
+    """The cost profile of a transcript and the setup report of the session start (the session cost work)."""
+
+    def costly(self, session='s1', day='2026-09-10', *, start=60_000, peak=200_000):
+        at = lambda second: f'{day}T10:{second // 60:02d}:{second % 60:02d}Z'
+        return [
+            attachment_line(at(0), {'type': 'deferred_tools_delta', 'addedNames': [
+                'mcp__alpha__one', 'mcp__alpha__two', 'mcp__claude_ai_Beta_io__three', 'mcp__project_memory__memory_get', 'Read']},
+                session=session),
+            attachment_line(at(1), {'type': 'mcp_instructions_delta', 'addedNames': ['alpha', 'claude.ai Beta.io'],
+                                    'addedBlocks': ['## alpha\n' + 'a' * 4000, '## claude.ai Beta.io\n' + 'b' * 2000]}, session=session),
+            attachment_line(at(2), {'type': 'skill_listing', 'content': 's' * 8000, 'skillCount': 40}, session=session),
+            claude_line('user', 'Please review the deck.', at(3), session=session, cwd=str(self.root)),
+            usage_line(at(4), start, session=session),
+            claude_line('assistant', [{'type': 'tool_use', 'id': 'g1', 'name': 'mcp__project_memory__memory_get', 'input': {'view': 'next'}}], at(5), session=session),
+            claude_line('user', [{'type': 'tool_result', 'tool_use_id': 'g1', 'content': [{'type': 'text', 'text': '{}'}]}], at(6), session=session),
+            claude_line('assistant', [{'type': 'tool_use', 'id': 'r1', 'name': 'Read', 'input': {'file_path': '/tmp/slide.png'}}], at(7), session=session),
+            claude_line('user', [{'type': 'tool_result', 'tool_use_id': 'r1', 'content': [
+                {'type': 'image', 'source': {'type': 'base64', 'media_type': 'image/png', 'data': png(1500, 1000)}}]}], at(8), session=session),
+            claude_line('assistant', [{'type': 'tool_use', 'id': 'b1', 'name': 'Bash', 'input': {'command': 'cat big.log'}}], at(9), session=session),
+            claude_line('user', [{'type': 'tool_result', 'tool_use_id': 'b1', 'content': 'x' * 100_000}], at(10), session=session),
+            usage_line(at(11), peak, session=session),
+            claude_line('user', '<task-notification>\n<task-id>a1</task-id>\n<usage><subagent_tokens>106835</subagent_tokens></usage>\n</task-notification>',
+                        at(12), session=session),
+            json.dumps({'type': 'assistant', 'sessionId': session, 'timestamp': at(13), 'isSidechain': True,
+                        'message': {'id': 'msg_side', 'role': 'assistant', 'content': [],
+                                    'usage': {'input_tokens': 10, 'cache_creation_input_tokens': 0, 'cache_read_input_tokens': 900_000}}}),
+            usage_line(at(14), peak - 5_000, session=session),
+        ]
+
+    def test_the_profile_measures_the_main_conversation_only(self):
+        self.transcript('s1', self.costly())
+        sessions.collect(self.m, found=self.found)
+        [row] = sessions.digests(self.m)
+        cost = json.loads(sessions._session(self.m, row['session_key'])['data'])['cost']
+        self.assertEqual((cost['calls'], cost['first_context'], cost['peak_context']), (3, 60_000, 200_000))
+        self.assertEqual(cost['loaded'], {'alpha': 2, 'claude_ai_Beta_io': 1, 'project_memory': 1})
+        self.assertEqual(cost['used'], ['project_memory'])
+        self.assertEqual(cost['instruction_characters'], {'alpha': 4009, 'claude_ai_Beta_io': 2021})
+        self.assertEqual((cost['skills'], cost['skill_characters']), (40, 8000))
+        self.assertEqual((cost['images'], cost['image_tokens']), (1, 2000))
+        self.assertEqual((cost['large_results'], cost['large_result_tokens']), (1, 25_000))
+        self.assertEqual((cost['subagents'], cost['subagent_tokens']), (1, 106_835))
+
+    def test_a_costly_earlier_session_gives_a_short_report_with_options(self):
+        self.transcript('s1', self.costly())
+        text = sessions.setup_report(self.m, 'current', room=2000, found=self.found)
+        self.assertLessEqual(len(text), sessions.REPORT_CHARACTERS)
+        for part in ('60,000', '200,000', '3 calls', 'alpha', 'claude_ai_Beta_io', 'estimate', '/mcp', '106,835', 'subagent'):
+            self.assertIn(part, text)
+        self.assertNotIn('project_memory', text)
+        receipt = self.m.db.execute("SELECT payload FROM host_receipts WHERE event_name='ContextProvided'").fetchone()
+        self.assertEqual(json.loads(receipt[0])['part'], 'setup_report')
+
+    def test_an_inexpensive_earlier_session_gives_no_report(self):
+        lines = [line for line in self.costly(start=20_000, peak=50_000) if 'mcp__alpha' not in line and 'mcp_instructions' not in line
+                 and 'x' * 1000 not in line and 'image' not in line]
+        self.transcript('s1', lines)
+        self.assertEqual(sessions.setup_report(self.m, 'current', room=2000, found=self.found), '')
+
+    def test_the_report_leaves_out_the_current_session_and_respects_its_room(self):
+        self.transcript('current', self.costly('current'))
+        self.assertEqual(sessions.setup_report(self.m, 'current', room=2000, found=self.found), '')
+        self.transcript('s1', self.costly())
+        self.assertEqual(sessions.setup_report(self.m, 'current', room=100, found=self.found), '')
+
+    def test_the_session_start_hook_carries_the_report_within_the_budget(self):
+        self.transcript('s1', self.costly())
+        with patch.object(sessions, 'folders', lambda: self.found):
+            output = codex_host.capture(self.m, {'hook_event_name': 'SessionStart', 'session_id': 'fresh', 'source': 'startup'}, host='claude')
+        context = output['hookSpecificOutput']['additionalContext']
+        self.assertIn('Setup report: the last session', context)
+        self.assertIn('to a subagent that returns a short verdict', context)
+        self.assertLessEqual(len(context), codex_host.HOOK_CHARACTERS)
+
+    def test_the_tokens_kept_out_by_subagents_outlast_the_server_names(self):
+        lines = self.costly()
+        lines[0] = attachment_line('2026-09-10T10:00:00Z', {'type': 'deferred_tools_delta', 'addedNames': [
+            f'mcp__server_with_a_long_name_{index:02d}__tool' for index in range(12)]})
+        self.transcript('s1', lines)
+        text = sessions.setup_report(self.m, 'current', room=2000, found=self.found)
+        self.assertIn('106,835', text)
+        self.assertLessEqual(len(text), sessions.REPORT_CHARACTERS)
+
+    def test_the_running_warning_starts_at_150000_tokens(self):
+        path = self.base / 'live.jsonl'
+        path.write_text(usage_line('2026-09-12T10:00:00Z', 140_000) + '\n', encoding='utf-8')
+        self.assertEqual(sessions.context_hint(self.m, 'live', str(path)), '')
+        path.write_text(usage_line('2026-09-12T10:00:00Z', 160_000) + '\n', encoding='utf-8')
+        self.assertIn('160,000 tokens', sessions.context_hint(self.m, 'live', str(path)))
+
+    def test_closing_work_in_a_large_session_suggests_a_fresh_session(self):
+        path = self.transcript('live-session', [usage_line('2026-09-12T10:00:00Z', 180_000, session='live-session')])
+        text = sessions.closing_hint(self.m, 'live-session', found=self.found)
+        self.assertIn('180,000 tokens', text)
+        self.assertIn('fresh session', text)
+        path.write_text(usage_line('2026-09-12T10:00:00Z', 90_000, session='live-session') + '\n', encoding='utf-8')
+        self.assertEqual(sessions.closing_hint(self.m, 'live-session', found=self.found), '')
+        self.assertEqual(sessions.closing_hint(self.m, 'unknown-session', found=self.found), '')
+
+    def test_only_writes_that_close_work_carry_the_notice(self):
+        from memory_module import mcp
+        self.assertTrue(mcp.closes_work('close', {}))
+        self.assertTrue(mcp.closes_work('progress', {'payload': {'state': 'done'}}))
+        self.assertTrue(mcp.closes_work('plan', {'payload': {'state': 'done'}}))
+        self.assertTrue(mcp.closes_work('log', {'payload': {'completion': 'complete'}}))
+        self.assertTrue(mcp.closes_work('record', {'kind': 'outcome', 'payload': {'completion': 'complete'}}))
+        self.assertFalse(mcp.closes_work('progress', {'payload': {'state': 'in_progress'}}))
+        self.assertFalse(mcp.closes_work('log', {'payload': {'completion': 'partial'}}))
+        self.assertFalse(mcp.closes_work('source', {}))
+        with patch.object(sessions, 'closing_hint', lambda memory, session_id, found=None: 'Start a fresh session.'):
+            self.assertEqual(mcp.session_cost(self.m, 'close', {}, 'live-session'), 'Start a fresh session.')
+            self.assertEqual(mcp.session_cost(self.m, 'close', {}, None), '')
+            self.assertEqual(mcp.session_cost(self.m, 'source', {}, 'live-session'), '')
+
 if __name__ == '__main__':
     unittest.main()
 

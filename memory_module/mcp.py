@@ -852,6 +852,28 @@ def with_done_check(memory, error, episode_id, session_id=None):
     return InvalidRecord(str(error), **{**error.details, 'agent_check': check})
 
 
+def closes_work(operation, data):
+    """True for a write that closes a work item: Done, a user close or a complete outcome."""
+    payload = data.get('payload') if isinstance(data.get('payload'), dict) else {}
+    if operation == 'close':
+        return True
+    if operation in DONE_CHECKED:
+        return payload.get('state') == 'done'
+    if operation == 'log' or operation == 'record' and data.get('kind') == 'outcome':
+        return payload.get('completion') == 'complete'
+    return False
+
+
+def session_cost(memory, operation, data, session_id):
+    """The fresh session notice for a write that closes work in a large session, or an empty string."""
+    if not session_id or not closes_work(operation, data):
+        return ''
+    try:
+        return module('sessions').closing_hint(memory, session_id)
+    except (OSError, ValueError):
+        return ''
+
+
 def write(memory, operation, request_key, data, session_id=None, receipt_ids=None, *, start_checks=False):
     """Run one write operation.
 
@@ -887,7 +909,8 @@ def write(memory, operation, request_key, data, session_id=None, receipt_ids=Non
         if start_checks and operation in DONE_CHECKED and needs_done_check(error):
             raise with_done_check(memory, error, error.details.get('episode_id') or data.get('episode_id'), session_id) from error
         raise
-    return result
+    notice = session_cost(memory, operation, data, session_id)
+    return {**result, 'session_cost': notice} if notice else result
 
 
 def bundled_checkpoint(memory, checkpoint, result, data, session_id, request_key):
