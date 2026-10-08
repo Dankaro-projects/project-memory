@@ -614,30 +614,43 @@ def _measure(option):
     return ' and '.join(parts)
 
 
-# Claude and Grok never report a percentage. For ranking, such a host counts as half used: it follows a host that
-# reports less than this and precedes a host that reports more, so a host that reports a high use does not win over a
-# host that cannot report one.
-UNREPORTED_PERCENT = 50
+def _load_band(option):
+    """Constrained hosts last, a limit hit after them, then a measured load. An unmeasured load follows a measured one.
+
+    A load of zero is measured: the host has no recorded use in the last 5 hours. None means the load could not be
+    measured. A missing used percentage is not part of this band and is never filled in with 50 percent.
+    """
+    load = option['relative_load']
+    return (bool(option['constrained']), 'limit_hit' in option['reasons'], load is None, 0 if load is None else load)
 
 
-def _rank(option, order):
-    """Constrained hosts last and a limit hit after them, then the lowest reported percentage, then the lowest load
-    relative to the host's own 7 day median, then the configured order. A host without a reported percentage ranks as
-    UNREPORTED_PERCENT. A host without a measured load follows the hosts whose load is measured, and a host with no
-    recorded use in the last 5 hours has a load of zero."""
-    percent = option['used_percent'] if option['used_percent'] is not None else UNREPORTED_PERCENT
-    return (option['constrained'], 'limit_hit' in option['reasons'], percent,
-            option['relative_load'] is None, option['relative_load'] or 0, order[option['host']])
+def _compare(left, right, order):
+    """Negative when left has more headroom than right.
+
+    A host that reports no used percentage is ranked by its measured load alone. When the loads are equal, the lower
+    reported percentage wins only between hosts that both reported one. A host with neither a percentage nor a measured
+    load stays eligible, follows every host whose load is measured, and the configured order decides among the rest.
+    Nothing in that comparison treats the host as 50 percent used.
+    """
+    left_band, right_band = _load_band(left), _load_band(right)
+    if left_band != right_band:
+        return -1 if left_band < right_band else 1
+    left_percent, right_percent = left['used_percent'], right['used_percent']
+    if left_percent is not None and right_percent is not None and left_percent != right_percent:
+        return -1 if left_percent < right_percent else 1
+    left_order, right_order = order[left['host']], order[right['host']]
+    return (left_order > right_order) - (left_order < right_order)
 
 
 def route(memory, preferred, *, allowed=None, exclude=(), headroom=None):
     """Choose a host by availability and headroom, and return the decision with its reason.
 
     The preferred host is kept unless it is constrained. Otherwise the installed and available host with the most
-    headroom is chosen: the lowest reported percentage first, then the lowest load relative to its own median, then
-    the configured order. When every such host is constrained by the ledger, the one with the most headroom still
-    runs. A host that is not installed or that this project marked unavailable is never chosen. headroom maps a host
-    to the value of usage.host_headroom; without it the usage ledger of this machine is read.
+    headroom is chosen: the lowest measured load first, then the lowest reported percentage when both hosts reported
+    one, then the configured order. A host that reports no percentage is ranked by its measured load alone. When every
+    such host is constrained by the ledger, the one with the most headroom still runs. A host that is not installed or
+    that this project marked unavailable is never chosen. headroom maps a host to the value of usage.host_headroom;
+    without it the usage ledger of this machine is read.
     """
     _host(preferred)
     allowed = list(HOSTS) if allowed is None else [_host(host) for host in allowed]
@@ -671,7 +684,10 @@ def route(memory, preferred, *, allowed=None, exclude=(), headroom=None):
         chosen, reason = first, 'preferred'
         sentence = f'The preferred host {preferred} was chosen because it is not constrained.'
     else:
-        chosen = min(runnable, key=lambda option: _rank(option, order))
+        chosen = runnable[0]
+        for option in runnable[1:]:
+            if _compare(option, chosen, order) < 0:
+                chosen = option
         reason = 'all_constrained' if chosen['constrained'] else 'headroom'
         if first is None:
             sentence = f'The preferred host {preferred} is excluded from this choice.'

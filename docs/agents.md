@@ -102,8 +102,8 @@ Every check, delegated run, work review and reroute chooses its host by headroom
 
 The preferred host is kept unless it is constrained. The preferred host of delegated work is the host you selected, then the configured work host, then the first configured host. Otherwise the installed and available host with the most headroom is chosen, in this order:
 
-1. The lowest reported percentage. A host that reports no percentage counts as 50 percent here, so it follows a host that reports less and precedes a host that reports more. When Codex reports several limits, its general limit decides, and a limit of a single model does not.
-2. The lowest load of the last 5 hours relative to the median 5 hour load of the same host over the last 7 days. A host with no recorded use in the last 5 hours has a load of zero, also when it was never used. A host whose load cannot be measured follows the hosts whose load is measured.
+1. The lowest load of the last 5 hours relative to the median 5 hour load of the same host over the last 7 days. A host that reports no used percentage is ranked by this load alone. It does not count as 50 percent used. A host with no recorded use in the last 5 hours has a load of zero, also when it was never used. A host whose load cannot be measured follows the hosts whose load is measured. A host with neither a used percentage nor a measured load stays eligible and follows every host whose load is measured.
+2. When those loads are equal, the lowest reported percentage, using only a percentage the host reported. A host that reported none is not given one, and the configured order decides between it and a host that did. When Codex reports several limits, its general limit decides, and a limit of a single model does not.
 3. The configured order.
 
 When every such host is constrained, the one with the most headroom still runs, and a host with a limit hit comes after a host that is only close to its limit. A host that is not installed or that this project marked unavailable is never chosen. The choice is deterministic: the same ledger, receipts and time give the same host.
