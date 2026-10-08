@@ -337,6 +337,12 @@ def snapshot(memory, episode_id, role, *, tree=None):
     source_ids = {e['source_id'] for record in records for e in record.get('evidence', [])}
     source_ids |= {latest_source(memory, source_id) for source_id in tuple(source_ids)}
     sources = [memory.read(rid, detail=True) for rid in sorted(source_ids)]
+    from .mcp_evidence import attach
+    known = {source['id'] for source in sources}
+    for source in attach(memory, episode_id, plan.get('paths') or []):
+        if source['id'] not in known:
+            sources.append(source)
+            known.add(source['id'])
     for source in sources:
         if source['source_key'].startswith(RECEIPT_PREFIX):
             source['verification'] = {'receipt_id': source['source_key'][len(RECEIPT_PREFIX):], 'statement': RECEIPT_STATEMENT}

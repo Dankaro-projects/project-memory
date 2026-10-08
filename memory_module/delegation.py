@@ -495,6 +495,9 @@ def worker_snapshot(snapshot, rule_ids):
             'rules_in_instructions': carried}
 
 
+LIVE_WORKFLOW = 'A live workflow counts only after it is exported or cited as receipt-verified output.'
+
+
 def worker_prompt(snapshot, deadline, timeout, instructions=None, hive_context=None):
     """The instructions the worker receives with its snapshot.
 
@@ -509,6 +512,8 @@ def worker_prompt(snapshot, deadline, timeout, instructions=None, hive_context=N
                'Allowed paths, relative to the working directory: ' + ', '.join(snapshot['paths']) + '. '
                'Complete every checklist item and respect every constraint. '
                'Return only JSON that matches the schema. ')
+    if LIVE_WORKFLOW not in prompt and any(isinstance(path, str) and path.startswith('mcp:') for path in snapshot.get('paths') or []):
+        prompt += LIVE_WORKFLOW + ' '
     prompt += run_schema(snapshot)['description'] + '\n'
     prompt += f'The worktree holds the base commit {snapshot["base_commit"]}. '
     outside = snapshot.get('uncommitted_outside_paths') or []
