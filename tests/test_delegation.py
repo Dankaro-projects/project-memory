@@ -351,7 +351,9 @@ class DelegationTests(unittest.TestCase):
         self.assertEqual(result['state'], 'timed_out')
         self.assertEqual(result['metrics']['termination_reason'], 'execution_deadline')
         self.assertEqual(result['metrics']['changed_files'], ['src/app.py'])
-        self.assertIsNone(delegation.latest_review(self.m, run['id']))
+        review = delegation.latest_review(self.m, run['id'])
+        self.assertEqual((review['role'], review['snapshot']['partial']), ('work_review', True))
+        self.assertTrue((self.project / run['workspace']).exists())
 
         self.workers['codex'] = {'cancel': True, 'root': str(ROOT), 'database': str(self.m.path), 'sleep': 30}
         run = delegation.request_work(self.m, self.episode, request_key='cancel', host='codex')
@@ -362,6 +364,75 @@ class DelegationTests(unittest.TestCase):
         self.assertEqual(result['state'], 'cancelled')
         self.assertEqual(result['metrics']['termination_reason'], 'cancelled')
         self.assertEqual(self.receipts('DelegationFinished'), 2)
+
+    def test_a_timed_out_or_interrupted_run_that_changed_files_requests_a_partial_review(self):
+        self.reviewers['claude'] = {'verdict': 'changes_required'}
+        self.workers['codex'] = {'write': {'src/app.py': 'VALUE = 2\n'}, 'sleep': 30, 'report': work_report()}
+        run = delegation.request_work(self.m, self.episode, request_key='partial-timeout', host='codex')
+        delegation.execute(self.m, run['id'], timeout=1)
+        result = reviews.read(self.m, run['id'])
+        self.assertEqual(result['state'], 'timed_out')
+        self.assertEqual(result['metrics']['changed_files'], ['src/app.py'])
+        review = delegation.latest_review(self.m, run['id'])
+        self.assertEqual(review['role'], 'work_review')
+        self.assertIs(review['snapshot']['partial'], True)
+        self.assertIn('not run again', review['snapshot']['partial_note'])
+        self.assertEqual((review['snapshot']['independence'], review['parent_run']), ('other_host', run['id']))
+        self.assertTrue((self.project / run['workspace']).exists())
+        self.assertEqual(self.git('branch', '--list', run['branch']).lstrip('*+ '), run['branch'])
+        self.assertEqual(self.m.db.execute("SELECT count(*) FROM review_runs WHERE role='work'").fetchone()[0], 1)
+        self.assertEqual(self.receipts('DelegationRerouted'), 0)
+        with self.assertRaises(InvalidRecord):
+            delegation.merge(self.m, run['id'], request_key='agent-override', actor='assistant',
+                             override_reason='The agent insists.')
+        merged = delegation.merge(self.m, run['id'], request_key='user-override', actor='workspace-user',
+                                  override_reason='The user accepts the partial diff.')
+        self.assertTrue(merged['merged'])
+        self.assertEqual(merged['review_state'], 'changes_required')
+        self.assertEqual((self.project / 'src/app.py').read_text(), 'VALUE = 2\n')
+
+        reviews.remove_host(self.m, 'claude')
+        original_run = hosts.Supervisor.run
+
+        def run_interrupted(supervisor, args, **kwargs):
+            state, error = original_run(supervisor, args, **kwargs)
+            if state == 'timed_out':
+                return 'interrupted', 'The worker stopped reporting.'
+            return state, error
+
+        self.workers['codex'] = {'write': {'src/app.py': 'VALUE = 3\n'}, 'sleep': 30, 'report': work_report()}
+        with patch.object(hosts.Supervisor, 'run', run_interrupted):
+            stopped = delegation.request_work(self.m, self.episode, request_key='partial-interrupt', host='codex')
+            delegation.execute(self.m, stopped['id'], timeout=1)
+        stopped = reviews.read(self.m, stopped['id'])
+        self.assertEqual(stopped['state'], 'interrupted')
+        self.assertEqual(stopped['metrics']['changed_files'], ['src/app.py'])
+        review = delegation.latest_review(self.m, stopped['id'])
+        self.assertEqual((review['role'], review['snapshot']['partial'], review['snapshot']['independence']),
+                         ('work_review', True, 'same_host'))
+        self.assertTrue((self.project / stopped['workspace']).exists())
+        self.assertEqual(self.m.db.execute("SELECT count(*) FROM review_runs WHERE parent_run=? AND role='work'",
+                                           (stopped['id'],)).fetchone()[0], 0)
+        self.assertEqual(self.receipts('DelegationRerouted'), 0)
+
+        self.workers['codex'] = {'write': {'src/app.py': 'VALUE = 4\n'}, 'cancel': True, 'root': str(ROOT),
+                                 'database': str(self.m.path), 'sleep': 30}
+        cancelled = delegation.request_work(self.m, self.episode, request_key='cancel-files', host='codex')
+        delegation.execute(self.m, cancelled['id'])
+        cancelled = reviews.read(self.m, cancelled['id'])
+        self.assertEqual(cancelled['state'], 'cancelled')
+        self.assertEqual(cancelled['metrics']['changed_files'], ['src/app.py'])
+        self.assertIsNone(delegation.latest_review(self.m, cancelled['id']))
+        self.assertTrue((self.project / cancelled['workspace']).exists())
+
+        self.workers['codex'] = {'sleep': 30, 'report': work_report(changed_files=[])}
+        empty = delegation.request_work(self.m, self.episode, request_key='empty-timeout', host='codex')
+        delegation.execute(self.m, empty['id'], timeout=1)
+        empty = reviews.read(self.m, empty['id'])
+        self.assertEqual(empty['state'], 'timed_out')
+        self.assertEqual(empty['metrics']['changed_files'], [])
+        self.assertIsNone(delegation.latest_review(self.m, empty['id']))
+        self.assertFalse((self.project / empty['workspace']).exists())
 
     def test_lesson_proposals_become_proposed_lessons_exactly_once(self):
         self.workers['codex'] = {'write': {'src/app.py': 'VALUE = 2\n'}, 'report': work_report(lesson_proposals=[LESSON])}
