@@ -402,7 +402,7 @@ def scaffold(project, template, *, name=None, clients=(), requirements=None, git
     selected = list(dict.fromkeys(clients)) or ['mcp']
     for client in selected:
         if client not in install.CLIENTS:
-            raise InvalidRecord('Each client must be mcp, codex or claude.')
+            raise InvalidRecord('Each client must be mcp, codex, claude or cursor.')
     if requirements is not None:
         if not isinstance(requirements, list) or not requirements:
             raise InvalidRecord('requirements must be a list of at least one agreed requirement.')

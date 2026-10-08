@@ -763,6 +763,8 @@ def write_log(call, memory, request_key, data, session_id, receipt_ids):
                            request_key=request_key + ':action', decision_id=first['id'])
     third = memory.record(episode_id, 'outcome', outcome, expected_version=second['version'], actor=actor, evidence=evidence,
                           request_key=request_key + ':outcome', decision_id=first['id'])
+    if session_id:
+        codex_host.bind(memory, session_id, first['id'], request_key)
     return {'id': third['id'], 'decision_id': first['id'], 'action_id': second['id'], 'version': third['version'], 'episode_id': episode_id}
 
 

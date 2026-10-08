@@ -52,6 +52,10 @@ NETWORK_LIMITATION = ('The worker has no network access and no web search. Work 
 # A run of a swarm that did not name its own hive conclusion and checkpoint ends protocol_incomplete. Its diff is
 # kept and it can be reviewed and merged, but a focused problem never selects it and a relay never hands over from it.
 REVIEWABLE = ('completed', 'protocol_incomplete')
+# A timeout or an interrupt that already changed files is reviewed in place. The worker is not run again.
+PARTIAL = ('timed_out', 'interrupted')
+PARTIAL_NOTE = ('This work is partial: the worker ended as {state} after changing files. '
+                'Review the changes that exist. The worker is not run again.')
 HIVE_REPORT_FIELDS = ('hive_conclusion_id', 'hive_checkpoint_id')
 HIVE_BINDING_FIELDS = ('swarm_id', 'agent_id', 'role')
 HIVE_BINDING_REFUSED = ('The hive binding of a run needs swarm_id, agent_id and role as text, and accepts hypothesis with claim '
@@ -491,6 +495,9 @@ def worker_snapshot(snapshot, rule_ids):
             'rules_in_instructions': carried}
 
 
+LIVE_WORKFLOW = 'A live workflow counts only after it is exported or cited as receipt-verified output.'
+
+
 def worker_prompt(snapshot, deadline, timeout, instructions=None, hive_context=None):
     """The instructions the worker receives with its snapshot.
 
@@ -505,6 +512,8 @@ def worker_prompt(snapshot, deadline, timeout, instructions=None, hive_context=N
                'Allowed paths, relative to the working directory: ' + ', '.join(snapshot['paths']) + '. '
                'Complete every checklist item and respect every constraint. '
                'Return only JSON that matches the schema. ')
+    if LIVE_WORKFLOW not in prompt and any(isinstance(path, str) and path.startswith('mcp:') for path in snapshot.get('paths') or []):
+        prompt += LIVE_WORKFLOW + ' '
     prompt += run_schema(snapshot)['description'] + '\n'
     prompt += f'The worktree holds the base commit {snapshot["base_commit"]}. '
     outside = snapshot.get('uncommitted_outside_paths') or []
@@ -676,7 +685,7 @@ def _execute_work(memory, run, timeout):
             error = ('The worker changed files outside the plan paths: ' + ', '.join(outside[:20]) +
                      '. Discard this run, or extend the plan paths and delegate again.')
             metrics['outside_paths'] = outside[:100]
-        elif state in {'cancelled', 'timed_out'}:
+        elif state in {'cancelled', 'timed_out', 'interrupted'}:
             pass
         elif metrics.get('collection_error'):
             state, error = 'failed', 'Project Memory could not collect the worktree changes. ' + metrics['collection_error']
@@ -695,7 +704,9 @@ def after_work(memory, run_id):
     """Record availability and lessons, then reroute an unavailable host or request the cross review.
 
     A work review that cannot start, for example because two runs are already active, is kept as a receipt and
-    started later by start_missing_reviews or by a merge request. A run that changed nothing is cleaned up,
+    started later by start_missing_reviews or by a merge request. A timed-out or interrupted run that changed
+    files requests that same review, marked partial. The worker is not run again, and the worktree and branch
+    stay until the chat merges the run with an override or discards it. A run that changed nothing is cleaned up,
     whether it completed or stopped, so a host that refuses to start leaves no worktree behind. A scope
     violation keeps its worktree and branch, because they carry the evidence of what the worker changed.
     """
@@ -724,7 +735,7 @@ def after_work(memory, run_id):
         if run['state'] == 'host_unavailable':
             cleanup(project, project / run['workspace'], run['branch'])
             follow = reroute(memory, run)
-        elif run['state'] in REVIEWABLE and metrics.get('changed_files'):
+        elif run['state'] in (*REVIEWABLE, *PARTIAL) and metrics.get('changed_files'):
             follow = request_review(memory, run_id, request_key=run_id + ':work-review')
         elif run['state'] == 'completed':
             _receipt(memory, run, 'DelegationCleanedUp',
@@ -755,7 +766,7 @@ def after_work(memory, run_id):
 
 
 def start_missing_reviews(memory, *, limit=10):
-    """Request and launch the work review of completed runs whose automatic review never started.
+    """Request and launch the work review of completed or partial runs whose automatic review never started.
 
     Only runs with changed files, an existing worktree and no settlement are considered; one that still cannot
     start is left for the next call.
@@ -764,9 +775,11 @@ def start_missing_reviews(memory, *, limit=10):
         return []
     from .focus import settle
     settle(memory)
-    rows = memory.db.execute("""SELECT w.id FROM review_runs w WHERE w.role='work' AND w.state IN ('completed','protocol_incomplete')
+    review_states = REVIEWABLE + PARTIAL
+    marks = ','.join('?' for _ in review_states)
+    rows = memory.db.execute(f"""SELECT w.id FROM review_runs w WHERE w.role='work' AND w.state IN ({marks})
         AND NOT EXISTS (SELECT 1 FROM review_runs r WHERE r.parent_run=w.id AND r.role='work_review')
-        ORDER BY w.rowid LIMIT ?""", (limit,)).fetchall()
+        ORDER BY w.rowid LIMIT ?""", (*review_states, limit)).fetchall()
     started = []
     for row in rows:
         run = reviews.read(memory, row[0])
@@ -831,12 +844,16 @@ def reroute(memory, run):
 
 
 def request_review(memory, work_run_id, *, request_key, max_seconds=900):
-    """Queue a work review of a completed work run, preferably on the other host."""
+    """Queue a work review of a completed work run, preferably on the other host.
+
+    A timed-out or interrupted run that changed files uses the same review and is marked partial.
+    The worker is not run again.
+    """
     _text(request_key, 'request_key', 180)
     if type(max_seconds) is not int or not 30 <= max_seconds <= 900:
         raise InvalidRecord('Review time must be between 30 and 900 seconds.')
     work = reviews.read(memory, work_run_id)
-    if work['role'] != 'work' or work['state'] not in REVIEWABLE:
+    if work['role'] != 'work' or work['state'] not in (*REVIEWABLE, *PARTIAL):
         raise InvalidRecord('A work review needs a completed delegated work run.')
     config = reviews.configured(memory)
     if not config:
@@ -882,6 +899,9 @@ def request_review(memory, work_run_id, *, request_key, max_seconds=900):
              'binary_files': previews, 'data_warnings': metrics.get('data_warnings', []), 'redactions': redactions,
              'uncommitted_outside_paths': snapshot.get('uncommitted_outside_paths', []),
              'worker_report': work['report'], 'execution_limit_seconds': max_seconds}
+    if work['state'] in PARTIAL:
+        value['partial'] = True
+        value['partial_note'] = PARTIAL_NOTE.format(state=work['state'].replace('_', ' '))
     if len(diff) <= INLINE_DIFF_LIMIT:
         value['diff'] = diff
     else:
@@ -899,7 +919,8 @@ def request_review(memory, work_run_id, *, request_key, max_seconds=900):
         run_id = reviews.new_run_id()
         _insert(memory, run_id=run_id, episode_id=work['episode_id'], role='work_review', host=reviewer, snapshot=value, routing=routing,
                 request_key=request_key, session_id=work['session_id'], parent_run=work_run_id,
-                event_name='WorkReviewRequested', details={'independence': value['independence']})
+                event_name='WorkReviewRequested',
+                details={'independence': value['independence'], **({'partial': True} if value.get('partial') else {})})
     return reviews.read(memory, run_id)
 
 
@@ -963,7 +984,7 @@ def retry_review(memory, run_id, *, request_key, max_seconds=900):
         if run['role'] != 'work_review' or run.get('parent_run') != run_id:
             raise Conflict('The review request key belongs to different work.')
         return run
-    if work['state'] not in REVIEWABLE:
+    if work['state'] not in (*REVIEWABLE, *PARTIAL):
         raise InvalidRecord('Only a completed delegated run can be reviewed. This run is ' + work['state'].replace('_', ' ') + '.')
     if settlement(memory, run_id):
         raise InvalidRecord('This delegated run was already merged or discarded, so it needs no new review.')
@@ -1046,7 +1067,7 @@ def merge(memory, run_id, *, request_key, actor, override_reason=None):
         return {**prior['payload'], 'merged': True, 'duplicate': True}
     merge_authority(memory, actor)
     run = _work_run(memory, run_id)
-    if run['state'] not in REVIEWABLE:
+    if run['state'] not in (*REVIEWABLE, *PARTIAL):
         raise InvalidRecord('Only a completed delegated run can be merged. This run is ' + run['state'].replace('_', ' ') + '.')
     if not (run['metrics'] or {}).get('changed_files'):
         raise InvalidRecord('This delegated run changed no files, so there is nothing to merge.')

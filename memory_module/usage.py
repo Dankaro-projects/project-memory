@@ -251,11 +251,19 @@ def _json(raw):
 # Where the logs of each host are on this machine.
 
 def default_folders():
-    """The session log folders of Codex and Claude Code, following their own home variables."""
+    """The session log folders of Codex, Claude Code and Cursor, following their own homes.
+
+    Codex logs are `$CODEX_HOME/sessions` (`~/.codex/sessions`). Claude Code transcripts are
+    `$CLAUDE_CONFIG_DIR/projects` (`~/.claude/projects`). Cursor agent transcripts are
+    `~/.cursor/projects/<slug>/agent-transcripts/<id>/<id>.jsonl`. `<slug>` is the absolute project
+    path with the leading slash removed and each remaining slash replaced by a hyphen, the same
+    rule as `cursor_project_slug` in sessions.py. `/home/dankaro` is the folder `home-dankaro`.
+    The cursor value here is that `projects` folder.
+    """
     home = Path.home()
     codex = Path(os.environ.get('CODEX_HOME') or home / '.codex')
     claude = Path(os.environ.get('CLAUDE_CONFIG_DIR') or home / '.claude')
-    return {'codex': codex / 'sessions', 'claude': claude / 'projects'}
+    return {'codex': codex / 'sessions', 'claude': claude / 'projects', 'cursor': home / '.cursor' / 'projects'}
 
 
 def project_database(root):
@@ -572,8 +580,9 @@ def collect(store, *, folders=None, projects=True):
     """Collect usage into the ledger of an open machine memory and return counts only.
 
     `folders` maps `codex` and `claude` to their session log folders; by default
-    the folders of this machine are read. A source that cannot be read is counted
-    and does not stop the others.
+    the folders of this machine are read. A `cursor` entry is left unread here:
+    session digests use it, and it does not enter this ledger or headroom routing.
+    A source that cannot be read is counted and does not stop the others.
     """
     started = time.monotonic()
     machine.ensure_usage(store)

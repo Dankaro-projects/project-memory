@@ -108,9 +108,10 @@ class RouteTests(LedgerFixture):
         self.clock.value = NOW + timedelta(minutes=81)
         self.assertEqual(hosts.route(self.memory, 'claude', allowed=['codex', 'claude'])['host'], 'claude')
 
-    def test_a_reported_percentage_decides_before_load_and_load_before_configured_order(self):
+    def test_an_equal_load_uses_the_reported_percentage_and_load_precedes_configured_order(self):
         allowed = ['codex', 'claude', 'grok', 'opencode']
         self.add_limit('codex', 90, NOW + timedelta(hours=1))
+        self.add_limit('claude', 55, NOW + timedelta(hours=1), limit_id='claude')
         self.add_limit('grok', 40, NOW + timedelta(hours=1), limit_id='grok')
         self.add_limit('opencode', 20, NOW + timedelta(hours=1), limit_id='opencode')
         decision = hosts.route(self.memory, 'codex', allowed=allowed)
@@ -206,14 +207,53 @@ class HeadroomRankingTests(LedgerFixture):
         self.assertEqual(hosts.route(self.memory, 'codex', allowed=['codex', 'claude', 'opencode'], headroom=rooms)['host'],
                          'opencode')
 
-    def test_a_high_reported_percentage_does_not_win_over_a_host_that_cannot_report_one(self):
+    def test_a_host_without_a_percentage_is_ranked_by_measured_load(self):
+        # Opencode is out. Codex reports 20 percent and has done more fresh work than its median. Claude reports no
+        # percentage and has done less than its median, so the measured load chooses Claude. A stand-in of 50 percent
+        # would have chosen Codex.
         self.add_hit('opencode', NOW, until=NOW + timedelta(hours=1))
-        self.add_limit('codex', 84.9, NOW + timedelta(days=6))
+        self.add_limit('codex', 20, NOW + timedelta(hours=1))
+        for index, hours in enumerate((6, 12, 18)):
+            self.add_record('codex', NOW - timedelta(hours=hours), 1000, 'codex-%d' % index)
+            self.add_record('claude', NOW - timedelta(hours=hours), 1000, 'claude-%d' % index)
+        self.add_record('codex', NOW - timedelta(hours=1), 4000, 'codex-now')
+        self.add_record('claude', NOW - timedelta(hours=1), 500, 'claude-now')
         decision = hosts.route(self.memory, 'opencode', allowed=['opencode', 'codex', 'claude'])
+        self.assertEqual((decision['host'], decision['reason']), ('claude', 'headroom'))
+        by_host = {item['host']: item for item in decision['hosts']}
+        self.assertIsNone(by_host['claude']['used_percent'])
+        self.assertLess(by_host['claude']['relative_load'], by_host['codex']['relative_load'])
+        # The loads reversed, with the same 20 percent, choose Codex. The percentage did not decide either way.
+        rooms = {'opencode': {'reasons': ['limit_hit']},
+                 'codex': {'reasons': [], 'used_percent': 20, 'relative_load': 0.2},
+                 'claude': {'reasons': [], 'relative_load': 4.0}}
+        self.assertEqual(hosts.route(self.memory, 'opencode', allowed=['opencode', 'codex', 'claude'], headroom=rooms)['host'],
+                         'codex')
+
+    def test_equal_load_does_not_treat_a_missing_percentage_as_half_used(self):
+        # Neither host has token records, so both have a measured load of zero. Codex reports 20 percent. Claude is
+        # earlier in the configured order, so Claude runs. Counting Claude as 50 percent would have chosen Codex.
+        self.add_hit('opencode', NOW, until=NOW + timedelta(hours=1))
+        self.add_limit('codex', 20, NOW + timedelta(hours=1))
+        decision = hosts.route(self.memory, 'opencode', allowed=['opencode', 'claude', 'codex'])
         self.assertEqual(decision['host'], 'claude')
-        # A low reported percentage still ranks first.
-        self.add_limit('codex', 20, NOW + timedelta(days=6))
-        self.assertEqual(hosts.route(self.memory, 'opencode', allowed=['opencode', 'codex', 'claude'])['host'], 'codex')
+        claude = next(item for item in decision['hosts'] if item['host'] == 'claude')
+        self.assertIsNone(claude['used_percent'])
+        self.assertEqual(claude['relative_load'], 0.0)
+
+    def test_a_host_with_neither_percentage_nor_load_stays_eligible(self):
+        # Grok reports neither a percentage nor a load. It must not take the place of a host at 50 percent and beat
+        # Codex, and it must not be dropped. Codex has the only measured load, so Codex runs.
+        rooms = {'claude': {'reasons': ['limit_hit'], 'relative_load': 0.2},
+                 'codex': {'reasons': [], 'used_percent': 60, 'relative_load': 0.1},
+                 'grok': {'reasons': []}}
+        decision = hosts.route(self.memory, 'claude', allowed=['claude', 'codex', 'grok'], headroom=rooms)
+        self.assertEqual(decision['host'], 'codex')
+        grok = next(item for item in decision['hosts'] if item['host'] == 'grok')
+        self.assertEqual((grok['used_percent'], grok['relative_load'], grok['constrained']), (None, None, False))
+        self.assertIn('grok', [item['host'] for item in decision['hosts']])
+        alone = hosts.route(self.memory, 'grok', allowed=['grok'], headroom={'grok': {'reasons': []}})
+        self.assertEqual((alone['host'], alone['reason']), ('grok', 'preferred'))
 
     def test_a_model_limit_does_not_constrain_the_whole_host(self):
         self.add_limit('codex', 10, NOW + timedelta(hours=4))

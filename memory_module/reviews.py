@@ -163,15 +163,15 @@ def insert_run(memory, *, run_id, episode_id, role, host, snapshot, request_key,
 def implementer_host(memory, episode_id, parent_run=None):
     """The host of the work run for a work review, otherwise the host of the latest DecisionBound receipt.
 
-    Codex receipts omit the host field, so the default is codex.
+    A receipt that omits the host is resolved from that session's receipts. Codex receipts omit the host field, so the default is codex.
     """
     if parent_run:
         return read(memory, parent_run)['host']
     if codex_host.exists(memory):
-        row = memory.db.execute("SELECT payload FROM host_receipts WHERE episode_id=? AND event_name='DecisionBound' ORDER BY rowid DESC LIMIT 1",
+        row = memory.db.execute("SELECT session_id, payload FROM host_receipts WHERE episode_id=? AND event_name='DecisionBound' ORDER BY rowid DESC LIMIT 1",
                                 (episode_id,)).fetchone()
         if row:
-            return json.loads(row[0]).get('host') or 'codex'
+            return json.loads(row['payload']).get('host') or codex_host.recording_host(memory, row['session_id'])
     return 'codex'
 
 
@@ -337,6 +337,12 @@ def snapshot(memory, episode_id, role, *, tree=None):
     source_ids = {e['source_id'] for record in records for e in record.get('evidence', [])}
     source_ids |= {latest_source(memory, source_id) for source_id in tuple(source_ids)}
     sources = [memory.read(rid, detail=True) for rid in sorted(source_ids)]
+    from .mcp_evidence import attach
+    known = {source['id'] for source in sources}
+    for source in attach(memory, episode_id, plan.get('paths') or []):
+        if source['id'] not in known:
+            sources.append(source)
+            known.add(source['id'])
     for source in sources:
         if source['source_key'].startswith(RECEIPT_PREFIX):
             source['verification'] = {'receipt_id': source['source_key'][len(RECEIPT_PREFIX):], 'statement': RECEIPT_STATEMENT}
@@ -1180,6 +1186,22 @@ def set_refresh_limit(memory, limit):
         memory.db.execute("INSERT OR REPLACE INTO settings VALUES ('check_refresh_daily_limit',?)", (str(limit),))
 
 
+def daily_automatic_room(memory, today=None):
+    """How many automatic session-start actions remain today.
+
+    Outcome-check refreshes and the one daily distillation share this budget. The limit is
+    check_refresh_daily_limit. A distillation is counted by its SessionDistilled receipt.
+    """
+    if today is None:
+        today = datetime.now(timezone.utc).date().isoformat()
+    used = 0
+    if exists(memory):
+        used += memory.db.execute("SELECT count(*) FROM review_runs WHERE request_key LIKE 'refresh:%' AND created_at>=?", (today,)).fetchone()[0]
+    if memory.db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='host_receipts'").fetchone():
+        used += memory.db.execute("SELECT count(*) FROM host_receipts WHERE event_name='SessionDistilled' AND created_at>=?", (today,)).fetchone()[0]
+    return refresh_limit(memory) - used
+
+
 def refresh_checks(memory, session_id=''):
     """Request the outcome check of finished work whose check is stale or missing, within the daily limit.
 
@@ -1189,10 +1211,8 @@ def refresh_checks(memory, session_id=''):
     if not configured(memory) or not exists(memory):
         return []
     from .planning import card
-    today = datetime.now(timezone.utc).date().isoformat()
     ensure_run_columns(memory)
-    used = memory.db.execute("SELECT count(*) FROM review_runs WHERE request_key LIKE 'refresh:%' AND created_at>=?", (today,)).fetchone()[0]
-    room = refresh_limit(memory) - used
+    room = daily_automatic_room(memory)
     requested = []
     rows = memory.db.execute("SELECT DISTINCT episode_id FROM events WHERE kind='outcome' AND json_extract(payload,'$.completion')='complete' "
                              "AND json_extract(payload,'$.assessment')='good' ORDER BY episode_id").fetchall()

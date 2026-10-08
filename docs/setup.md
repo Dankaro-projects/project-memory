@@ -46,6 +46,18 @@ The hook command carries `--host claude`. Claude Code sends the same field names
 
 Memory tool calls made through any server name ending in the three tool names are not captured as receipts, so a server installed as `project_memory`, `project-memory` or through a plugin creates no recursive noise.
 
+## Cursor
+
+```sh
+project-memory setup --client cursor --trust
+```
+
+Setup adds a `project_memory` entry to `.cursor/mcp.json` and the hook commands to `.cursor/hooks.json`. Both files keep their other entries. The hook command carries `--host cursor`. Cursor hook names are mapped onto the same receipts Claude Code writes: `sessionStart`, `beforeSubmitPrompt`, `preToolUse`, `postToolUse`, `postToolUseFailure`, `stop`, `sessionEnd` and `preCompact`. There is no `Interrupt` hook and no `PostCompact` hook, so `doctor` expects seven events for this client. `postToolUseFailure` is stored as a `PostToolUse` receipt with the failure retained.
+
+`--trust` does not write a separate approval. Cursor loads project hooks from `.cursor/hooks.json` without one. Setup does not add Cursor to agent checks or delegated work. Those stay with Codex and Claude Code until a Cursor probe exists.
+
+Cursor agent transcripts are `~/.cursor/projects/<slug>/agent-transcripts/<id>/<id>.jsonl`. `<slug>` is the absolute project path with the leading slash removed and each remaining slash replaced by a hyphen, so `/home/dankaro` is `home-dankaro`. Session digests read that folder the same way they read `~/.claude/projects` and `~/.codex/sessions`. The usage ledger and headroom routing do not.
+
 ## Other MCP clients
 
 After `project-memory setup --client mcp`, adapt this configuration to the client's documented MCP settings:
@@ -81,7 +93,7 @@ The Codex marketplace in this repository is named `personal` and the Claude Code
 
 ## Verify the connection
 
-`project-memory doctor` starts a separate installed MCP process, initialises it, lists the tools and requests the decision schema. It also checks SQLite integrity, identifies a missing requirements baseline, reports measurement coverage, and shows the observed hook counts and the unconfirmed actions. For a Codex installation it asks the host to list its enabled hooks and trust, and reports missing events, duplicate commands or Claude hooks discovered in Codex. It changes no trust, and an unavailable host produces an explicit unverified result. The expected lifecycle events follow the configured clients: nine for Codex, eight for Claude Code.
+`project-memory doctor` starts a separate installed MCP process, initialises it, lists the tools and requests the decision schema. It also checks SQLite integrity, identifies a missing requirements baseline, reports measurement coverage, and shows the observed hook counts and the unconfirmed actions. For a Codex installation it asks the host to list its enabled hooks and trust, and reports missing events, duplicate commands or Claude hooks discovered in Codex. It changes no trust, and an unavailable host produces an explicit unverified result. The expected lifecycle events follow the configured clients: nine for Codex, eight for Claude Code, seven for Cursor.
 
 A successful subprocess check does not prove that the three tools are available in a task that is already open. In that task, call `memory_get` once with `view: health`. If the tools are absent, open a new task after setup.
 
@@ -100,7 +112,7 @@ uvx project-memory-mcp@0.6.0b16 setup --client codex --trust
 uvx project-memory-mcp@0.6.0b16 doctor
 ```
 
-Use `--client claude --trust` for Claude Code or `--client mcp` for another client. The recorded launcher is versioned, so setup updates the configuration and verifies the new host hashes. Start a new task afterwards. If you use a plugin, update it through the host's plugin manager as well; a task that is already running keeps the tool schemas it loaded.
+Use `--client claude --trust` for Claude Code, `--client cursor --trust` for Cursor, or `--client mcp` for another client. The recorded launcher is versioned, so setup updates the configuration and verifies the new host hashes. Start a new task afterwards. If you use a plugin, update it through the host's plugin manager as well; a task that is already running keeps the tool schemas it loaded.
 
 If setup is interrupted, run the same command again. A small ownership file lets it finish after either configuration write. Remove the connection when any pending setup is complete:
 

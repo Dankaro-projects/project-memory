@@ -168,7 +168,7 @@ class InstallClientsTests(unittest.TestCase):
             self.assertEqual(memory.requirements, ['Keep data locally.'])
         self.assertEqual(install.uninstall(self.project)['removed'], False)
         with self.assertRaises(ValueError):
-            install.uninstall(self.project, 'cursor')
+            install.uninstall(self.project, 'unknown')
 
     def test_legacy_install_file_is_upgraded(self):
         self.setup(client='codex')

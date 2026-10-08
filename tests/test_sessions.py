@@ -316,6 +316,28 @@ class SessionTests(Fixture):
         self.assertNotIn(SENTINEL, context)
         self.assertLessEqual(len(context), codex_host.HOOK_CHARACTERS)
 
+    def test_the_session_start_hook_names_handoff_gaps_for_the_chat(self):
+        self.transcript('s1', self.basic('s1', '2026-09-10'))
+        report = sessions.handoff(self.m, now='2026-09-10T12:00:00+00:00', found=self.found)
+        flag = next(gap for gap in report['gaps'] if gap['type'] == 'possible_unrecorded_direction')
+        self.assertIn('user_action', flag['sentence'])
+        self.assertNotIn('control panel', flag['sentence'])
+        self.assertNotIn(SENTINEL, flag['sentence'])
+        with patch.object(sessions, 'folders', lambda: self.found):
+            output = codex_host.capture(self.m, {'hook_event_name': 'SessionStart', 'session_id': 'fresh', 'source': 'startup'}, host='claude')
+        context = output['hookSpecificOutput']['additionalContext']
+        self.assertIn('Handoff gaps:', context)
+        self.assertIn('user_action session_flag', context)
+        self.assertNotIn('control panel', context)
+        self.assertNotIn(SENTINEL, context)
+        self.assertNotIn(SECRET, context)
+        self.assertNotIn('tokenizer', context)
+        self.assertLessEqual(len(context), codex_host.HOOK_CHARACTERS)
+        from memory_module import machine
+        with patch.object(machine, 'writer', side_effect=AssertionError('session content entered machine memory')):
+            with patch.object(sessions, 'folders', lambda: self.found):
+                codex_host.capture(self.m, {'hook_event_name': 'SessionStart', 'session_id': 'again', 'source': 'startup'}, host='claude')
+
     def test_the_prompt_hook_adds_the_context_hint(self):
         path = self.base / 'live.jsonl'
         path.write_text(usage_line('2026-09-12T10:00:00Z', 400_000) + '\n', encoding='utf-8')
@@ -458,6 +480,43 @@ class SetupReportTests(Fixture):
         self.assertIn('to a subagent that returns a short verdict', context)
         self.assertLessEqual(len(context), codex_host.HOOK_CHARACTERS)
 
+    def test_a_setup_report_omitted_for_lack_of_room_records_a_receipt(self):
+        self.transcript('s1', self.costly())
+        self.assertEqual(sessions.setup_report(self.m, 'current', room=100, found=self.found), '')
+        payload = json.loads(self.m.db.execute(
+            "SELECT payload FROM host_receipts WHERE event_name='ContextProvided'").fetchone()[0])
+        self.assertEqual(payload['part'], 'setup_report')
+        self.assertTrue(payload['cut'])
+        self.assertEqual(payload['characters'], 0)
+        self.assertTrue(payload['record_ids'])
+
+    def test_a_small_room_with_nothing_to_report_records_no_cut(self):
+        self.transcript('s1', self.basic())
+        self.assertEqual(sessions.setup_report(self.m, 'current', room=100, found=self.found), '')
+        self.assertEqual(self.m.db.execute(
+            "SELECT count(*) FROM host_receipts WHERE event_name='ContextProvided'").fetchone()[0], 0)
+
+    def test_session_start_keeps_the_setup_report_when_earlier_parts_are_long(self):
+        from memory_module.coverage import defer
+        from memory_module.mcp import write
+        self.transcript('s1', self.costly())
+        source = self.m.source('plan-evidence', 'Plan', 'Plan.', 'The user asked for the work.', 'user', subject='code')
+        evidence = [{'source_id': source['id'], 'reason': 'The user asked for the work.'}]
+        for index in range(3):
+            write(self.m, 'plan', f'plan-{index}', {
+                'title': f'Work item {index} ' + 't' * 60,
+                'objective': 'Finish the work.', 'criterion': 'The work is finished.', 'subject': 'code',
+                'actor': 'fixture', 'evidence': evidence,
+                'payload': {'state': 'ready', 'scope': 'This item.', 'autonomy': 'act',
+                            'next_action': 'Continue the recorded next action. ' + 'n' * 120,
+                            'reason': 'It remains.', 'priority': 'high', 'owner': 'human'}})
+        defer(self.m, 'old', 'coverage', 'notice-long', 'Notice ' + 'n' * 2000)
+        with patch.object(sessions, 'folders', lambda: self.found):
+            output = codex_host.capture(self.m, {'hook_event_name': 'SessionStart', 'session_id': 'fresh', 'source': 'startup'}, host='claude')
+        context = output['hookSpecificOutput']['additionalContext']
+        self.assertIn('Setup report: the last session', context)
+        self.assertLessEqual(len(context), codex_host.HOOK_CHARACTERS)
+
     def test_the_tokens_kept_out_by_subagents_outlast_the_server_names(self):
         lines = self.costly()
         lines[0] = attachment_line('2026-09-10T10:00:00Z', {'type': 'deferred_tools_delta', 'addedNames': [
@@ -497,6 +556,73 @@ class SetupReportTests(Fixture):
             self.assertEqual(mcp.session_cost(self.m, 'close', {}, 'live-session'), 'Start a fresh session.')
             self.assertEqual(mcp.session_cost(self.m, 'close', {}, None), '')
             self.assertEqual(mcp.session_cost(self.m, 'source', {}, 'live-session'), '')
+
+
+PROPOSAL = {'proposals': [{'slot': 'next_action', 'text': 'Add tests for the tokenizer.', 'pointers': [8], 'confidence': 'medium',
+                           'when': '', 'do': '', 'because': '', 'exceptions': ''}]}
+
+
+class DistillCapTests(Fixture):
+    """Session start distills the latest undigested session once a day, inside the check budget."""
+
+    def proposals(self, host, packet, timeout):
+        self.packets.append(packet)
+        return PROPOSAL
+
+    def setUp(self):
+        super().setUp()
+        self.packets = []
+        from memory_module import reviews
+        reviews.configure(self.m, self.root, 'claude')
+
+    def test_the_latest_undigested_session_is_distilled_once_per_day(self):
+        self.transcript('older', self.basic('older', '2026-09-10'))
+        self.transcript('newer', self.basic('newer', '2026-09-11'))
+        sessions.collect(self.m, found=self.found)
+        rows = sessions.digests(self.m)
+        self.assertEqual([row['session_id'] for row in rows], ['newer', 'older'])
+        sessions.distill(self.m, session_key=rows[0]['session_key'], host='claude', found=self.found,
+                         runner=lambda host, packet, timeout: PROPOSAL)
+        self.packets.clear()
+        first = sessions.distill_latest(self.m, session_id='fresh', runner=self.proposals, found=self.found)
+        self.assertEqual(first['session_key'], rows[1]['session_key'])
+        self.assertNotIn(SECRET, self.packets[0])
+        second = sessions.distill_latest(self.m, session_id='fresh', runner=self.proposals, found=self.found)
+        self.assertIsNone(second)
+        self.assertEqual(len(self.packets), 1)
+        with patch.object(sessions, '_launch_distill') as launched:
+            with patch.object(sessions, 'folders', lambda: self.found):
+                output = codex_host.capture(self.m, {'hook_event_name': 'SessionStart', 'session_id': 'fresh',
+                                                     'source': 'startup'}, host='claude')
+        self.assertEqual(launched.call_count, 0)
+        context = output['hookSpecificOutput']['additionalContext']
+        self.assertNotIn(SENTINEL, context)
+        self.assertNotIn('Add tests for the tokenizer.', context)
+        self.assertLessEqual(len(context), codex_host.HOOK_CHARACTERS)
+
+    def test_a_spent_check_budget_skips_distillation(self):
+        from memory_module import reviews
+        self.transcript('s1', self.basic())
+        reviews.set_refresh_limit(self.m, 0)
+        self.assertIsNone(sessions.distill_latest(self.m, session_id='fresh', runner=self.proposals, found=self.found))
+        self.assertEqual(self.packets, [])
+        reviews.set_refresh_limit(self.m, 1)
+        episode = self.m.start('Parser', 'Build the parser.', 'code', 'The parser works.', subject='code')
+        reviews.ensure_run_columns(self.m)
+        now = self.m.now()
+        self.m.db.execute(
+            'INSERT INTO review_runs (id,episode_id,role,signature,host,session_id,state,created_at,updated_at,request_key,snapshot,error) '
+            'VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
+            ('check_budget', episode['id'], 'outcome', 'sig', 'claude', 'old', 'pass', now, now,
+             'refresh:' + episode['id'] + ':once', '{}', ''))
+        self.assertIsNone(sessions.distill_latest(self.m, session_id='fresh', runner=self.proposals, found=self.found))
+        self.assertEqual(self.packets, [])
+
+    def test_the_current_session_is_not_distilled(self):
+        self.transcript('fresh', self.basic('fresh'))
+        self.assertIsNone(sessions.distill_latest(self.m, session_id='fresh', runner=self.proposals, found=self.found))
+        self.assertEqual(self.packets, [])
+
 
 if __name__ == '__main__':
     unittest.main()

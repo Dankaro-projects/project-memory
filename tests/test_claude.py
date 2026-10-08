@@ -41,7 +41,10 @@ class ClaudeCaptureTests(unittest.TestCase):
         self.assertNotIn('Interrupt',codex_host.HOST_EVENTS['claude'])
         with self.assertRaises(InvalidRecord):self.capture('Interrupt')
         with self.assertRaises(InvalidRecord):self.capture('Notification')
-        with self.assertRaises(InvalidRecord):codex_host.capture(self.m,self.event('SessionStart'),host='cursor')
+        captured=codex_host.capture(self.m,self.event('SessionStart'),host='cursor')
+        self.assertIn('claude-session',captured['hookSpecificOutput']['additionalContext'])
+        self.assertEqual(captured['additional_context'],captured['hookSpecificOutput']['additionalContext'])
+        self.assertEqual(codex_host.read_receipt(self.m,codex_host.status(self.m)['recent'][0]['id'])['payload']['host'],'cursor')
     def test_post_tool_use_failure_closes_the_unconfirmed_receipt_and_keeps_the_failure(self):
         d=self.decision();self.capture('PreToolUse',tool_input={'command':'git push origin main'})
         self.assertEqual(codex_host.status(self.m)['unconfirmed_total'],1)

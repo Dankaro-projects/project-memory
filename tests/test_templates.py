@@ -90,7 +90,7 @@ class ScaffoldTests(unittest.TestCase):
         with self.assertRaises(InvalidRecord):
             templates.scaffold(self.base / 'other', 'website', git=False)
         with self.assertRaises(InvalidRecord):
-            templates.scaffold(self.base / 'other', 'product', clients=['cursor'], git=False)
+            templates.scaffold(self.base / 'other', 'product', clients=['unknown'], git=False)
 
     def test_cli_init_creates_a_project(self):
         project = self.base / 'automation'

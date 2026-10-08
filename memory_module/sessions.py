@@ -1,6 +1,6 @@
 """Sessions into memory (section 17 of the build specification).
 
-Finished Claude Code and Codex sessions stay on disk in full. This module reads the sessions of one project into
+Finished Claude Code, Codex and Cursor sessions stay on disk in full. This module reads the sessions of one project into
 digests, flags possible directions that no record followed, stores distilled proposals until the user decides them,
 reports the gaps before a fresh session starts and builds the summary of earlier sessions for a new one.
 
@@ -34,6 +34,7 @@ START_SECONDS = 1.5
 START_DIGESTS = 3
 START_CHARACTERS = 700
 START_TITLES = 3
+HANDOFF_SHOWN = 3
 CONTEXT_HINT_TOKENS = 150_000
 CONTEXT_HINT_STEP = 50_000
 # The setup report of the session start: its length and what makes an earlier session worth reporting.
@@ -179,6 +180,19 @@ def claude_folder_name(root):
     return re.sub(r'[^A-Za-z0-9]', '-', str(root))
 
 
+def cursor_project_slug(root):
+    """Cursor names the project folder after its absolute path.
+
+    The leading slash is removed and each remaining slash becomes a hyphen.
+    `/home/dankaro` is `home-dankaro`. Transcripts of that project are
+    `~/.cursor/projects/home-dankaro/agent-transcripts/<id>/<id>.jsonl`.
+    """
+    text = str(Path(root).resolve()).replace('\\', '/')
+    if text.startswith('/'):
+        text = text[1:]
+    return text.replace('/', '-')
+
+
 def _root(memory):
     from .arch_base import project_root
     return Path(project_root(memory)).resolve()
@@ -247,6 +261,21 @@ def candidates(memory, *, found=None, mentions=True):
                 if cwd and (Path(cwd) == root or root in Path(cwd).parents):
                     reason = 'working_folder'
             result.append((path, 'codex', reason))
+    cursor = Path(found['cursor']) if found.get('cursor') else None
+    if cursor and cursor.is_dir():
+        own_name = cursor_project_slug(root)
+        folders_read = [p for p in cursor.iterdir() if (p / 'agent-transcripts').is_dir()] if mentions else []
+        if not mentions and (cursor / own_name / 'agent-transcripts').is_dir():
+            folders_read = [cursor / own_name]
+        for folder in folders_read:
+            inside = folder.name == own_name
+            for path in (folder / 'agent-transcripts').glob('*/*.jsonl'):
+                if inside:
+                    result.append((path, 'cursor', 'working_folder'))
+                elif path.stem in receipts:
+                    result.append((path, 'cursor', 'receipts'))
+                else:
+                    result.append((path, 'cursor', known.get(str(path))))
     def modified(item):
         try:
             return item[0].stat().st_mtime
@@ -513,6 +542,46 @@ def image_tokens(source):
     return IMAGE_TOKENS
 
 
+class CursorReader(Reader):
+    """Cursor agent transcripts: one JSON object per line, with role and message.content.
+
+    A conversation is `<id>/<id>.jsonl` under `agent-transcripts`. The file names tool calls
+    but not their results or call ids, so an edit records its path from the call itself.
+    A shell call has no exit code here, so it is not stored as a failure.
+    """
+
+    host = 'cursor'
+    EDIT_NAMES = EDIT_TOOLS | {'StrReplace', 'Delete'}
+
+    def line(self, value, line):
+        if not isinstance(value, dict):
+            return
+        if isinstance(value.get('cwd'), str) and not self.data['cwd']:
+            self.data['cwd'] = value['cwd']
+        if isinstance(value.get('session_id'), str) and not self.data['session_id']:
+            self.data['session_id'] = value['session_id']
+        role, message = value.get('role'), value.get('message') if isinstance(value.get('message'), dict) else None
+        if role not in {'user', 'assistant'} or not message:
+            return
+        at = self.seen(value.get('timestamp'))
+        content = message.get('content')
+        if role == 'user':
+            if isinstance(content, str):
+                self.message(content, line, at)
+            elif isinstance(content, list):
+                text = '\n'.join(part.get('text', '') for part in content if isinstance(part, dict) and part.get('type') == 'text')
+                self.message(text, line, at)
+            return
+        for index, part in enumerate(content if isinstance(content, list) else []):
+            if not isinstance(part, dict) or part.get('type') != 'tool_use':
+                continue
+            name = part.get('name') or ''
+            arguments = part.get('input') if isinstance(part.get('input'), dict) else {}
+            self.call(part.get('id') or f'line{line}:{index}:{name}', name, arguments, line, at)
+            if name in self.EDIT_NAMES:
+                self.file(arguments.get('path') or arguments.get('file_path') or arguments.get('notebook_path'))
+
+
 class CodexReader(Reader):
     host = 'codex'
 
@@ -549,7 +618,7 @@ class CodexReader(Reader):
             self.result(payload.get('call_id'), text, bool(code and code.group(1) != '0'), line, at)
 
 
-READERS = {'claude': ClaudeReader, 'codex': CodexReader}
+READERS = {'claude': ClaudeReader, 'codex': CodexReader, 'cursor': CursorReader}
 
 
 def _related(memory, data, path, host, reason, root):
@@ -983,7 +1052,11 @@ def run_host(host, packet, timeout):
 
 
 def distill(memory, *, session_key=None, host=None, timeout=600, runner=None, found=None):
-    """Send one digest to a review role host and store its proposals as pending. Only the user starts this."""
+    """Send one digest to a review role host and store its proposals as pending.
+
+    The user starts this from the command. Session start also starts the latest undigested session once per day,
+    inside the same daily budget as automatic checks.
+    """
     from . import hosts
     collect(memory, found=found)
     ensure(memory)
@@ -1010,7 +1083,70 @@ def distill(memory, *, session_key=None, host=None, timeout=600, runner=None, fo
                 memory.now(), None, None, None, None, run))
             stored.append(pid)
     return {'session_key': session_key, 'host': chosen, 'run': run, 'proposals': len(stored), 'ids': stored,
-            'note': 'The proposals are pending. Nothing is recorded until you accept a proposal in the control panel.'}
+            'note': 'The proposals are pending. Nothing is recorded until you accept a proposal in the chat with user_action session_proposal.'}
+
+
+def _launch_distill(memory, session_key):
+    """Start distillation in another process, so session start does not wait for the host."""
+    import threading
+    from .install import python_args
+    process = subprocess.Popen(
+        python_args('memory_module.cli') + ['sessions', 'distill', '--db', str(memory.path), '--session', session_key],
+        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=os.name != 'nt')
+    threading.Thread(target=process.wait, daemon=True).start()
+
+
+def _undigested(memory, exclude_session):
+    """The newest digest with a source, no proposals and no distillation receipt, other than the session now starting."""
+    if not exists(memory):
+        return None
+    if not memory.db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='host_receipts'").fetchone():
+        return None
+    return memory.db.execute(
+        "SELECT session_key FROM session_digests d WHERE d.source_id IS NOT NULL AND d.session_id IS NOT ? "
+        "AND NOT EXISTS (SELECT 1 FROM session_proposals p WHERE p.session_key=d.session_key) "
+        "AND NOT EXISTS (SELECT 1 FROM host_receipts h WHERE h.event_name='SessionDistilled' "
+        "AND json_extract(h.payload,'$.session_key')=d.session_key) ORDER BY d.last_at DESC LIMIT 1",
+        (exclude_session,)).fetchone()
+
+
+def distill_latest(memory, *, session_id='', runner=None, found=None):
+    """Distill the latest undigested session once per UTC day, inside the daily check budget.
+
+    The budget is the one refresh_checks() spends. This runs from session start. It is not a second scheduler.
+    A supplied runner is used in tests; otherwise the distillation runs in another process.
+    """
+    from . import codex_host, reviews
+    if not reviews.configured(memory) or not enabled(memory):
+        return None
+    if reviews.daily_automatic_room(memory) < 1:
+        return None
+    today = datetime.now(timezone.utc).date().isoformat()
+    if memory.db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='host_receipts'").fetchone():
+        already = memory.db.execute(
+            "SELECT count(*) FROM host_receipts WHERE event_name='SessionDistilled' AND created_at>=?", (today,)).fetchone()[0]
+        if already:
+            return None
+    try:
+        collect(memory, found=found, limit=START_FILES, seconds=START_SECONDS, mentions=False)
+    except (OSError, ValueError, InvalidRecord):
+        pass
+    row = _undigested(memory, session_id)
+    if not row:
+        return None
+    try:
+        with memory._write():
+            codex_host.receipt(memory, session_id=session_id or row['session_key'], event_name='SessionDistilled',
+                               payload={'session_key': row['session_key'], 'day': today}, key='distill:' + today)
+    except Conflict:
+        return None
+    if runner is None:
+        _launch_distill(memory, row['session_key'])
+        return {'session_key': row['session_key'], 'started': True}
+    try:
+        return distill(memory, session_key=row['session_key'], runner=runner, found=found)
+    except (OSError, ValueError, InvalidRecord, Conflict):
+        return {'session_key': row['session_key'], 'started': False}
 
 
 def proposals(memory, *, status=None, session_key=None, limit=50):
@@ -1096,9 +1232,10 @@ def digests(memory, *, limit=20, exclude=None):
 
 # Handoff check (section 17.3).
 
-def handoff(memory, *, session_key=None, now=None, found=None):
+def handoff(memory, *, session_key=None, now=None, found=None, collect_first=True):
     """Report ready, or list what is not yet recorded before a fresh session starts."""
-    collect(memory, now=now, found=found)
+    if collect_first:
+        collect(memory, now=now, found=found)
     gaps = []
     row = None
     if exists(memory):
@@ -1147,9 +1284,47 @@ def handoff(memory, *, session_key=None, now=None, found=None):
                          'sentence': f'The session changed {relative}, and no record cites it. Capture it with memory_write document and cite it.'})
     for flag in flags(memory, session_key=row['session_key'], status='open') if row else []:
         gaps.append({'type': 'possible_unrecorded_direction', 'id': flag['id'],
-                     'sentence': f'A message at line {flag["line"]} may hold a direction that no record followed. Confirm or dismiss it in the control panel. The flag has low confidence.'})
+                     'sentence': f'A message at line {flag["line"]} may hold a direction that no record followed. '
+                                 f'Confirm or dismiss it in the chat with user_action session_flag. The flag has low confidence.'})
     return {'status': 'gaps' if gaps else 'ready', 'session_key': row['session_key'] if row else None, 'gaps': gaps[:100],
             'gaps_total': len(gaps)}
+
+
+def handoff_context(memory, *, room, found=None):
+    """The top handoff gaps for session start, aimed at user_action in the chat, or an empty string.
+
+    The sentences name records and line numbers. They do not quote the transcript.
+    """
+    if room < 80 or not enabled(memory):
+        return ''
+    try:
+        collect(memory, found=found, limit=START_FILES, seconds=START_SECONDS, mentions=False)
+    except (OSError, ValueError, InvalidRecord):
+        pass
+    try:
+        report = handoff(memory, found=found, collect_first=False)
+    except (OSError, ValueError, InvalidRecord):
+        return ''
+    chosen = []
+    for gap in report['gaps']:
+        sentence = redact(gap['sentence']).replace('\n', ' ').strip()
+        if sentence:
+            chosen.append(sentence if sentence.endswith(('.', '…')) else sentence + '.')
+        if len(chosen) == HANDOFF_SHOWN:
+            break
+    if not chosen:
+        return ''
+    head = 'Handoff gaps:'
+    tail = ' Record these in the chat. Confirm or dismiss a flag with user_action session_flag.'
+    shown = [' ' + sentence for sentence in chosen]
+    omitted = report['gaps_total'] - len(shown)
+    def text():
+        more = f' {omitted} more.' if omitted else ''
+        return head + ''.join(shown) + more + tail
+    while shown and len(text()) > room:
+        shown.pop()
+        omitted += 1
+    return text() if shown else ''
 
 
 # Hooks: the summary of earlier sessions (section 17.10) and the context size hint (section 17.2).
@@ -1168,8 +1343,8 @@ def start_summary(memory, session_id, *, room, found=None):
         return ''
     counts = precision(memory)
     pending = memory.db.execute("SELECT count(*) FROM session_proposals WHERE status='pending'").fetchone()[0]
-    ending = (f' Open flagged directions: {counts["open"]}. Pending proposals: {pending}. Read a digest with memory_get record; '
-              'see flags and proposals in the Sessions view of the control panel, or run project-memory handoff.')
+    ending = (f' Open flagged directions: {counts["open"]}. Pending proposals: {pending}. Read a digest with memory_get record. '
+              'Confirm or dismiss a flag in the chat with user_action session_flag, and accept or reject a proposal with user_action session_proposal.')
     if not collected.get('complete', True):
         ending += ' Collection is incomplete; project-memory sessions collect finishes it.'
     lines = []
@@ -1214,10 +1389,10 @@ def setup_report(memory, session_id, *, room, found=None):
 
     It is empty unless that session loaded servers it never used while starting large, read large results in the main
     conversation, or grew past the running warning. Measured figures are stated as such and estimates as estimates.
+    When a report exists and the room cannot carry it, a ContextProvided receipt records that it was cut.
     """
     from . import codex_host
-    limit = min(REPORT_CHARACTERS, room)
-    if not enabled(memory) or limit < 200:
+    if not enabled(memory):
         return ''
     try:
         collect(memory, found=found, limit=START_FILES, seconds=START_SECONDS, mentions=False)
@@ -1235,6 +1410,15 @@ def setup_report(memory, session_id, *, room, found=None):
     large = cost['image_tokens'] + cost['large_result_tokens']
     started, peak = cost['first_context'] or 0, cost['peak_context']
     if not (unused and started >= REPORT_START_TOKENS or large >= REPORT_LARGE_TOKENS or peak >= REPORT_PEAK_TOKENS):
+        return ''
+    limit = min(REPORT_CHARACTERS, room)
+    def cut_receipt():
+        with memory._write():
+            codex_host.receipt(memory, session_id=session_id, event_name='ContextProvided',
+                               payload={'part': 'setup_report', 'record_ids': [item['source_id']], 'characters': 0, 'cut': True},
+                               key=dumps([session_id, 'setup_report', 'cut', memory.now()]))
+    if limit < 200:
+        cut_receipt()
         return ''
     head = (f'Setup report: the last session ({(item["last_at"] or "")[:10]}) started at {_thousands(started)} tokens '
             f'and reached {_thousands(peak)} over {_count(cost["calls"], "call")}.')
@@ -1265,6 +1449,7 @@ def setup_report(memory, session_id, *, room, found=None):
             result = text
             break
     if not result:
+        cut_receipt()
         return ''
     with memory._write():
         codex_host.receipt(memory, session_id=session_id, event_name='ContextProvided',
@@ -1382,6 +1567,9 @@ def _transcripts(session_id, found):
     codex = Path(found['codex']) if found.get('codex') else None
     if codex and codex.is_dir():
         paths += [(path, 'codex') for path in codex.rglob('*' + session_id + '.jsonl')]
+    cursor = Path(found['cursor']) if found.get('cursor') else None
+    if cursor and cursor.is_dir():
+        paths += [(path, 'cursor') for path in cursor.glob('*/agent-transcripts/*/' + session_id + '.jsonl')]
     return paths
 
 
