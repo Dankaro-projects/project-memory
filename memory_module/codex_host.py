@@ -1,4 +1,4 @@
-"""Mechanical host receipts from Codex or Claude Code, separate from interpreted decisions and lessons."""
+"""Mechanical host receipts from Codex, Claude Code or Cursor, separate from interpreted decisions and lessons."""
 import argparse
 import hashlib
 import json
@@ -28,11 +28,19 @@ CREATE TABLE IF NOT EXISTS adapter_requests (
 );
 '''
 EVENTS = {'SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'Stop', 'Interrupt', 'SessionEnd', 'PreCompact', 'PostCompact'}
-HOSTS = {'codex', 'claude'}
-# Claude Code has no Interrupt hook. An interrupted tool call leaves its PreToolUse receipt unconfirmed instead.
-HOST_EVENTS = {'codex': EVENTS, 'claude': EVENTS - {'Interrupt'}}
-# Claude Code events that carry the same meaning as a canonical event. The original name stays in the payload.
+HOSTS = {'codex', 'claude', 'cursor'}
+# Claude Code and Cursor have no Interrupt hook. Cursor has no PostCompact hook. An interrupted tool call leaves
+# its PreToolUse receipt unconfirmed instead.
+HOST_EVENTS = {'codex': EVENTS, 'claude': EVENTS - {'Interrupt'}, 'cursor': EVENTS - {'Interrupt', 'PostCompact'}}
+# Claude Code and Cursor events that carry the same meaning as a canonical event. The original name stays in the payload.
 CLAUDE_ALIASES = {'PostToolUseFailure': 'PostToolUse'}
+# Cursor writes these names in .cursor/hooks.json. Capture stores the canonical event.
+CURSOR_HOOK_EVENTS = {
+    'sessionStart': 'SessionStart', 'beforeSubmitPrompt': 'UserPromptSubmit', 'preToolUse': 'PreToolUse',
+    'postToolUse': 'PostToolUse', 'postToolUseFailure': 'PostToolUseFailure', 'stop': 'Stop',
+    'sessionEnd': 'SessionEnd', 'preCompact': 'PreCompact'}
+PROMPT_HOSTS = {'claude', 'cursor'}
+HOST_TOOL_LABEL = {'claude': 'Claude Code', 'cursor': 'Cursor', 'codex': 'Codex'}
 MEMORY_TOOL = re.compile(r'^mcp__.+__memory_(context|get|write)$')
 # The hook context of a host stays within this many characters, as it did before rules were composed.
 HOOK_CHARACTERS = 2500
@@ -472,11 +480,53 @@ def setup_context(memory, refreshed):
     return text
 
 
+def normalize_cursor_event(event):
+    """Map a Cursor hook payload onto the fields capture already reads for Claude Code."""
+    if not isinstance(event, dict):
+        return event
+    mapped = dict(event)
+    raw = mapped.get('hook_event_name')
+    if raw in CURSOR_HOOK_EVENTS:
+        mapped['hook_event_name'] = CURSOR_HOOK_EVENTS[raw]
+    if not mapped.get('session_id'):
+        for key in ('conversation_id', 'composer_id', 'generation_id'):
+            if isinstance(mapped.get(key), str) and mapped[key]:
+                mapped['session_id'] = mapped[key]
+                break
+    if 'prompt' not in mapped:
+        for key in ('user_prompt', 'prompt_text'):
+            if isinstance(mapped.get(key), str):
+                mapped['prompt'] = mapped[key]
+                break
+    if 'tool_name' not in mapped and isinstance(mapped.get('tool'), str):
+        mapped['tool_name'] = mapped['tool']
+    if 'tool_input' not in mapped and isinstance(mapped.get('input'), dict):
+        mapped['tool_input'] = mapped['input']
+    return mapped
+
+
+def cursor_hook_result(result):
+    """Cursor reads additional_context. The Claude-shaped packet keeps the same session text."""
+    if not isinstance(result, dict):
+        return result
+    context = (result.get('hookSpecificOutput') or {}).get('additionalContext')
+    if not context or 'additional_context' in result:
+        return result
+    return {**result, 'additional_context': context}
+
+
 def capture(memory, event, host='codex'):
+    if host == 'cursor':
+        event = normalize_cursor_event(event)
+    result = _capture(memory, event, host)
+    return cursor_hook_result(result) if host == 'cursor' else result
+
+
+def _capture(memory, event, host='codex'):
     if host not in HOSTS:
         raise InvalidRecord('Unsupported host.')
     host_event = event.get('hook_event_name')
-    name = CLAUDE_ALIASES.get(host_event, host_event) if host == 'claude' else host_event
+    name = CLAUDE_ALIASES.get(host_event, host_event) if host in PROMPT_HOSTS else host_event
     if name not in HOST_EVENTS[host]:
         raise InvalidRecord(f'Unsupported {host} hook event.')
     session = _text(event.get('session_id'), 'session_id', 200)
@@ -553,9 +603,9 @@ def capture(memory, event, host='codex'):
         # Claude Code delivers an injected turn, such as Stop hook feedback or an agent report, under the prompt identifier
         # of the turn it follows. The text keeps them apart; an identical redelivery still meets its earlier receipt.
         # Codex gives every turn its own identifier, so a changed prompt under one identifier stays a conflict there.
-        if host == 'claude' and name == 'UserPromptSubmit' and 'prompt' in payload: key.append(payload['prompt'].get('sha256'))
+        if host in PROMPT_HOSTS and name == 'UserPromptSubmit' and 'prompt' in payload: key.append(payload['prompt'].get('sha256'))
         # Without a turn or prompt identifier, repeated lifecycle events in one session must not collide.
-        if host == 'claude' and not turn and name not in {'PreToolUse', 'PostToolUse'}: key.append(memory.now())
+        if host in PROMPT_HOSTS and not turn and name not in {'PreToolUse', 'PostToolUse'}: key.append(memory.now())
         prior_id='host_'+_digest(dumps(key))[:32]
         prior=memory.db.execute('SELECT id FROM host_receipts WHERE id=?',(prior_id,)).fetchone()
         if prior:
@@ -571,7 +621,7 @@ def capture(memory, event, host='codex'):
         if name == 'PreToolUse' and decision:
             # One interpreted decision can have several mechanically captured tool calls.
             if not memory.db.execute("SELECT 1 FROM events WHERE decision_id=? AND kind='action'", (decision,)).fetchone():
-                action = memory.record(ep,'action',{'action':f'Execute the recorded decision through {"Claude Code" if host == "claude" else "Codex"} tools.', 'host_reference':rid},
+                action = memory.record(ep,'action',{'action':f'Execute the recorded decision through {HOST_TOOL_LABEL.get(host, "Codex")} tools.', 'host_reference':rid},
                     expected_version=memory.episode(ep)['version'], request_key=rid+':action', actor=host+'-hooks', decision_id=decision)
                 action_version = action['version']
         if name == 'PreToolUse':
@@ -670,7 +720,7 @@ def capture(memory, event, host='codex'):
         def response(context):
             complete = context + (' ' + scope if scope else '') + (' ' + reminder if reminder else '') + (' ' + hint if hint else '')
             return {'hookSpecificOutput':{'hookEventName':host_event,'additionalContext':complete}}
-        if host == 'claude' and not selected:
+        if host in PROMPT_HOSTS and not selected:
             # Claude Code keeps the SessionStart context until compaction, when SessionStart repeats it.
             # Each prompt then only reports state that changed: open receipts or an unresolved decision.
             if not state['unconfirmed_total'] and not state['active']:
@@ -792,6 +842,8 @@ def main():
         if len(raw)>2_000_000: raise InvalidRecord('Hook payload exceeds 2 MB; capture failed.')
         event=json.loads(raw)
         if not isinstance(event,dict): raise InvalidRecord('Hook payload must be an object.')
+        if args.host == 'cursor':
+            event = normalize_cursor_event(event)
         with Memory(args.db) as memory:
             memory.db.execute('PRAGMA busy_timeout=750')
             from .capture_errors import recover

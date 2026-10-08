@@ -159,7 +159,7 @@ def main(argv=None):
         p.add_argument('--project',default=os.environ.get('PROJECT_MEMORY_PROJECT',os.getcwd()))
         p.add_argument('--db')
         if name=='setup':
-            p.add_argument('--client',choices=['mcp','codex','claude'],default='mcp');p.add_argument('--trust',action='store_true')
+            p.add_argument('--client',choices=['mcp','codex','claude','cursor'],default='mcp');p.add_argument('--trust',action='store_true')
             p.add_argument('--no-view',action='store_true');p.add_argument('--requirement',action='append');p.add_argument('--document',action='append',default=[])
         elif name=='view':
             p.add_argument('--output');p.add_argument('--no-open',action='store_true');p.add_argument('--include-bodies',action='store_true')
@@ -167,7 +167,7 @@ def main(argv=None):
         elif name in {'sync','check'}:
             p.add_argument('--limit',type=int,default=100);p.add_argument('--offset',type=int,default=0)
         elif name=='uninstall':
-            p.add_argument('--client',choices=['mcp','codex','claude'],help='Remove only this client. Without it, every client is removed.')
+            p.add_argument('--client',choices=['mcp','codex','claude','cursor'],help='Remove only this client. Without it, every client is removed.')
         elif name=='review':
             p.add_argument('--wait');p.add_argument('--episode');p.add_argument('--role',choices=['outcome','intent','recovery'],default='outcome')
             p.add_argument('--cancel');p.add_argument('--retry',action='store_true')
@@ -185,7 +185,7 @@ def main(argv=None):
     init=sub.add_parser('init',help='Create a project from a template: product, engagement or automation.')
     init.add_argument('path')
     init.add_argument('--template',required=True,choices=['product','engagement','automation'])
-    init.add_argument('--client',action='append',choices=['mcp','codex','claude'],default=[])
+    init.add_argument('--client',action='append',choices=['mcp','codex','claude','cursor'],default=[])
     init.add_argument('--name')
     init.add_argument('--no-git',action='store_true')
     init.add_argument('--no-view',action='store_true')

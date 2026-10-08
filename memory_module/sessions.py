@@ -1,6 +1,6 @@
 """Sessions into memory (section 17 of the build specification).
 
-Finished Claude Code and Codex sessions stay on disk in full. This module reads the sessions of one project into
+Finished Claude Code, Codex and Cursor sessions stay on disk in full. This module reads the sessions of one project into
 digests, flags possible directions that no record followed, stores distilled proposals until the user decides them,
 reports the gaps before a fresh session starts and builds the summary of earlier sessions for a new one.
 
@@ -180,6 +180,19 @@ def claude_folder_name(root):
     return re.sub(r'[^A-Za-z0-9]', '-', str(root))
 
 
+def cursor_project_slug(root):
+    """Cursor names the project folder after its absolute path.
+
+    The leading slash is removed and each remaining slash becomes a hyphen.
+    `/home/dankaro` is `home-dankaro`. Transcripts of that project are
+    `~/.cursor/projects/home-dankaro/agent-transcripts/<id>/<id>.jsonl`.
+    """
+    text = str(Path(root).resolve()).replace('\\', '/')
+    if text.startswith('/'):
+        text = text[1:]
+    return text.replace('/', '-')
+
+
 def _root(memory):
     from .arch_base import project_root
     return Path(project_root(memory)).resolve()
@@ -248,6 +261,21 @@ def candidates(memory, *, found=None, mentions=True):
                 if cwd and (Path(cwd) == root or root in Path(cwd).parents):
                     reason = 'working_folder'
             result.append((path, 'codex', reason))
+    cursor = Path(found['cursor']) if found.get('cursor') else None
+    if cursor and cursor.is_dir():
+        own_name = cursor_project_slug(root)
+        folders_read = [p for p in cursor.iterdir() if (p / 'agent-transcripts').is_dir()] if mentions else []
+        if not mentions and (cursor / own_name / 'agent-transcripts').is_dir():
+            folders_read = [cursor / own_name]
+        for folder in folders_read:
+            inside = folder.name == own_name
+            for path in (folder / 'agent-transcripts').glob('*/*.jsonl'):
+                if inside:
+                    result.append((path, 'cursor', 'working_folder'))
+                elif path.stem in receipts:
+                    result.append((path, 'cursor', 'receipts'))
+                else:
+                    result.append((path, 'cursor', known.get(str(path))))
     def modified(item):
         try:
             return item[0].stat().st_mtime
@@ -514,6 +542,46 @@ def image_tokens(source):
     return IMAGE_TOKENS
 
 
+class CursorReader(Reader):
+    """Cursor agent transcripts: one JSON object per line, with role and message.content.
+
+    A conversation is `<id>/<id>.jsonl` under `agent-transcripts`. The file names tool calls
+    but not their results or call ids, so an edit records its path from the call itself.
+    A shell call has no exit code here, so it is not stored as a failure.
+    """
+
+    host = 'cursor'
+    EDIT_NAMES = EDIT_TOOLS | {'StrReplace', 'Delete'}
+
+    def line(self, value, line):
+        if not isinstance(value, dict):
+            return
+        if isinstance(value.get('cwd'), str) and not self.data['cwd']:
+            self.data['cwd'] = value['cwd']
+        if isinstance(value.get('session_id'), str) and not self.data['session_id']:
+            self.data['session_id'] = value['session_id']
+        role, message = value.get('role'), value.get('message') if isinstance(value.get('message'), dict) else None
+        if role not in {'user', 'assistant'} or not message:
+            return
+        at = self.seen(value.get('timestamp'))
+        content = message.get('content')
+        if role == 'user':
+            if isinstance(content, str):
+                self.message(content, line, at)
+            elif isinstance(content, list):
+                text = '\n'.join(part.get('text', '') for part in content if isinstance(part, dict) and part.get('type') == 'text')
+                self.message(text, line, at)
+            return
+        for index, part in enumerate(content if isinstance(content, list) else []):
+            if not isinstance(part, dict) or part.get('type') != 'tool_use':
+                continue
+            name = part.get('name') or ''
+            arguments = part.get('input') if isinstance(part.get('input'), dict) else {}
+            self.call(part.get('id') or f'line{line}:{index}:{name}', name, arguments, line, at)
+            if name in self.EDIT_NAMES:
+                self.file(arguments.get('path') or arguments.get('file_path') or arguments.get('notebook_path'))
+
+
 class CodexReader(Reader):
     host = 'codex'
 
@@ -550,7 +618,7 @@ class CodexReader(Reader):
             self.result(payload.get('call_id'), text, bool(code and code.group(1) != '0'), line, at)
 
 
-READERS = {'claude': ClaudeReader, 'codex': CodexReader}
+READERS = {'claude': ClaudeReader, 'codex': CodexReader, 'cursor': CursorReader}
 
 
 def _related(memory, data, path, host, reason, root):
@@ -1499,6 +1567,9 @@ def _transcripts(session_id, found):
     codex = Path(found['codex']) if found.get('codex') else None
     if codex and codex.is_dir():
         paths += [(path, 'codex') for path in codex.rglob('*' + session_id + '.jsonl')]
+    cursor = Path(found['cursor']) if found.get('cursor') else None
+    if cursor and cursor.is_dir():
+        paths += [(path, 'cursor') for path in cursor.glob('*/agent-transcripts/*/' + session_id + '.jsonl')]
     return paths
 
 

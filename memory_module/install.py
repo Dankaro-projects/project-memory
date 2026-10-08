@@ -16,12 +16,13 @@ import tomllib
 import uuid
 from . import Memory, __version__
 from .core import Conflict
-from .codex_host import initialize, EVENTS, HOST_EVENTS
+from .codex_host import initialize, EVENTS, HOST_EVENTS, CURSOR_HOOK_EVENTS
 
 BEGIN = '# BEGIN project-memory managed configuration\n'
 END = '# END project-memory managed configuration\n'
 RELEASE_SOURCE = f'https://github.com/Dankaro-projects/project-memory/releases/download/v{__version__}/project_memory_mcp-{__version__}-py3-none-any.whl'
-CLIENTS = {'mcp', 'codex', 'claude'}
+CLIENTS = {'mcp', 'codex', 'claude', 'cursor'}
+# Hook clients that also become agent-check hosts. Cursor installs session hooks and is not one of them.
 HOOK_CLIENTS = ('codex', 'claude')
 SERVER = 'project_memory'
 SOURCE_ROOT = Path(__file__).resolve().parent.parent
@@ -83,6 +84,11 @@ def claude_paths(project):
     return project / '.mcp.json', project / '.claude/settings.local.json'
 
 
+def cursor_paths(project):
+    """Cursor reads project MCP servers from .cursor/mcp.json and hooks from .cursor/hooks.json."""
+    return project / '.cursor/mcp.json', project / '.cursor/hooks.json'
+
+
 def load_json(path, default):
     """Read a JSON object from a file, or return the default when it is missing."""
     if not path.exists():
@@ -101,6 +107,44 @@ def load_settings(path):
         raise ValueError('Existing hooks setting is invalid.')
     load_hooks_value({'hooks': hooks})
     return value
+
+
+def load_cursor_hooks(path):
+    """Read a Cursor hooks file. Each event is a list of command objects, not Claude's nested groups."""
+    value = load_json(path, {'version': 1, 'hooks': {}})
+    if not isinstance(value, dict):
+        raise ValueError('Existing Cursor hooks file is invalid.')
+    value.setdefault('version', 1)
+    hooks = value.setdefault('hooks', {})
+    if not isinstance(hooks, dict):
+        raise ValueError('Existing Cursor hooks file is invalid.')
+    for groups in hooks.values():
+        if not isinstance(groups, list) or any(not isinstance(item, dict) for item in groups):
+            raise ValueError('Existing Cursor hooks file is invalid.')
+    return value
+
+
+def remove_cursor_hooks(value, command):
+    """Remove one owned Cursor hook command and drop events that become empty."""
+    for event, groups in list(value.get('hooks', {}).items()):
+        kept = [item for item in groups if item.get('command') != command]
+        if kept:
+            value['hooks'][event] = kept
+        else:
+            value['hooks'].pop(event)
+
+
+def strip_cursor(servers, hooks, entry):
+    """Remove the owned Cursor server entry and hook commands."""
+    if not entry:
+        return
+    recorded = entry.get('server_entry')
+    if recorded and servers.get(SERVER) not in (None, recorded):
+        raise Conflict('The managed Cursor MCP server changed. Restore its recorded entry before running setup or uninstall.')
+    if recorded and servers.get(SERVER) == recorded:
+        servers.pop(SERVER, None)
+    for command in candidates(entry, 'hook_command'):
+        remove_cursor_hooks(hooks, command)
 
 
 def hook_groups(command, events):
@@ -253,7 +297,7 @@ def setup(project, *, client='mcp', database=None, requirements=None, documents=
     """Add or refresh one client in a project and keep the other configured clients."""
     project, state_path, config, hooks_path = paths(project)
     if client not in CLIENTS:
-        raise ValueError('Client must be mcp, codex or claude.')
+        raise ValueError('Client must be mcp, codex, claude or cursor.')
     if trust and client == 'mcp':
         raise ValueError('--trust requires --client codex or --client claude.')
     state = read_state(state_path)
@@ -324,6 +368,26 @@ def setup(project, *, client='mcp', database=None, requirements=None, documents=
         if owned:
             entry['previous_server_entry'] = owned.get('server_entry')
             entry['previous_hook_command'] = owned.get('hook_command', '')
+    elif client == 'cursor':
+        mcp_path, hooks_path = cursor_paths(project)
+        mcp_config = load_json(mcp_path, {})
+        hooks = load_cursor_hooks(hooks_path)
+        servers = mcp_config.setdefault('mcpServers', {})
+        if not isinstance(servers, dict):
+            raise ValueError('Existing .cursor/mcp.json mcpServers must be an object.')
+        strip_cursor(servers, hooks, owned)
+        if SERVER in servers:
+            raise Conflict('An unmanaged project_memory MCP server already exists in .cursor/mcp.json.')
+        launch = _launcher or launcher()
+        command = join_command(launch + ['hook', '--db', str(database), '--host', 'cursor'])
+        server_entry = {'command': launch[0], 'args': launch[1:] + ['serve', '--db', str(database)]}
+        servers[SERVER] = server_entry
+        for event in CURSOR_HOOK_EVENTS:
+            hooks['hooks'].setdefault(event, []).append({'command': command, 'timeout': 10})
+        entry = {'server_entry': server_entry, 'hook_command': command}
+        if owned:
+            entry['previous_server_entry'] = owned.get('server_entry')
+            entry['previous_hook_command'] = owned.get('hook_command', '')
     private = project / '.memory'
     private.mkdir(exist_ok=True)
     ignore = private / '.gitignore'
@@ -369,12 +433,16 @@ def setup(project, *, client='mcp', database=None, requirements=None, documents=
     if client == 'claude':
         atomic(mcp_path, json.dumps(mcp_config, indent=2) + '\n')
         atomic(settings_path, json.dumps(settings, indent=2) + '\n')
+    if client == 'cursor':
+        atomic(mcp_path, json.dumps(mcp_config, indent=2) + '\n')
+        atomic(hooks_path, json.dumps(hooks, indent=2) + '\n')
     new_state['phase'] = 'installed'
     for key in PREVIOUS:
         entry.pop(key, None)
     write_state(state_path, new_state)
     capture = {'codex': 'Configured only. Run a new Codex task and inspect doctor for actual receipts.',
                'claude': 'Configured only. Start a new Claude Code session in this project, approve the project MCP server if asked, and inspect doctor for actual receipts.',
+               'cursor': 'Configured only. Start a new Cursor agent session in this project and inspect doctor for actual receipts. Cursor does not run agent checks or delegated work.',
                'mcp': 'Explicit MCP capture only; this client has no automatic hooks.'}[client]
     result = {'project': str(project), 'database': str(database), 'client': client, 'clients': sorted(clients),
               'documents': captured, 'phase': 'installed', 'capture': capture, 'baseline': health['baseline'],
@@ -382,6 +450,9 @@ def setup(project, *, client='mcp', database=None, requirements=None, documents=
     if trust and client == 'codex':
         from .setup_codex import trust_project_hooks
         result['trust'] = trust_project_hooks(project, database, command)
+    elif trust and client == 'cursor':
+        result['trust'] = {'hooks': str(hooks_path),
+                           'note': 'Cursor runs project hooks from .cursor/hooks.json without a separate trust step.'}
     elif trust:
         result['trust'] = {'enabled_mcpjson_servers': [SERVER], 'settings': str(settings_path),
                            'note': 'Claude Code runs project hooks from its settings files without a separate trust step. The MCP server is pre-approved in the local settings.'}
@@ -404,7 +475,7 @@ def uninstall(project, client=None):
     """Remove one client, or every client when none is named. Records are preserved."""
     project, state_path, config, hooks_path = paths(project)
     if client is not None and client not in CLIENTS:
-        raise ValueError('Client must be mcp, codex or claude.')
+        raise ValueError('Client must be mcp, codex, claude or cursor.')
     state = read_state(state_path)
     if not state:
         return {'removed': False, 'reason': 'No managed installation exists.'}
@@ -437,6 +508,15 @@ def uninstall(project, client=None):
             settings.pop('hooks')
         atomic(mcp_path, json.dumps(mcp_config, indent=2) + '\n')
         atomic(settings_path, json.dumps(settings, indent=2) + '\n')
+    if 'cursor' in selected:
+        entry = clients['cursor']
+        cursor_mcp, cursor_hooks = cursor_paths(project)
+        mcp_config = load_json(cursor_mcp, {})
+        servers = mcp_config.get('mcpServers', {})
+        hooks = load_cursor_hooks(cursor_hooks)
+        strip_cursor(servers if isinstance(servers, dict) else {}, hooks, entry)
+        atomic(cursor_mcp, json.dumps(mcp_config, indent=2) + '\n')
+        atomic(cursor_hooks, json.dumps(hooks, indent=2) + '\n')
     remaining = {name: entry for name, entry in clients.items() if name not in selected}
     if remaining:
         last = state['client'] if state['client'] in remaining else sorted(remaining)[-1]
