@@ -163,15 +163,15 @@ def insert_run(memory, *, run_id, episode_id, role, host, snapshot, request_key,
 def implementer_host(memory, episode_id, parent_run=None):
     """The host of the work run for a work review, otherwise the host of the latest DecisionBound receipt.
 
-    Codex receipts omit the host field, so the default is codex.
+    A receipt that omits the host is resolved from that session's receipts. Codex receipts omit the host field, so the default is codex.
     """
     if parent_run:
         return read(memory, parent_run)['host']
     if codex_host.exists(memory):
-        row = memory.db.execute("SELECT payload FROM host_receipts WHERE episode_id=? AND event_name='DecisionBound' ORDER BY rowid DESC LIMIT 1",
+        row = memory.db.execute("SELECT session_id, payload FROM host_receipts WHERE episode_id=? AND event_name='DecisionBound' ORDER BY rowid DESC LIMIT 1",
                                 (episode_id,)).fetchone()
         if row:
-            return json.loads(row[0]).get('host') or 'codex'
+            return json.loads(row['payload']).get('host') or codex_host.recording_host(memory, row['session_id'])
     return 'codex'
 
 

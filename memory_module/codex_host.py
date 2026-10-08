@@ -710,6 +710,20 @@ def status(memory, session_id=None, limit=10, offset=0, main_only=False):
             'note':'An absent result does not establish whether the operation ran. Check the real result before retrying. Every reconciliation, including unknown, requires evidence [{source_id, reason}] from inspecting the actual effect. Record that source before reconciling; an empty evidence list is rejected.'}
 
 
+def recording_host(memory, session_id):
+    """The hook host named on this session's receipts.
+
+    Codex receipts omit the host field, so a session whose receipts name no host is codex.
+    """
+    if not session_id or not exists(memory):
+        return 'codex'
+    row = memory.db.execute(
+        "SELECT json_extract(payload,'$.host') AS host FROM host_receipts WHERE session_id=? "
+        "AND json_extract(payload,'$.host') IS NOT NULL AND json_extract(payload,'$.host')!='' ORDER BY rowid DESC LIMIT 1",
+        (session_id,)).fetchone()
+    return row['host'] if row else 'codex'
+
+
 def bind(memory, session_id, decision_id, request_key):
     decision=memory._event(decision_id)
     if decision['kind']!='decision' or memory.read(decision_id)['replaced_by']:
@@ -718,8 +732,12 @@ def bind(memory, session_id, decision_id, request_key):
     plan=latest(memory,decision['episode_id'],'work_plan')
     if plan and plan['state']=='in_progress' and plan.get('owner','agent')=='agent' and plan.get('session_id')!=session_id:
         raise Conflict('Another session owns this work. Claim its current plan explicitly before binding its decision.')
+    payload={'reason':'Explicit decision recorded by the caller.'}
+    host=recording_host(memory, session_id)
+    if host!='codex':
+        payload['host']=host
     return receipt(memory, session_id=session_id, event_name='DecisionBound', episode_id=decision['episode_id'],
-                   decision_id=decision_id, payload={'reason':'Explicit decision recorded by the caller.'}, key=request_key+':bind')
+                   decision_id=decision_id, payload=payload, key=request_key+':bind')
 
 
 def evidence_for(memory, receipt_ids):
