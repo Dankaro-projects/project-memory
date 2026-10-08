@@ -605,35 +605,50 @@ def capture(memory, event, host='codex'):
             archived = ''
         if archived:
             started += ' ' + archived
+        from . import sessions
+        # Notices and the work list are built in what remains after the setup report's slice.
+        report_reserve = min(sessions.REPORT_CHARACTERS, max(0, HOOK_CHARACTERS - len(started) - 1))
+        def open_room(reserve):
+            return max(0, HOOK_CHARACTERS - len(started) - reserve - 1)
         from . import coverage
         try:
             # What a Stop hook would once have blocked the turn for reaches the agent here, once.
-            notices = coverage.deliver(memory, session, room=min(NOTICE_CHARACTERS, HOOK_CHARACTERS - len(started) - 1))
+            notices = coverage.deliver(memory, session, room=min(NOTICE_CHARACTERS, open_room(report_reserve)))
         except (OSError, ValueError, InvalidRecord, Conflict, sqlite3.Error):
             notices = ''
         if notices:
             started += ' ' + notices
-        from . import sessions
         try:
-            work = sessions.work_to_continue(memory, room=HOOK_CHARACTERS - len(started) - 1)
+            work = sessions.work_to_continue(memory, room=open_room(report_reserve))
         except (OSError, ValueError, InvalidRecord, Conflict, sqlite3.Error):
             work = ''
         if work:
             started += ' ' + work
         try:
-            report = sessions.setup_report(memory, session, room=HOOK_CHARACTERS - len(started) - 1)
+            gaps = sessions.handoff_context(memory, room=open_room(report_reserve))
+        except (OSError, ValueError, InvalidRecord, Conflict, sqlite3.Error):
+            gaps = ''
+        if gaps:
+            started += ' ' + gaps
+        try:
+            report = sessions.setup_report(memory, session, room=min(report_reserve, open_room(0)))
         except (OSError, ValueError, InvalidRecord, Conflict, sqlite3.Error):
             # The setup report saves cost in later sessions; a failure to build it must not stop this one.
             report = ''
         if report:
             started += ' ' + report
         try:
-            earlier = sessions.start_summary(memory, session, room=HOOK_CHARACTERS - len(started) - 1)
+            earlier = sessions.start_summary(memory, session, room=open_room(0))
         except (OSError, ValueError, InvalidRecord, Conflict, sqlite3.Error):
             # The summary of earlier sessions helps a new session; a failure to build it must not stop the session.
             earlier = ''
         if earlier:
             started += ' ' + earlier
+        try:
+            sessions.distill_latest(memory, session_id=session)
+        except (OSError, ValueError, InvalidRecord, Conflict, sqlite3.Error):
+            # A distillation that cannot start now is tried again at the next session start.
+            pass
         base = assistant_base(memory, available=HOOK_CHARACTERS - len(started) - 1)
         return {'hookSpecificOutput':{'hookEventName':host_event,'additionalContext':started + (' ' + base if base else '')}}
     if name == 'UserPromptSubmit':

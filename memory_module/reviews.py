@@ -1180,6 +1180,22 @@ def set_refresh_limit(memory, limit):
         memory.db.execute("INSERT OR REPLACE INTO settings VALUES ('check_refresh_daily_limit',?)", (str(limit),))
 
 
+def daily_automatic_room(memory, today=None):
+    """How many automatic session-start actions remain today.
+
+    Outcome-check refreshes and the one daily distillation share this budget. The limit is
+    check_refresh_daily_limit. A distillation is counted by its SessionDistilled receipt.
+    """
+    if today is None:
+        today = datetime.now(timezone.utc).date().isoformat()
+    used = 0
+    if exists(memory):
+        used += memory.db.execute("SELECT count(*) FROM review_runs WHERE request_key LIKE 'refresh:%' AND created_at>=?", (today,)).fetchone()[0]
+    if memory.db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='host_receipts'").fetchone():
+        used += memory.db.execute("SELECT count(*) FROM host_receipts WHERE event_name='SessionDistilled' AND created_at>=?", (today,)).fetchone()[0]
+    return refresh_limit(memory) - used
+
+
 def refresh_checks(memory, session_id=''):
     """Request the outcome check of finished work whose check is stale or missing, within the daily limit.
 
@@ -1189,10 +1205,8 @@ def refresh_checks(memory, session_id=''):
     if not configured(memory) or not exists(memory):
         return []
     from .planning import card
-    today = datetime.now(timezone.utc).date().isoformat()
     ensure_run_columns(memory)
-    used = memory.db.execute("SELECT count(*) FROM review_runs WHERE request_key LIKE 'refresh:%' AND created_at>=?", (today,)).fetchone()[0]
-    room = refresh_limit(memory) - used
+    room = daily_automatic_room(memory)
     requested = []
     rows = memory.db.execute("SELECT DISTINCT episode_id FROM events WHERE kind='outcome' AND json_extract(payload,'$.completion')='complete' "
                              "AND json_extract(payload,'$.assessment')='good' ORDER BY episode_id").fetchall()
